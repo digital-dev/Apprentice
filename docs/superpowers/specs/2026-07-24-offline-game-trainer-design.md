@@ -90,6 +90,34 @@ broken — it does not silently no-op.
    - "Save as Cheat" — name it, choose freeze vs one-shot, mode, and it's
      written into the game's JSON file and appears in the cheat list.
 
+## Branding & UI design
+
+App name: **Tamper**. Layout mirrors the familiar trainer pattern (sidebar
+process/game list, category-tabbed cheat rows with toggle + hotkey) but
+with its own visual identity, executed at a polished-SaaS quality bar —
+refined spacing, subtle depth (soft shadows, gentle gradients on accent
+elements), smooth pill-style toggles, consistent icon weight. Not a raw
+terminal look.
+
+**Palette**
+- `#0A0B0A` — background
+- `#161816` — panel/card surface
+- `#FFB000` — signature accent (amber)
+- `#3ECF8E` — active/on state
+- `#FF5C5C` — broken-chain/error state
+- `#8A8F87` — muted text/hairlines
+
+**Type**
+- Headers: IBM Plex Mono (bold)
+- Body: IBM Plex Sans
+- Data (addresses, hotkeys, values): IBM Plex Mono, tabular figures, dimmed
+
+**Signature element**: each cheat row shows a small refined pill with its
+resolved memory address (dim, low-contrast, rounded — not raw mono text
+dumped inline). When a freeze-mode cheat is enabled, a small amber dot
+pulses in sync with the write-loop tick, indicating memory is actively
+being rewritten right now rather than just "on."
+
 ## Error handling
 
 - Attach fails (process gone / access denied) → show error, return to
