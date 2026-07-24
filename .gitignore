@@ -1,0 +1,4 @@
+.worktrees/
+node_modules/
+out/
+native/build/
