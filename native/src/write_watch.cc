@@ -9,6 +9,7 @@
 #include <string>
 #include <cstdint>
 #include <cstdio>
+#include <future>
 
 namespace {
 
@@ -91,12 +92,18 @@ void SetHwBreakpointAllThreads(DWORD pid, uintptr_t address) {
 
 // Runs on its own thread for the lifetime of a capture. Owns the debugger:
 // DebugActiveProcess -> kill-on-exit FALSE -> arm breakpoints -> event loop.
-void DebugLoop(DWORD pid, uintptr_t address) {
+// The attach attempt's outcome is signaled back to the caller (StartWriteWatch,
+// waiting on the paired future) via `attachResult`, since WaitForDebugEvent
+// must run on the same thread that called DebugActiveProcess and therefore
+// the attach can't happen synchronously on the JS-calling thread.
+void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
   if (!DebugActiveProcess(pid)) {
+    attachResult.set_value(false);
     g_session.running = false;
     return;
   }
   DebugSetProcessKillOnExit(FALSE); // never take the game down with us
+  attachResult.set_value(true);
 
   bool armed = false;
   DEBUG_EVENT ev{};
@@ -155,6 +162,13 @@ Napi::Value StartWriteWatch(const Napi::CallbackInfo& info) {
         .ThrowAsJavaScriptException();
     return env.Null();
   }
+  // A prior session may have ended without an intervening stopWriteWatch
+  // (attach failure, or the target process exiting on its own) — in either
+  // case DebugLoop set running=false but never got joined. Reap it here so
+  // the upcoming move-assignment below never lands on a still-joinable
+  // std::thread, which would call std::terminate() and abort this process.
+  if (g_session.loop.joinable()) g_session.loop.join();
+
   DWORD pid = info[0].As<Napi::Number>().Uint32Value();
   uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
 
@@ -166,7 +180,22 @@ Napi::Value StartWriteWatch(const Napi::CallbackInfo& info) {
   g_session.address = address;
   g_session.stopRequested = false;
   g_session.running = true;
-  g_session.loop = std::thread(DebugLoop, pid, address);
+
+  std::promise<bool> attachPromise;
+  std::future<bool> attachFuture = attachPromise.get_future();
+  g_session.loop = std::thread(DebugLoop, pid, address, std::move(attachPromise));
+
+  // Block until the loop thread has attempted DebugActiveProcess so attach
+  // failures (bad pid, already-debugged, access denied) throw here instead
+  // of failing silently.
+  bool attached = attachFuture.get();
+  if (!attached) {
+    g_session.running = false;
+    if (g_session.loop.joinable()) g_session.loop.join();
+    Napi::Error::New(env, "failed to attach debugger to process")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
   return env.Undefined();
 }
 

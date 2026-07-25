@@ -60,3 +60,28 @@ describe('write watch — capture', () => {
     expect(reply.startsWith('OK')).toBe(true)
   }, 15000)
 })
+
+describe('write watch — attach failure handling', () => {
+  // A pid this large should not exist, so DebugActiveProcess fails to attach.
+  const badPid = 999999999
+
+  it('throws when it fails to attach to an invalid pid', () => {
+    expect(() => (addon as any).startWriteWatch(badPid, '0x1000')).toThrow()
+  })
+
+  it('does not crash the process across repeated failed attaches with no intervening stop', () => {
+    // Each failed attach leaves its loop thread exited-but-unjoined
+    // (DebugLoop sets running=false without ever being joined). Before the
+    // fix, the next startWriteWatch's `g_session.loop = std::thread(...)`
+    // move-assignment onto that still-joinable thread called
+    // std::terminate() and aborted the whole process — which would kill
+    // this test runner outright rather than surface as a failed assertion.
+    expect(() => (addon as any).startWriteWatch(badPid, '0x1000')).toThrow()
+    expect(() => (addon as any).startWriteWatch(badPid, '0x1000')).toThrow()
+    expect(() => (addon as any).startWriteWatch(badPid, '0x1000')).toThrow()
+
+    // Reaching here proves the process survived. The addon (and, by
+    // extension, the rest of the trainer) is still responsive.
+    expect((addon as any).ping()).toBe('pong')
+  })
+})
