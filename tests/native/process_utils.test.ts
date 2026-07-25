@@ -22,3 +22,16 @@ describe('listProcesses', () => {
     expect(match!.name.toLowerCase()).toBe('harness.exe')
   })
 })
+
+describe('attach', () => {
+  it('returns a handle and a non-zero base address for the harness', () => {
+    const { handle, baseAddress } = (addon as any).attach(harness.pid)
+    expect(handle).toBeGreaterThan(0)
+    expect(baseAddress).toMatch(/^0x[0-9a-f]+$/)
+    expect(BigInt(baseAddress)).toBeGreaterThan(0n)
+  })
+
+  it('throws for a pid that does not exist', () => {
+    expect(() => (addon as any).attach(999999)).toThrow()
+  })
+})
