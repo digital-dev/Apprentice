@@ -70,6 +70,24 @@ export const nativeAddon = {
     dataType: string,
     value: number
   ): boolean => addon.writeValue(handle, baseAddress, offsets, dataType, value),
+  readBytes: (handle: number, address: string, length: number): string =>
+    addon.readBytes(handle, address, length),
+  // Verify-before-patch treats "can't read there" as a normal outcome (the
+  // module moved, the JIT code is gone), not an error, so it uses this
+  // non-throwing form — same split as readValue/tryReadValue.
+  tryReadBytes: (handle: number, address: string, length: number): string | null => {
+    try {
+      return addon.readBytes(handle, address, length)
+    } catch {
+      return null
+    }
+  },
+  writeBytes: (handle: number, address: string, hexBytes: string): boolean =>
+    addon.writeBytes(handle, address, hexBytes),
+  // Runs on a background thread in the addon (Napi::AsyncWorker) and returns
+  // a Promise — it walks all executable memory of the target.
+  scanAob: (handle: number, signature: string): Promise<string[]> =>
+    addon.scanAob(handle, signature),
   startWriteWatch: (pid: number, address: string): void =>
     addon.startWriteWatch(pid, address),
   pollWriteWatch: (): CaughtInstruction[] => addon.pollWriteWatch(),

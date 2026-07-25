@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { nativeAddon, Candidate } from './nativeAddon'
-import { loadCheats, saveCheat, deleteCheat, CheatDefinition, ChainTarget } from './store'
+import { loadCheats, saveCheat, deleteCheat, CheatDefinition, ChainTarget, StoredCheat } from './store'
 import { FreezeLoop } from './freezeLoop'
 
 let attachedHandle: number | null = null
@@ -107,9 +107,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     return { handle, baseAddress }
   })
 
-  ipcMain.handle('cheats:load', (_e, exeName: string) => loadCheats(exeName))
+  ipcMain.handle('cheats:load', (_e, exeName: string): StoredCheat[] => loadCheats(exeName))
 
-  ipcMain.handle('cheats:save', (_e, exeName: string, cheat: CheatDefinition) => {
+  ipcMain.handle('cheats:save', (_e, exeName: string, cheat: StoredCheat) => {
     saveCheat(exeName, cheat)
   })
 

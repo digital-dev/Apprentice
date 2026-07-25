@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { loadCheats, saveCheat, deleteCheat, setGamesDir } from '../../src/main/store'
+import {
+  loadCheats,
+  saveCheat,
+  deleteCheat,
+  setGamesDir,
+  isPatchCheat,
+  PatchCheat
+} from '../../src/main/store'
 
 let dir: string
 
@@ -73,5 +80,61 @@ describe('store', () => {
   it('deleting a nonexistent cheat id is a harmless no-op', () => {
     deleteCheat('valheim.exe', 'does-not-exist')
     expect(loadCheats('valheim.exe')).toEqual([])
+  })
+})
+
+describe('store — patch cheats', () => {
+  const patch: PatchCheat = {
+    kind: 'patch',
+    id: 'no-stamina-drain',
+    name: 'No Stamina Drain',
+    originalBytes: 'f30f114110',
+    length: 5,
+    signature: 'f3 0f 11 41 10',
+    moduleName: 'valheim.exe',
+    moduleOffset: '0x1234'
+  }
+
+  it('saves and loads a patch cheat alongside a value cheat', () => {
+    saveCheat('valheim.exe', {
+      id: 'stamina',
+      name: 'Unlimited Stamina',
+      dataType: 'float',
+      mode: 'freeze',
+      targets: [{ moduleName: 'valheim.exe', baseOffset: '0x1000', offsets: ['0x8'] }],
+      value: 999
+    })
+    saveCheat('valheim.exe', patch)
+
+    const cheats = loadCheats('valheim.exe')
+    expect(cheats).toHaveLength(2)
+    expect(cheats.filter(isPatchCheat)).toHaveLength(1)
+    expect(cheats.filter(isPatchCheat)[0].originalBytes).toBe('f30f114110')
+  })
+
+  it('treats a cheat with no kind field as a value cheat (backward compatible)', () => {
+    saveCheat('valheim.exe', {
+      id: 'stamina',
+      name: 'Unlimited Stamina',
+      dataType: 'float',
+      mode: 'freeze',
+      targets: [{ moduleName: 'valheim.exe', baseOffset: '0x1000', offsets: ['0x8'] }],
+      value: 999
+    })
+    const cheats = loadCheats('valheim.exe')
+    expect(isPatchCheat(cheats[0])).toBe(false)
+  })
+
+  it('deletes a patch cheat by id', () => {
+    saveCheat('valheim.exe', patch)
+    deleteCheat('valheim.exe', 'no-stamina-drain')
+    expect(loadCheats('valheim.exe')).toEqual([])
+  })
+
+  it('supports a JIT patch with no module (relocated by signature only)', () => {
+    saveCheat('valheim.exe', { ...patch, moduleName: null, moduleOffset: null })
+    const loaded = loadCheats('valheim.exe').filter(isPatchCheat)[0]
+    expect(loaded.moduleName).toBeNull()
+    expect(loaded.signature).toBe('f3 0f 11 41 10')
   })
 })
