@@ -104,6 +104,18 @@ struct ChainResult {
   std::vector<uintptr_t> offsets;
 };
 
+// A pointer's value very often lands at the START of the object it points
+// to, not at the exact field address being scanned for — e.g. a reference
+// to a Health component points at that component's base, and the health
+// float sits at componentBase + someFieldOffset. Requiring an exact
+// e.value == target match (as an earlier version of this function did)
+// misses this — by far the most common — case entirely. Instead, accept
+// any pointer whose value is at or slightly before the target, treating
+// the (small, bounded) gap as a struct/object field offset. This mirrors
+// how tools like Cheat Engine's pointer scan work, and is a strict
+// superset of exact matching (gap 0 still matches).
+constexpr uintptr_t kMaxFieldOffset = 0x1000;
+
 // FindChain(target, levelsLeft) returns an offset list which, when resolved
 // via the standard "deref all but the last offset" walk starting at the
 // anchor module's base, lands exactly on `target` itself (not a dereference
@@ -116,36 +128,42 @@ struct ChainResult {
 // (Unity/Mono especially) frequently keep static roots in a runtime DLL
 // rather than the main .exe.
 //
-// Base case: a pointer entry `e` whose stored value equals `target` and
-// whose own address already sits inside some module M (reachable from
-// M's base with zero dereferences via [e.address - M.base]). To go from
-// "address of e" to "value stored at e" (== target) requires exactly one
-// more dereference. In offset-list terms, appending a trailing 0 makes the
-// previously-last offset become non-last (so it gets dereferenced) and the
-// new last offset (0) is added without dereferencing, landing on target.
-// So the base case must return {e.address - M.base, 0}, not just
+// Base case: a pointer entry `e` whose value sits within kMaxFieldOffset
+// bytes at-or-before `target` (fieldOffset = target - e.value), and whose
+// own address already sits inside some module M (reachable from M's base
+// with zero dereferences via [e.address - M.base]). To go from "address of
+// e" to "value stored at e, plus fieldOffset" (== target) requires exactly
+// one more dereference followed by adding fieldOffset. In offset-list
+// terms, appending a trailing fieldOffset makes the previously-last offset
+// become non-last (so it gets dereferenced) and the new last offset
+// (fieldOffset) is added without dereferencing, landing on target. So the
+// base case must return {e.address - M.base, fieldOffset}, not just
 // {e.address - M.base} (which would land on the address of e, one
 // dereference short of target).
 //
-// Recursive case: entry `e` whose value equals `target` but whose address
-// is not itself in any module. Recurse to find `inner`, an offset list
-// that lands on e.address (by the same invariant, applied to the smaller
-// problem "reach e.address from some module's base"). Since *e.address ==
-// target, appending a trailing 0 to `inner` forces one more dereference at
-// the point that used to be `inner`'s last step, producing target —
+// Recursive case: entry `e` whose value is within kMaxFieldOffset of
+// `target` but whose address is not itself in any module. Recurse to find
+// `inner`, an offset list that lands on e.address (by the same invariant,
+// applied to the smaller problem "reach e.address from some module's
+// base"). Since *e.address + fieldOffset == target, appending a trailing
+// fieldOffset to `inner` forces one more dereference at the point that
+// used to be `inner`'s last step, then adds fieldOffset, producing target —
 // exactly mirroring the base case's fix.
 std::optional<ChainResult> FindChain(
     const std::vector<ModuleRange>& modules,
     uintptr_t target, int levelsLeft, const std::vector<PointerEntry>& pointers) {
   for (const auto& e : pointers) {
-    if (e.value != target) continue;
+    if (target < e.value) continue;
+    uintptr_t fieldOffset = target - e.value;
+    if (fieldOffset >= kMaxFieldOffset) continue;
+
     if (const ModuleRange* m = FindContainingModule(modules, e.address)) {
-      return ChainResult{m->name, {e.address - m->base, 0}};
+      return ChainResult{m->name, {e.address - m->base, fieldOffset}};
     }
     if (levelsLeft > 0) {
       auto inner = FindChain(modules, e.address, levelsLeft - 1, pointers);
       if (inner) {
-        inner->offsets.push_back(0);
+        inner->offsets.push_back(fieldOffset);
         return inner;
       }
     }

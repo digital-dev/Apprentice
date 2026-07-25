@@ -40,4 +40,30 @@ describe('resolvePointerChain', () => {
     const value = (addon as any).readValue(handle, moduleBase, chain.offsets, 'int32')
     expect(value).toBe(100)
   })
+
+  it('finds a chain through a field at a nonzero offset inside a struct (real-world object shape)', () => {
+    // g_player_ptr points at PlayerComponent's base; g_player.stamina sits
+    // 16 bytes in (four leading int padding fields). An exact-value-only
+    // pointer match would never find this — only a pointer whose value is
+    // AT the struct base, with the field offset applied afterward, works.
+    const candidates: string[] = (addon as any).scanFirst(handle, 'float', 77.0)
+    expect(candidates.length).toBeGreaterThan(0)
+
+    let chain = null
+    for (const target of candidates) {
+      chain = (addon as any).resolvePointerChain(handle, target, 2)
+      if (chain) break
+    }
+    expect(chain).not.toBeNull()
+    expect(chain.offsets.length).toBeGreaterThan(0)
+    // The last offset is the in-struct field offset; it must be nonzero
+    // here, proving the offset-tolerant match (not just exact-value 0) did
+    // the work.
+    const lastOffset = parseInt(chain.offsets[chain.offsets.length - 1], 16)
+    expect(lastOffset).toBeGreaterThan(0)
+
+    const moduleBase = (addon as any).getModuleBase(handle, chain.moduleName)
+    const value = (addon as any).readValue(handle, moduleBase, chain.offsets, 'float')
+    expect(value).toBeCloseTo(77.0, 4)
+  })
 })
