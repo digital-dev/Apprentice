@@ -154,7 +154,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   ipcMain.handle('writeWatch:start', (_e, address: string) => {
     if (attachedPid === null) throw new Error('not attached')
     freezeLoop.stop() // pause freezing during a capture
-    nativeAddon.startWriteWatch(attachedPid, address)
+    try {
+      nativeAddon.startWriteWatch(attachedPid, address)
+    } catch (err) {
+      freezeLoop.start() // capture failed to start — don't leave freezing off
+      throw err
+    }
   })
 
   ipcMain.handle('writeWatch:poll', () => nativeAddon.pollWriteWatch())

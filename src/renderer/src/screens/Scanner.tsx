@@ -256,11 +256,14 @@ export default function Scanner({
                   base {insn.baseRegister} + {insn.displacement} → {insn.baseAddress}
                 </span>
                 <button
-                  disabled={!captureName || insn.baseRegister === 'rip'}
+                  disabled={!captureName || !insn.baseRegister || insn.baseRegister === 'rip'}
                   onClick={() => createCheatFromInstruction(insn)}
                 >
                   Create pointer cheat
                 </button>
+                {!insn.baseRegister && (
+                  <span className="muted"> (can't chain this instruction)</span>
+                )}
                 <button disabled title="Coming in the AOB update">Create patch</button>
               </li>
             ))}

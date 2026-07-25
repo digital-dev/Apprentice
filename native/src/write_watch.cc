@@ -38,7 +38,6 @@ struct Caught {
   std::string baseRegister;
   int64_t displacement = 0;
   uintptr_t baseAddress = 0;
-  bool decoded = false;
   std::string moduleName;
   uintptr_t moduleOffset = 0;
   bool hasModule = false;
@@ -51,7 +50,7 @@ struct Session {
   DWORD pid = 0;
   uintptr_t address = 0;
   std::mutex mtx;
-  std::vector<Caught> caught; // deduped by instructionAddress
+  std::vector<Caught> caught; // deduped by trapAddress
 };
 
 Session g_session;
@@ -225,7 +224,6 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
 void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
   HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
   if (!proc) {
-    out.decoded = false;
     return;
   }
 
@@ -247,7 +245,6 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
                                      decoder, insnAddr, insn, operands, bytes);
   if (!found) {
     CloseHandle(proc);
-    out.decoded = false;
     return;
   }
 
@@ -267,12 +264,10 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
       out.baseRegister = "rip";
       out.displacement = disp;
       out.baseAddress = insnAddr + insn.length; // RIP-relative base = next insn
-      out.decoded = true;
     } else if (base != ZYDIS_REGISTER_NONE && haveCtx) {
       out.baseRegister = ZydisRegisterGetString(base);
       out.displacement = disp;
       out.baseAddress = RegValue(ctx, base);
-      out.decoded = true;
     }
     break;
   }
