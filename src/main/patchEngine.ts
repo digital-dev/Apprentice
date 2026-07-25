@@ -62,6 +62,12 @@ export class PatchEngine {
   }
 
   async apply(patch: PatchCheat): Promise<{ ok: boolean; error: string | null }> {
+    // Already applied: the recorded address is authoritative. Re-locating
+    // here could resolve to a different address (JIT code moved) and
+    // overwrite that record, orphaning the NOPs we already wrote — this is
+    // a no-op success, not a re-patch.
+    if (this.applied.has(patch.id)) return { ok: true, error: null }
+
     const status = await this.locate(patch)
     if (status.address === null || status.state === 'not-found') {
       return { ok: false, error: "Can't relocate this instruction in the running game." }
@@ -83,7 +89,9 @@ export class PatchEngine {
     // but we must still record it so it gets restored.
     this.applied.set(patch.id, {
       address: status.address,
-      originalBytes: patch.originalBytes
+      // Normalize once here so restore() can never write a differently
+      // cased blob than the one locate() compared against.
+      originalBytes: patch.originalBytes.toLowerCase()
     })
     return { ok: true, error: null }
   }
@@ -111,7 +119,14 @@ export class PatchEngine {
     if (patch.moduleName !== null && patch.moduleOffset !== null) {
       const base = this.ops.getModuleBase(patch.moduleName)
       if (base === null) return null
-      return '0x' + (BigInt(base) + BigInt(patch.moduleOffset)).toString(16)
+      // PatchCheat isn't runtime-validated — a hand-edited games/*.json can
+      // carry a malformed offset. BigInt() throws SyntaxError on that
+      // rather than failing gracefully, so treat it as unresolvable.
+      try {
+        return '0x' + (BigInt(base) + BigInt(patch.moduleOffset)).toString(16)
+      } catch {
+        return null
+      }
     }
     // JIT / anonymous code: only a signature can find it again. Anything
     // other than exactly one match is ambiguous, and a guess here means

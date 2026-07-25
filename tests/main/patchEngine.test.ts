@@ -107,6 +107,18 @@ describe('PatchEngine.locate', () => {
     const status = await engine.locate(jitPatch)
     expect(status.applicable).toBe(false)
   })
+
+  it('reports not-found when the address resolves but memory cannot be read', async () => {
+    ops.memory.delete('0x400100')
+    const status = await engine.locate(modulePatch)
+    expect(status).toEqual({ address: null, state: 'not-found', applicable: false })
+  })
+
+  it('reports not-found rather than throwing on a malformed moduleOffset', async () => {
+    const junkPatch: PatchCheat = { ...modulePatch, moduleOffset: 'not-hex' }
+    const status = await engine.locate(junkPatch)
+    expect(status).toEqual({ address: null, state: 'not-found', applicable: false })
+  })
 })
 
 describe('PatchEngine.apply / restore', () => {
@@ -192,5 +204,40 @@ describe('PatchEngine.apply / restore', () => {
     ops.writeShouldFail = true
     engine.restoreAll()
     expect(engine.isApplied('no-drain')).toBe(false)
+  })
+
+  it('refuses to write when the address resolves but memory cannot be read', async () => {
+    ops.memory.delete('0x400100')
+    const result = await engine.apply(modulePatch)
+    expect(result.ok).toBe(false)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('reports not-found rather than throwing when apply hits a malformed moduleOffset', async () => {
+    const junkPatch: PatchCheat = { ...modulePatch, moduleOffset: 'not-hex' }
+    const result = await engine.apply(junkPatch)
+    expect(result.ok).toBe(false)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('re-applying an already-applied patch is a no-op and does not re-derive the address', async () => {
+    ops.aobMatches = ['0x7ff000001000']
+    ops.memory.set('0x7ff000001000', ORIGINAL)
+    await engine.apply(jitPatch)
+
+    // The JIT code "moved": the scan now resolves a different address B,
+    // with original bytes there too. A naive re-locate-and-record would
+    // patch B and forget A, orphaning the NOPs already written at A.
+    ops.aobMatches = ['0x7ff000002000']
+    ops.memory.set('0x7ff000002000', ORIGINAL)
+    const result = await engine.apply(jitPatch)
+
+    expect(result.ok).toBe(true)
+    expect(ops.memory.get('0x7ff000002000')).toBe(ORIGINAL) // untouched
+    expect(ops.writes.filter((w) => w.address === '0x7ff000002000')).toHaveLength(0)
+
+    // restore must still hit the original address A, not the re-derived one.
+    expect(engine.restore(jitPatch)).toBe(true)
+    expect(ops.memory.get('0x7ff000001000')).toBe(ORIGINAL)
   })
 })
