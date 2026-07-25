@@ -27,6 +27,9 @@ export default function CheatList({
   const [patchStatuses, setPatchStatuses] = useState<Map<string, PatchStatus>>(new Map())
   const [patchEnabled, setPatchEnabled] = useState<Set<string>>(new Set())
   const [patchError, setPatchError] = useState<Map<string, string>>(new Map())
+  // Ids with an apply/restore round-trip in flight, so the Toggle can be
+  // disabled and a fast double-click can't interleave apply and restore.
+  const [patchBusy, setPatchBusy] = useState<Set<string>>(new Set())
   const [enabled, setEnabled] = useState<Set<string>>(new Set())
   // "degraded" (all targets failing past the freeze-loop threshold). It is
   // a soft state now: the cheat stays enabled and keeps retrying, so this
@@ -51,15 +54,35 @@ export default function CheatList({
       // resolve each one on attach: module+offset for module code, an AOB
       // scan for JIT code. This drives the located / can't-relocate chip.
       for (const patch of loadedPatches) {
+        // Held for the same reason as in togglePatch: this may call
+        // applyPatch below, and a manual toggle click landing mid-adopt
+        // could otherwise interleave with it.
+        setPatchBusy((prev) => new Set(prev).add(patch.id))
         try {
           const status = await window.tamper.locatePatch(patch)
           setPatchStatuses((prev) => new Map(prev).set(patch.id, status))
-          // Re-attaching to a process we already patched: reflect reality.
+          // Re-attaching to a process we already patched: the NOPs are
+          // already there, but PatchEngine's applied-set — the only thing
+          // that drives restore — only gets populated by apply(). Call it
+          // now so a later toggle-off actually restores. apply() is a
+          // recorded no-op write when locate() reports 'applied', so this
+          // never touches the game's code.
           if (status.state === 'applied') {
-            setPatchEnabled((prev) => new Set(prev).add(patch.id))
+            const result = await window.tamper.applyPatch(patch)
+            if (result.ok) {
+              setPatchEnabled((prev) => new Set(prev).add(patch.id))
+            } else {
+              setPatchError((prev) => new Map(prev).set(patch.id, result.error ?? 'Patch failed'))
+            }
           }
         } catch {
           // not attached / transient — leave this patch without a readout
+        } finally {
+          setPatchBusy((prev) => {
+            const copy = new Set(prev)
+            copy.delete(patch.id)
+            return copy
+          })
         }
       }
       // Automatic readability check on (re)attach: populate a live "N of M
@@ -123,39 +146,61 @@ export default function CheatList({
   }
 
   async function togglePatch(patch: PatchCheat) {
+    // patch:apply/patch:restore both throw when nothing is attached, and a
+    // fast on/off double-click could otherwise interleave an in-flight apply
+    // with a restore against an empty applied-set — disable the toggle for
+    // the duration so the displayed state can't drift from reality.
+    if (patchBusy.has(patch.id)) return
     const next = !patchEnabled.has(patch.id)
     setPatchError((prev) => {
       const copy = new Map(prev)
       copy.delete(patch.id)
       return copy
     })
+    setPatchBusy((prev) => new Set(prev).add(patch.id))
 
-    if (next) {
-      const result = await window.tamper.applyPatch(patch)
-      if (!result.ok) {
-        // Stays off: an un-locatable or mismatched patch is never written.
-        setPatchError((prev) => new Map(prev).set(patch.id, result.error ?? 'Patch failed'))
-        return
+    try {
+      if (next) {
+        const result = await window.tamper.applyPatch(patch)
+        if (!result.ok) {
+          // Stays off: an un-locatable or mismatched patch is never written.
+          setPatchError((prev) => new Map(prev).set(patch.id, result.error ?? 'Patch failed'))
+          return
+        }
+        setPatchEnabled((prev) => new Set(prev).add(patch.id))
+      } else {
+        const ok = await window.tamper.restorePatch(patch)
+        if (!ok) {
+          setPatchError((prev) => new Map(prev).set(patch.id, 'Restore failed'))
+          return
+        }
+        setPatchEnabled((prev) => {
+          const copy = new Set(prev)
+          copy.delete(patch.id)
+          return copy
+        })
       }
-      setPatchEnabled((prev) => new Set(prev).add(patch.id))
-    } else {
-      const ok = await window.tamper.restorePatch(patch)
-      if (!ok) {
-        setPatchError((prev) => new Map(prev).set(patch.id, 'Restore failed'))
-        return
+
+      try {
+        const status = await window.tamper.locatePatch(patch)
+        setPatchStatuses((prev) => new Map(prev).set(patch.id, status))
+      } catch {
+        // Readout only — leave the previous status rather than blame the
+        // apply/restore that just succeeded.
       }
-      setPatchEnabled((prev) => {
+    } catch (err) {
+      // Not attached, or the native scan rejected on a malformed signature:
+      // either way nothing was written, so the toggle must stay in its
+      // pre-click state (next was never applied).
+      setPatchError((prev) =>
+        new Map(prev).set(patch.id, err instanceof Error ? err.message : 'Patch operation failed')
+      )
+    } finally {
+      setPatchBusy((prev) => {
         const copy = new Set(prev)
         copy.delete(patch.id)
         return copy
       })
-    }
-
-    try {
-      const status = await window.tamper.locatePatch(patch)
-      setPatchStatuses((prev) => new Map(prev).set(patch.id, status))
-    } catch {
-      // leave the previous readout
     }
   }
 
@@ -316,6 +361,7 @@ export default function CheatList({
                 <Toggle
                   enabled={patchEnabled.has(patch.id)}
                   onChange={() => togglePatch(patch)}
+                  disabled={patchBusy.has(patch.id)}
                 />
                 <button onClick={() => removePatch(patch)}>Delete</button>
                 {error && (

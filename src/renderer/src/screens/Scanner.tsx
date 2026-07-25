@@ -189,7 +189,11 @@ export default function Scanner({
     setCaptureError(null)
     const patch: PatchCheat = {
       kind: 'patch',
-      id: captureName.toLowerCase().replace(/\s+/g, '-'),
+      // Prefixed so a patch and a pointer cheat named the same thing never
+      // collide on id — saveCheat/deleteCheat key purely off id, so an
+      // unprefixed slug shared with createCheatFromInstruction would let one
+      // silently overwrite the other.
+      id: `patch-${captureName.toLowerCase().replace(/\s+/g, '-')}`,
       name: captureName,
       originalBytes: insn.bytes,
       length: insn.length,
