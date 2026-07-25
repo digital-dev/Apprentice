@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { CheatDefinition, ChainTarget, CheatMode, DataType } from '../../../main/store'
-import type { Candidate } from '../tamper.d'
+import type { Candidate, CaughtInstruction } from '../tamper.d'
 
 type Filter = 'exact' | 'changed' | 'unchanged' | 'increased' | 'decreased'
 type ResolveStatus = 'resolving' | 'resolved' | 'no-chain'
@@ -31,6 +31,13 @@ export default function Scanner({
   // shows progress instead of looking frozen while awaiting them.
   const [scanning, setScanning] = useState(false)
   const [resolvingAll, setResolvingAll] = useState(false)
+  // Find-what-writes capture: arm a watch on a candidate address, poll for
+  // instructions the game executes that write to it, and let the user turn
+  // one of the caught instructions into a rooted pointer-chain cheat.
+  const [watchAddress, setWatchAddress] = useState<string | null>(null)
+  const [watching, setWatching] = useState(false)
+  const [caught, setCaught] = useState<CaughtInstruction[]>([])
+  const [captureName, setCaptureName] = useState('')
 
   async function firstScan() {
     setScanning(true)
@@ -109,6 +116,51 @@ export default function Scanner({
     onSaved()
   }
 
+  async function startWatch(address: string) {
+    setWatchAddress(address)
+    setCaught([])
+    setWatching(true)
+    await window.tamper.startWriteWatch(address)
+  }
+
+  useEffect(() => {
+    if (!watching) return
+    const id = setInterval(async () => {
+      setCaught(await window.tamper.pollWriteWatch())
+    }, 250)
+    return () => clearInterval(id)
+  }, [watching])
+
+  async function stopWatch() {
+    const finalList = await window.tamper.stopWriteWatch()
+    setCaught(finalList)
+    setWatching(false)
+  }
+
+  // Turn a caught instruction into a cheat target: resolve a chain to the
+  // object base the game used, then append the field displacement so the
+  // chain lands on the exact value. This is the rooted, high-quality path.
+  async function createCheatFromInstruction(insn: CaughtInstruction) {
+    if (!captureName) return
+    const chain = await window.tamper.resolveChain(insn.baseAddress, 5)
+    if (!chain) return
+    const target: ChainTarget = {
+      moduleName: chain.moduleName,
+      baseOffset: chain.offsets[0],
+      offsets: [...chain.offsets.slice(1), insn.displacement]
+    }
+    const cheat: CheatDefinition = {
+      id: captureName.toLowerCase().replace(/\s+/g, '-'),
+      name: captureName,
+      dataType,
+      mode: 'freeze',
+      targets: [target],
+      value: Number(value)
+    }
+    await window.tamper.saveCheat(exeName, cheat)
+    onSaved()
+  }
+
   return (
     <div>
       <h2>Scan for a new cheat — {exeName}</h2>
@@ -166,6 +218,7 @@ export default function Scanner({
                     {status === 'resolved' && '✓ chain resolved'}
                     {status === 'no-chain' && '— no static chain found'}
                   </label>
+                  <button onClick={() => startWatch(c.address)}>Find what writes this</button>
                 </li>
               )
             })}
@@ -179,6 +232,47 @@ export default function Scanner({
               : `Resolve ${selectedAddresses.size || ''} Selected`.trim()}
           </button>
         </>
+      )}
+
+      {watchAddress && (
+        <div style={{ marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+          <h3>Find what writes {watchAddress}</h3>
+          {watching ? (
+            <>
+              <p>Watching — trigger the value change in-game (take damage, use stamina…).</p>
+              <button onClick={stopWatch}>Stop</button>
+            </>
+          ) : (
+            <button onClick={() => startWatch(watchAddress)}>Re-arm</button>
+          )}
+          <p>{caught.length} instruction(s) caught</p>
+          <ul>
+            {caught.map((insn) => (
+              <li key={insn.instructionAddress}>
+                <span className="address-chip">
+                  {insn.moduleName ?? '?'}+{insn.moduleOffset ?? insn.instructionAddress}
+                </span>
+                <span>
+                  base {insn.baseRegister} + {insn.displacement} → {insn.baseAddress}
+                </span>
+                <button
+                  disabled={!captureName || insn.baseRegister === 'rip'}
+                  onClick={() => createCheatFromInstruction(insn)}
+                >
+                  Create pointer cheat
+                </button>
+                <button disabled title="Coming in the AOB update">Create patch</button>
+              </li>
+            ))}
+          </ul>
+          {caught.length > 0 && (
+            <input
+              placeholder="Cheat name"
+              value={captureName}
+              onChange={(e) => setCaptureName(e.target.value)}
+            />
+          )}
+        </div>
       )}
 
       {targets.size > 0 && (
