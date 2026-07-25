@@ -52,10 +52,19 @@ describe('write watch — capture', () => {
     const final = (addon as any).stopWriteWatch()
 
     expect(list.length).toBeGreaterThan(0)
-    expect(final.length).toBe(1) // deduped despite many writes
-    expect(final[0].instructionAddress).toMatch(/^0x[0-9a-f]+$/)
+    expect(final.length).toBe(1)
 
-    // Clean detach: the harness is still alive and responding.
+    const insn = final[0]
+    expect(insn.baseRegister.length).toBeGreaterThan(0)
+    expect(insn.baseRegister).not.toBe('rip') // object write goes through a GPR
+    // base register held g_player; displacement is the stamina field offset (16).
+    expect(parseInt(insn.displacement, 16)).toBe(16)
+    const base = BigInt(insn.baseAddress)
+    const disp = BigInt(insn.displacement)
+    expect('0x' + (base + disp).toString(16)).toBe(address)
+    // The writing instruction lives in the harness module.
+    expect(insn.moduleName === null || typeof insn.moduleName === 'string').toBe(true)
+
     const reply = await send('get')
     expect(reply.startsWith('OK')).toBe(true)
   }, 15000)

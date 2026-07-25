@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <future>
+#include "Zydis.h"
 
 namespace {
 
@@ -22,16 +23,24 @@ uintptr_t ParseHex(const std::string& s) {
   return static_cast<uintptr_t>(strtoull(s.c_str(), nullptr, 16));
 }
 
-// A single caught write instruction. Decode fields are populated in Task 5;
-// here only instructionAddress is meaningful.
+// A single caught write instruction, decoded via Zydis to expose the
+// memory-destination operand's base register, displacement, and the
+// runtime base address the game used, plus the owning module (if any).
 struct Caught {
   uintptr_t instructionAddress = 0;
+  // The raw trap address (ExceptionAddress) used only for in-loop dedup —
+  // see the comment above FindWriteInstruction for why this differs from
+  // instructionAddress once decode succeeds.
+  uintptr_t trapAddress = 0;
   std::vector<uint8_t> bytes;
   uint32_t length = 0;
   std::string baseRegister;
   int64_t displacement = 0;
   uintptr_t baseAddress = 0;
   bool decoded = false;
+  std::string moduleName;
+  uintptr_t moduleOffset = 0;
+  bool hasModule = false;
 };
 
 struct Session {
@@ -90,6 +99,187 @@ void SetHwBreakpointAllThreads(DWORD pid, uintptr_t address) {
   CloseHandle(snap);
 }
 
+// Maps a Zydis GPR register enum to the matching value in a CONTEXT.
+uintptr_t RegValue(const CONTEXT& ctx, ZydisRegister reg) {
+  switch (reg) {
+    case ZYDIS_REGISTER_RAX: return ctx.Rax;
+    case ZYDIS_REGISTER_RBX: return ctx.Rbx;
+    case ZYDIS_REGISTER_RCX: return ctx.Rcx;
+    case ZYDIS_REGISTER_RDX: return ctx.Rdx;
+    case ZYDIS_REGISTER_RSI: return ctx.Rsi;
+    case ZYDIS_REGISTER_RDI: return ctx.Rdi;
+    case ZYDIS_REGISTER_RBP: return ctx.Rbp;
+    case ZYDIS_REGISTER_RSP: return ctx.Rsp;
+    case ZYDIS_REGISTER_R8:  return ctx.R8;
+    case ZYDIS_REGISTER_R9:  return ctx.R9;
+    case ZYDIS_REGISTER_R10: return ctx.R10;
+    case ZYDIS_REGISTER_R11: return ctx.R11;
+    case ZYDIS_REGISTER_R12: return ctx.R12;
+    case ZYDIS_REGISTER_R13: return ctx.R13;
+    case ZYDIS_REGISTER_R14: return ctx.R14;
+    case ZYDIS_REGISTER_R15: return ctx.R15;
+    default: return 0;
+  }
+}
+
+// Finds the module containing `addr`; returns name + offset, or empty.
+bool ModuleOf(DWORD pid, uintptr_t addr, std::string& nameOut, uintptr_t& offsetOut) {
+  HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+  if (!proc) return false;
+  HMODULE mods[1024];
+  DWORD needed = 0;
+  bool found = false;
+  if (EnumProcessModulesEx(proc, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) {
+    DWORD count = needed / sizeof(HMODULE);
+    if (count > 1024) count = 1024;
+    for (DWORD i = 0; i < count && !found; i++) {
+      MODULEINFO mi{};
+      char name[MAX_PATH];
+      if (GetModuleInformation(proc, mods[i], &mi, sizeof(mi)) &&
+          GetModuleBaseNameA(proc, mods[i], name, sizeof(name))) {
+        uintptr_t base = (uintptr_t)mods[i];
+        if (addr >= base && addr < base + mi.SizeOfImage) {
+          nameOut = name;
+          offsetOut = addr - base;
+          found = true;
+        }
+      }
+    }
+  }
+  CloseHandle(proc);
+  return found;
+}
+
+// A hardware data breakpoint (Dr0-3, on-write) is trap-style: the CPU
+// finishes retiring the instruction that touched the watched address and
+// *then* raises the #DB, so `ExceptionAddress`/`rip` here is already the
+// address of the NEXT instruction, not the write itself (confirmed
+// empirically: decoding directly at rip in the test harness disassembles
+// to a bare `ret`, not the `movss [reg+0x10], xmm` that actually wrote
+// stamina). x86 has no reverse-decode, so we brute-force it: scan
+// candidate start addresses backward from rip (instructions are at most
+// 15 bytes), decode forward from each, and keep the one that (a) decodes
+// to exactly rip and (b) has a memory-write operand whose computed
+// effective address equals the watched address we know we're hunting for.
+// That address match is what makes the candidate unambiguous.
+bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
+                           uintptr_t rip, uintptr_t watchedAddress,
+                           ZydisDecoder& decoder, uintptr_t& insnAddrOut,
+                           ZydisDecodedInstruction& insnOut,
+                           ZydisDecodedOperand* opsOut, uint8_t* bytesOut) {
+  constexpr int kMaxLen = 15;
+  uintptr_t winStart = (rip >= (uintptr_t)kMaxLen) ? rip - kMaxLen : 0;
+  uint8_t window[kMaxLen] = {0};
+  SIZE_T got = 0;
+  if (!ReadProcessMemory(proc, (LPCVOID)winStart, window,
+                         (SIZE_T)(rip - winStart), &got)) {
+    return false;
+  }
+
+  for (int64_t candI = (int64_t)rip - 1; candI >= (int64_t)winStart; candI--) {
+    uintptr_t cand = (uintptr_t)candI;
+    size_t offset = (size_t)(cand - winStart);
+    if (offset >= got) continue;
+
+    ZydisDecodedInstruction tryInsn;
+    ZydisDecodedOperand tryOps[ZYDIS_MAX_OPERAND_COUNT];
+    if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, window + offset,
+                                              got - offset, &tryInsn, tryOps))) {
+      continue;
+    }
+    if (cand + tryInsn.length != rip) continue; // must land exactly on rip
+
+    for (int i = 0; i < tryInsn.operand_count; i++) {
+      const ZydisDecodedOperand& op = tryOps[i];
+      if (op.type != ZYDIS_OPERAND_TYPE_MEMORY) continue;
+      if (!(op.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE)) continue;
+
+      ZydisRegister base = op.mem.base;
+      int64_t disp = op.mem.disp.has_displacement ? op.mem.disp.value : 0;
+      uintptr_t baseAddr = 0;
+      bool haveBase = false;
+      if (base == ZYDIS_REGISTER_RIP) {
+        baseAddr = cand + tryInsn.length;
+        haveBase = true;
+      } else if (base != ZYDIS_REGISTER_NONE && haveCtx) {
+        baseAddr = RegValue(ctx, base);
+        haveBase = true;
+      }
+      if (haveBase && (uintptr_t)((int64_t)baseAddr + disp) == watchedAddress) {
+        insnAddrOut = cand;
+        insnOut = tryInsn;
+        memcpy(opsOut, tryOps, sizeof(ZydisDecodedOperand) * ZYDIS_MAX_OPERAND_COUNT);
+        memcpy(bytesOut, window + offset, tryInsn.length);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Reads the faulting thread's registers, locates the true write instruction
+// (see FindWriteInstruction), and decodes its memory-destination operand
+// into base register, displacement, and the runtime base address the game
+// used.
+void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
+  HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+  if (!proc) {
+    out.decoded = false;
+    return;
+  }
+
+  HANDLE th = OpenThread(THREAD_GET_CONTEXT, FALSE, tid);
+  CONTEXT ctx{};
+  ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+  bool haveCtx = th && GetThreadContext(th, &ctx);
+  if (th) CloseHandle(th);
+
+  ZydisDecoder decoder;
+  ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+
+  uintptr_t insnAddr = 0;
+  ZydisDecodedInstruction insn{};
+  ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
+  uint8_t bytes[16] = {0};
+
+  bool found = FindWriteInstruction(proc, ctx, haveCtx, rip, g_session.address,
+                                     decoder, insnAddr, insn, operands, bytes);
+  if (!found) {
+    CloseHandle(proc);
+    out.decoded = false;
+    return;
+  }
+
+  out.instructionAddress = insnAddr;
+  out.length = insn.length;
+  out.bytes.assign(bytes, bytes + insn.length);
+
+  for (int i = 0; i < insn.operand_count; i++) {
+    const ZydisDecodedOperand& op = operands[i];
+    if (op.type != ZYDIS_OPERAND_TYPE_MEMORY) continue;
+    if (!(op.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE)) continue;
+
+    ZydisRegister base = op.mem.base;
+    int64_t disp = op.mem.disp.has_displacement ? op.mem.disp.value : 0;
+
+    if (base == ZYDIS_REGISTER_RIP) {
+      out.baseRegister = "rip";
+      out.displacement = disp;
+      out.baseAddress = insnAddr + insn.length; // RIP-relative base = next insn
+      out.decoded = true;
+    } else if (base != ZYDIS_REGISTER_NONE && haveCtx) {
+      out.baseRegister = ZydisRegisterGetString(base);
+      out.displacement = disp;
+      out.baseAddress = RegValue(ctx, base);
+      out.decoded = true;
+    }
+    break;
+  }
+
+  out.hasModule = ModuleOf(pid, insnAddr, out.moduleName, out.moduleOffset);
+  CloseHandle(proc);
+}
+
 // Runs on its own thread for the lifetime of a capture. Owns the debugger:
 // DebugActiveProcess -> kill-on-exit FALSE -> arm breakpoints -> event loop.
 // The attach attempt's outcome is signaled back to the caller (StartWriteWatch,
@@ -127,18 +317,25 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
       const EXCEPTION_RECORD& er = ev.u.Exception.ExceptionRecord;
       if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
         uintptr_t rip = (uintptr_t)er.ExceptionAddress;
+        bool seen = false;
         {
           std::lock_guard<std::mutex> lk(g_session.mtx);
-          bool seen = false;
           for (const auto& c : g_session.caught)
-            if (c.instructionAddress == rip) { seen = true; break; }
-          if (!seen) {
-            Caught c;
-            c.instructionAddress = rip;
-            g_session.caught.push_back(c);
-          }
+            if (c.trapAddress == rip) { seen = true; break; }
         }
-        continueStatus = DBG_CONTINUE; // we handled it
+        if (!seen) {
+          Caught c;
+          c.instructionAddress = rip; // overwritten with the true write-insn address on success
+          c.trapAddress = rip;        // dedup key: rip is the post-instruction trap address
+          DecodeCaught(pid, ev.dwThreadId, rip, c); // fills bytes/length/base/disp/baseAddress
+          std::lock_guard<std::mutex> lk(g_session.mtx);
+          // re-check under lock in case of races (single debug thread, but cheap)
+          bool seen2 = false;
+          for (const auto& e : g_session.caught)
+            if (e.trapAddress == rip) { seen2 = true; break; }
+          if (!seen2) g_session.caught.push_back(std::move(c));
+        }
+        continueStatus = DBG_CONTINUE;
       } else {
         // Not ours (e.g. the game's own exceptions) — pass it back.
         continueStatus = DBG_EXCEPTION_NOT_HANDLED;
@@ -206,6 +403,22 @@ static Napi::Array SnapshotToArray(Napi::Env env) {
   for (const auto& c : g_session.caught) {
     Napi::Object o = Napi::Object::New(env);
     o.Set("instructionAddress", Napi::String::New(env, ToHex(c.instructionAddress)));
+    std::string byteHex;
+    char hb[3];
+    for (uint8_t b : c.bytes) { snprintf(hb, sizeof(hb), "%02x", b); byteHex += hb; }
+    o.Set("bytes", Napi::String::New(env, byteHex));
+    o.Set("length", Napi::Number::New(env, c.length));
+    o.Set("signature", Napi::String::New(env, byteHex)); // real signature added in Task 5
+    o.Set("baseRegister", Napi::String::New(env, c.baseRegister));
+    o.Set("displacement", Napi::String::New(env, ToHex((uintptr_t)c.displacement)));
+    o.Set("baseAddress", Napi::String::New(env, ToHex(c.baseAddress)));
+    if (c.hasModule) {
+      o.Set("moduleName", Napi::String::New(env, c.moduleName));
+      o.Set("moduleOffset", Napi::String::New(env, ToHex(c.moduleOffset)));
+    } else {
+      o.Set("moduleName", env.Null());
+      o.Set("moduleOffset", env.Null());
+    }
     arr.Set(i++, o);
   }
   return arr;
