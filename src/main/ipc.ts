@@ -16,9 +16,20 @@ function fullOffsets(cheat: CheatDefinition): string[] {
   return [cheat.baseOffset, ...cheat.offsets]
 }
 
+// A cheat's chain can be anchored to any module the game has loaded (see
+// resolvePointerChain's moduleName), not necessarily the module attach()
+// happened to report first — so its base must be looked up per cheat,
+// fresh, rather than reusing the single attachedBase captured at attach
+// time.
+function writeCheat(handle: number, cheat: CheatDefinition): boolean {
+  const moduleBase = nativeAddon.getModuleBase(handle, cheat.moduleName)
+  if (moduleBase === null) return false
+  return nativeAddon.writeValue(handle, moduleBase, fullOffsets(cheat), cheat.dataType, cheat.value)
+}
+
 const freezeLoop = new FreezeLoop((cheat) => {
-  if (attachedHandle === null || attachedBase === null) return false
-  return nativeAddon.writeValue(attachedHandle, attachedBase, fullOffsets(cheat), cheat.dataType, cheat.value)
+  if (attachedHandle === null) return false
+  return writeCheat(attachedHandle, cheat)
 })
 freezeLoop.start()
 
@@ -48,8 +59,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   })
 
   ipcMain.handle('cheats:oneShot', (_e, cheat: CheatDefinition) => {
-    if (attachedHandle === null || attachedBase === null) return false
-    return nativeAddon.writeValue(attachedHandle, attachedBase, fullOffsets(cheat), cheat.dataType, cheat.value)
+    if (attachedHandle === null) return false
+    return writeCheat(attachedHandle, cheat)
   })
 
   ipcMain.handle('scan:first', (_e, dataType: string, value: number) => {
@@ -63,7 +74,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   })
 
   ipcMain.handle('scan:resolveChain', (_e, target: string, maxLevels: number) => {
-    if (attachedHandle === null || attachedBase === null) throw new Error('not attached')
-    return nativeAddon.resolvePointerChain(attachedHandle, attachedBase, target, maxLevels)
+    if (attachedHandle === null) throw new Error('not attached')
+    return nativeAddon.resolvePointerChain(attachedHandle, target, maxLevels)
   })
 }

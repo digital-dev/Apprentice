@@ -15,7 +15,7 @@ export default function Scanner({
   const [candidates, setCandidates] = useState<string[]>([])
   const [previousValue, setPreviousValue] = useState<number | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
-  const [chain, setChain] = useState<{ offsets: string[] } | null>(null)
+  const [chain, setChain] = useState<{ moduleName: string; offsets: string[] } | null>(null)
   const [name, setName] = useState('')
   const [mode, setMode] = useState<CheatMode>('freeze')
 
@@ -48,7 +48,7 @@ export default function Scanner({
       name,
       dataType,
       mode,
-      moduleName: exeName,
+      moduleName: chain.moduleName,
       baseOffset: chain.offsets[0],
       offsets: chain.offsets.slice(1),
       value: Number(value)

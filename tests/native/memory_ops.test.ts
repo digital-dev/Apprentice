@@ -32,7 +32,7 @@ describe('readValue / writeValue', () => {
     const candidates: string[] = (addon as any).scanFirst(handle, 'int32', 100)
     let offsets: string[] | null = null
     for (const target of candidates) {
-      const chain = (addon as any).resolvePointerChain(handle, baseAddress, target, 2)
+      const chain = (addon as any).resolvePointerChain(handle, target, 2)
       if (chain) { offsets = chain.offsets; break }
     }
     expect(offsets).not.toBeNull()

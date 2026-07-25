@@ -42,6 +42,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("scanFirst", Napi::Function::New(env, ScanFirst));
   exports.Set("scanNext", Napi::Function::New(env, ScanNext));
   exports.Set("resolvePointerChain", Napi::Function::New(env, ResolvePointerChain));
+  exports.Set("getModuleBase", Napi::Function::New(env, GetModuleBase));
   exports.Set("readValue", Napi::Function::New(env, ReadValue));
   exports.Set("writeValue", Napi::Function::New(env, WriteValue));
   return exports;

@@ -17,10 +17,12 @@ export const nativeAddon = {
     addon.scanNext(handle, addresses, dataType, filter),
   resolvePointerChain: (
     handle: number,
-    baseAddress: string,
     target: string,
     maxLevels: number
-  ): { offsets: string[] } | null => addon.resolvePointerChain(handle, baseAddress, target, maxLevels),
+  ): { moduleName: string; offsets: string[] } | null =>
+    addon.resolvePointerChain(handle, target, maxLevels),
+  getModuleBase: (handle: number, moduleName: string): string | null =>
+    addon.getModuleBase(handle, moduleName),
   readValue: (handle: number, baseAddress: string, offsets: string[], dataType: string): number =>
     addon.readValue(handle, baseAddress, offsets, dataType),
   writeValue: (

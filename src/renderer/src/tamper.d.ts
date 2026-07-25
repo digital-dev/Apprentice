@@ -13,7 +13,10 @@ declare global {
       oneShot: (cheat: CheatDefinition) => Promise<boolean>
       scanFirst: (dataType: string, value: number) => Promise<string[]>
       scanNext: (addresses: string[], dataType: string, filter: unknown) => Promise<string[]>
-      resolveChain: (target: string, maxLevels: number) => Promise<{ offsets: string[] } | null>
+      resolveChain: (
+        target: string,
+        maxLevels: number
+      ) => Promise<{ moduleName: string; offsets: string[] } | null>
       // void return is intentional—idiomatic for event listeners; underlying IpcRenderer.on() return is not used
       onCheatBroken: (cb: (cheatId: string) => void) => void
     }
