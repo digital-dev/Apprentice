@@ -4,6 +4,7 @@
 #include "scanner.h"
 #include "pointer.h"
 #include "memory_ops.h"
+#include "write_watch.h"
 
 #include <string>
 #include <vector>
@@ -86,6 +87,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("readValue", Napi::Function::New(env, ReadValue));
   exports.Set("writeValue", Napi::Function::New(env, WriteValue));
   exports.Set("decodeAt", Napi::Function::New(env, DecodeAt));
+  exports.Set("startWriteWatch", Napi::Function::New(env, StartWriteWatch));
+  exports.Set("pollWriteWatch", Napi::Function::New(env, PollWriteWatch));
+  exports.Set("stopWriteWatch", Napi::Function::New(env, StopWriteWatch));
   return exports;
 }
 
