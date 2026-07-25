@@ -34,6 +34,7 @@ struct Caught {
   uintptr_t trapAddress = 0;
   std::vector<uint8_t> bytes;
   uint32_t length = 0;
+  std::string signature;
   std::string baseRegister;
   int64_t displacement = 0;
   uintptr_t baseAddress = 0;
@@ -276,6 +277,27 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
     break;
   }
 
+  // Build an AOB signature: literal bytes, but wildcard the RIP-relative
+  // displacement (the bytes that shift when the module loads at a
+  // different base), so the pattern still matches after a restart. Zydis
+  // reports the displacement's offset+size within the instruction.
+  {
+    out.signature.clear();
+    char hb[4];
+    size_t dispStart = insn.raw.disp.offset;
+    size_t dispSize = insn.raw.disp.size / 8; // bits -> bytes
+    bool ripRel = (out.baseRegister == "rip");
+    for (size_t i = 0; i < out.bytes.size() && i < out.length; i++) {
+      if (i) out.signature += " ";
+      if (ripRel && dispSize && i >= dispStart && i < dispStart + dispSize) {
+        out.signature += "??";
+      } else {
+        snprintf(hb, sizeof(hb), "%02x", out.bytes[i]);
+        out.signature += hb;
+      }
+    }
+  }
+
   out.hasModule = ModuleOf(pid, insnAddr, out.moduleName, out.moduleOffset);
   CloseHandle(proc);
 }
@@ -408,7 +430,7 @@ static Napi::Array SnapshotToArray(Napi::Env env) {
     for (uint8_t b : c.bytes) { snprintf(hb, sizeof(hb), "%02x", b); byteHex += hb; }
     o.Set("bytes", Napi::String::New(env, byteHex));
     o.Set("length", Napi::Number::New(env, c.length));
-    o.Set("signature", Napi::String::New(env, byteHex)); // real signature added in Task 5
+    o.Set("signature", Napi::String::New(env, c.signature));
     o.Set("baseRegister", Napi::String::New(env, c.baseRegister));
     o.Set("displacement", Napi::String::New(env, ToHex((uintptr_t)c.displacement)));
     o.Set("baseAddress", Napi::String::New(env, ToHex(c.baseAddress)));

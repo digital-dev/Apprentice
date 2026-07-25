@@ -64,6 +64,11 @@ describe('write watch — capture', () => {
     expect('0x' + (base + disp).toString(16)).toBe(address)
     // The writing instruction lives in the harness module.
     expect(insn.moduleName === null || typeof insn.moduleName === 'string').toBe(true)
+    // Signature is space-separated hex byte tokens, each 2 hex chars or '??'.
+    expect(insn.signature.length).toBeGreaterThan(0)
+    for (const tok of insn.signature.split(' ')) {
+      expect(tok === '??' || /^[0-9a-f]{2}$/.test(tok)).toBe(true)
+    }
 
     const reply = await send('get')
     expect(reply.startsWith('OK')).toBe(true)

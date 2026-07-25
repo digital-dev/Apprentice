@@ -1,5 +1,4 @@
 #include <napi.h>
-#include "Zydis.h"
 #include "process_utils.h"
 #include "scanner.h"
 #include "pointer.h"
@@ -11,42 +10,6 @@
 
 Napi::Value Ping(const Napi::CallbackInfo& info) {
   return Napi::String::New(info.Env(), "pong");
-}
-
-// Temporary: proves Zydis is compiled and linked. Decodes the first
-// instruction in a hex-encoded byte string. Removed in Task 5.
-static uint8_t HexNibble(char c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-  return 0;
-}
-
-Napi::Value DecodeAt(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  std::string hex = info[0].As<Napi::String>().Utf8Value();
-  std::vector<uint8_t> bytes;
-  for (size_t i = 0; i + 1 < hex.size(); i += 2) {
-    bytes.push_back((HexNibble(hex[i]) << 4) | HexNibble(hex[i + 1]));
-  }
-
-  ZydisDecoder decoder;
-  ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
-  ZydisDecodedInstruction insn;
-  ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-  ZyanStatus status = ZydisDecoderDecodeFull(&decoder, bytes.data(), bytes.size(),
-      &insn, operands);
-
-  Napi::Object result = Napi::Object::New(env);
-  if (!ZYAN_SUCCESS(status)) {
-    result.Set("mnemonic", Napi::String::New(env, "decode-failed"));
-    result.Set("length", Napi::Number::New(env, 0));
-    return result;
-  }
-  result.Set("mnemonic",
-      Napi::String::New(env, ZydisMnemonicGetString(insn.mnemonic)));
-  result.Set("length", Napi::Number::New(env, insn.length));
-  return result;
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -86,7 +49,6 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getModuleBase", Napi::Function::New(env, GetModuleBase));
   exports.Set("readValue", Napi::Function::New(env, ReadValue));
   exports.Set("writeValue", Napi::Function::New(env, WriteValue));
-  exports.Set("decodeAt", Napi::Function::New(env, DecodeAt));
   exports.Set("startWriteWatch", Napi::Function::New(env, StartWriteWatch));
   exports.Set("pollWriteWatch", Napi::Function::New(env, PollWriteWatch));
   exports.Set("stopWriteWatch", Napi::Function::New(env, StopWriteWatch));
