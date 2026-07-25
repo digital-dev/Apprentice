@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <algorithm>
 
 namespace {
 
@@ -116,6 +117,21 @@ struct ChainResult {
 // superset of exact matching (gap 0 still matches).
 constexpr uintptr_t kMaxFieldOffset = 0x1000;
 
+// Every pointer whose value is exactly `target` sorts to the same spot as
+// `target` itself under value-ascending order, so ordering by `.value`
+// lets a candidate range [target - kMaxFieldOffset, target] be found with
+// binary search instead of a full scan.
+bool ByValue(const PointerEntry& a, const PointerEntry& b) { return a.value < b.value; }
+
+// FindChain explores a real search tree (each candidate can itself require
+// recursing into further candidates), and with an offset-tolerant match
+// the branching factor per level can be large against a real game's
+// gigabytes of memory. A per-call node budget bounds total work
+// independent of how deep or wide that tree gets, so a genuinely
+// unresolvable chain fails fast instead of exhaustively enumerating every
+// path up to maxLevels.
+constexpr int kMaxNodesVisited = 200000;
+
 // FindChain(target, levelsLeft) returns an offset list which, when resolved
 // via the standard "deref all but the last offset" walk starting at the
 // anchor module's base, lands exactly on `target` itself (not a dereference
@@ -149,19 +165,36 @@ constexpr uintptr_t kMaxFieldOffset = 0x1000;
 // fieldOffset to `inner` forces one more dereference at the point that
 // used to be `inner`'s last step, then adds fieldOffset, producing target —
 // exactly mirroring the base case's fix.
+// `pointers` must already be sorted by `.value` (see ByValue). `nodesVisited`
+// is threaded through the whole search (not reset per level) so the budget
+// caps total work across the entire recursion tree, not just one level of
+// it.
 std::optional<ChainResult> FindChain(
     const std::vector<ModuleRange>& modules,
-    uintptr_t target, int levelsLeft, const std::vector<PointerEntry>& pointers) {
-  for (const auto& e : pointers) {
-    if (target < e.value) continue;
+    uintptr_t target, int levelsLeft, const std::vector<PointerEntry>& pointers,
+    int* nodesVisited) {
+  if (*nodesVisited >= kMaxNodesVisited) return std::nullopt;
+
+  // Candidates are exactly those with value in [target - kMaxFieldOffset,
+  // target]; find that contiguous run in the sorted vector via two binary
+  // searches instead of scanning every pointer in the process.
+  uintptr_t lowValue = (target >= kMaxFieldOffset) ? target - kMaxFieldOffset : 0;
+  auto begin = std::lower_bound(pointers.begin(), pointers.end(),
+      PointerEntry{0, lowValue}, ByValue);
+  auto end = std::upper_bound(pointers.begin(), pointers.end(),
+      PointerEntry{0, target}, ByValue);
+
+  for (auto it = begin; it != end; ++it) {
+    if (++(*nodesVisited) > kMaxNodesVisited) return std::nullopt;
+
+    const PointerEntry& e = *it;
     uintptr_t fieldOffset = target - e.value;
-    if (fieldOffset >= kMaxFieldOffset) continue;
 
     if (const ModuleRange* m = FindContainingModule(modules, e.address)) {
       return ChainResult{m->name, {e.address - m->base, fieldOffset}};
     }
     if (levelsLeft > 0) {
-      auto inner = FindChain(modules, e.address, levelsLeft - 1, pointers);
+      auto inner = FindChain(modules, e.address, levelsLeft - 1, pointers, nodesVisited);
       if (inner) {
         inner->offsets.push_back(fieldOffset);
         return inner;
@@ -182,7 +215,9 @@ Napi::Value ResolvePointerChain(const Napi::CallbackInfo& info) {
 
   auto modules = ListModules(h);
   auto pointers = CollectPointers(h);
-  auto chain = FindChain(modules, target, maxLevels, pointers);
+  std::sort(pointers.begin(), pointers.end(), ByValue);
+  int nodesVisited = 0;
+  auto chain = FindChain(modules, target, maxLevels, pointers, &nodesVisited);
 
   if (!chain) return env.Null();
 
