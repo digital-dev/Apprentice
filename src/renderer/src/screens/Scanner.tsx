@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { CheatDefinition, ChainTarget, CheatMode, DataType } from '../../../main/store'
+import type { CheatDefinition, ChainTarget, CheatMode, DataType, PatchCheat } from '../../../main/store'
 import type { Candidate, CaughtInstruction } from '../tamper.d'
 
 type Filter = 'exact' | 'changed' | 'unchanged' | 'increased' | 'decreased'
@@ -180,6 +180,27 @@ export default function Scanner({
     onSaved()
   }
 
+  // Turn a caught instruction into a code patch. Unlike the pointer-cheat
+  // path this needs no base register and no chain — only the instruction's
+  // own bytes, length, signature and module anchor — so it works for
+  // rip-relative and otherwise-undecoded writes too.
+  async function createPatchFromInstruction(insn: CaughtInstruction) {
+    if (!captureName) return
+    setCaptureError(null)
+    const patch: PatchCheat = {
+      kind: 'patch',
+      id: captureName.toLowerCase().replace(/\s+/g, '-'),
+      name: captureName,
+      originalBytes: insn.bytes,
+      length: insn.length,
+      signature: insn.signature,
+      moduleName: insn.moduleName,
+      moduleOffset: insn.moduleOffset
+    }
+    await window.tamper.saveCheat(exeName, patch)
+    onSaved()
+  }
+
   return (
     <div>
       <h2>Scan for a new cheat — {exeName}</h2>
@@ -283,7 +304,13 @@ export default function Scanner({
                 {!insn.baseRegister && (
                   <span className="muted"> (can't chain this instruction)</span>
                 )}
-                <button disabled title="Coming in the AOB update">Create patch</button>
+                <button
+                  disabled={!captureName || insn.length === 0}
+                  title="Replace this instruction with no-ops so the write never happens"
+                  onClick={() => createPatchFromInstruction(insn)}
+                >
+                  Create patch
+                </button>
               </li>
             ))}
           </ul>
