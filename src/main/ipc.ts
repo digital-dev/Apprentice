@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { nativeAddon } from './nativeAddon'
+import { nativeAddon, Candidate } from './nativeAddon'
 import { loadCheats, saveCheat, CheatDefinition } from './store'
 import { FreezeLoop } from './freezeLoop'
 
@@ -68,9 +68,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     return nativeAddon.scanFirst(attachedHandle, dataType, value)
   })
 
-  ipcMain.handle('scan:next', (_e, addresses: string[], dataType: string, filter: unknown) => {
+  ipcMain.handle('scan:next', (_e, candidates: Candidate[], dataType: string, filter: unknown) => {
     if (attachedHandle === null) throw new Error('not attached')
-    return nativeAddon.scanNext(attachedHandle, addresses, dataType, filter as never)
+    return nativeAddon.scanNext(attachedHandle, candidates, dataType, filter as never)
   })
 
   ipcMain.handle('scan:resolveChain', (_e, target: string, maxLevels: number) => {

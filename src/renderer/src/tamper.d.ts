@@ -2,6 +2,11 @@ import type { CheatDefinition } from '../../main/store'
 
 export {}
 
+export interface Candidate {
+  address: string
+  value: number
+}
+
 declare global {
   interface Window {
     tamper: {
@@ -11,8 +16,8 @@ declare global {
       saveCheat: (exeName: string, cheat: CheatDefinition) => Promise<void>
       toggleFreeze: (cheat: CheatDefinition, enabled: boolean) => Promise<void>
       oneShot: (cheat: CheatDefinition) => Promise<boolean>
-      scanFirst: (dataType: string, value: number) => Promise<string[]>
-      scanNext: (addresses: string[], dataType: string, filter: unknown) => Promise<string[]>
+      scanFirst: (dataType: string, value: number) => Promise<Candidate[]>
+      scanNext: (candidates: Candidate[], dataType: string, filter: unknown) => Promise<Candidate[]>
       resolveChain: (
         target: string,
         maxLevels: number

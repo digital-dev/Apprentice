@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { CheatDefinition, CheatMode, DataType } from '../../../main/store'
+import type { Candidate } from '../tamper.d'
 
 type Filter = 'exact' | 'changed' | 'unchanged' | 'increased' | 'decreased'
 
@@ -12,8 +13,7 @@ export default function Scanner({
 }) {
   const [dataType, setDataType] = useState<DataType>('float')
   const [value, setValue] = useState('')
-  const [candidates, setCandidates] = useState<string[]>([])
-  const [previousValue, setPreviousValue] = useState<number | null>(null)
+  const [candidates, setCandidates] = useState<Candidate[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [chain, setChain] = useState<{ moduleName: string; offsets: string[] } | null>(null)
   const [name, setName] = useState('')
@@ -22,17 +22,18 @@ export default function Scanner({
   async function firstScan() {
     const found = await window.tamper.scanFirst(dataType, Number(value))
     setCandidates(found)
-    setPreviousValue(Number(value))
   }
 
+  // Relative filters (changed/increased/...) compare each candidate against
+  // its OWN previously-recorded value (carried alongside its address), not
+  // a single value typed into the UI — candidates can have diverged from
+  // each other since the last scan, so a single broadcast "previous" would
+  // be wrong for any candidate beyond the first post-first-scan step.
   async function nextScan(filter: Filter) {
     const filterPayload =
-      filter === 'exact'
-        ? { mode: 'exact' as const, value: Number(value) }
-        : { mode: filter, previous: candidates.map(() => previousValue ?? 0) }
+      filter === 'exact' ? { mode: 'exact' as const, value: Number(value) } : { mode: filter }
     const found = await window.tamper.scanNext(candidates, dataType, filterPayload)
     setCandidates(found)
-    setPreviousValue(Number(value))
   }
 
   async function resolve(address: string) {
@@ -94,10 +95,11 @@ export default function Scanner({
 
       {candidates.length > 0 && candidates.length <= 20 && (
         <ul>
-          {candidates.map((addr) => (
-            <li key={addr} onClick={() => resolve(addr)}>
-              {addr} {selected === addr && chain && '✓ chain resolved'}
-              {selected === addr && chain === null && '— no static chain found'}
+          {candidates.map((c) => (
+            <li key={c.address} onClick={() => resolve(c.address)}>
+              {c.address} = {c.value}{' '}
+              {selected === c.address && chain && '✓ chain resolved'}
+              {selected === c.address && chain === null && '— no static chain found'}
             </li>
           ))}
         </ul>

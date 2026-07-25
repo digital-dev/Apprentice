@@ -11,8 +11,8 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('cheats:toggleFreeze', cheat, enabled),
   oneShot: (cheat: CheatDefinition) => ipcRenderer.invoke('cheats:oneShot', cheat),
   scanFirst: (dataType: string, value: number) => ipcRenderer.invoke('scan:first', dataType, value),
-  scanNext: (addresses: string[], dataType: string, filter: unknown) =>
-    ipcRenderer.invoke('scan:next', addresses, dataType, filter),
+  scanNext: (candidates: unknown[], dataType: string, filter: unknown) =>
+    ipcRenderer.invoke('scan:next', candidates, dataType, filter),
   resolveChain: (target: string, maxLevels: number) =>
     ipcRenderer.invoke('scan:resolveChain', target, maxLevels),
   onCheatBroken: (cb: (cheatId: string) => void) =>

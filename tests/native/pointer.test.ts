@@ -20,12 +20,16 @@ afterAll(() => {
 
 describe('resolvePointerChain', () => {
   it('finds a static chain anchored in any loaded module, and it round-trips through readValue', () => {
-    const candidates: string[] = (addon as any).scanFirst(handle, 'int32', 100)
+    const candidates: { address: string; value: number }[] = (addon as any).scanFirst(
+      handle,
+      'int32',
+      100
+    )
     expect(candidates.length).toBeGreaterThan(0)
 
     let chain = null
-    for (const target of candidates) {
-      chain = (addon as any).resolvePointerChain(handle, target, 2)
+    for (const candidate of candidates) {
+      chain = (addon as any).resolvePointerChain(handle, candidate.address, 2)
       if (chain) break
     }
     expect(chain).not.toBeNull()
@@ -46,12 +50,16 @@ describe('resolvePointerChain', () => {
     // 16 bytes in (four leading int padding fields). An exact-value-only
     // pointer match would never find this — only a pointer whose value is
     // AT the struct base, with the field offset applied afterward, works.
-    const candidates: string[] = (addon as any).scanFirst(handle, 'float', 77.0)
+    const candidates: { address: string; value: number }[] = (addon as any).scanFirst(
+      handle,
+      'float',
+      77.0
+    )
     expect(candidates.length).toBeGreaterThan(0)
 
     let chain = null
-    for (const target of candidates) {
-      chain = (addon as any).resolvePointerChain(handle, target, 2)
+    for (const candidate of candidates) {
+      chain = (addon as any).resolvePointerChain(handle, candidate.address, 2)
       if (chain) break
     }
     expect(chain).not.toBeNull()

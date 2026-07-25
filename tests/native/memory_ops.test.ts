@@ -32,14 +32,18 @@ describe('readValue / writeValue', () => {
     // resolvable chain is unreliable: many addresses across a real process
     // can share the same scanned value, and the offset-tolerant chain
     // search can find *some* static path to more than one of them.
-    let candidates: string[] = (addon as any).scanFirst(handle, 'int32', 100)
+    let candidates: { address: string; value: number }[] = (addon as any).scanFirst(
+      handle,
+      'int32',
+      100
+    )
     await send('set 55')
     candidates = (addon as any).scanNext(handle, candidates, 'int32', {
       mode: 'exact',
       value: 55
     })
     expect(candidates.length).toBe(1)
-    const target = candidates[0]
+    const target = candidates[0].address
 
     const chain = (addon as any).resolvePointerChain(handle, target, 2)
     expect(chain).not.toBeNull()

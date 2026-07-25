@@ -83,7 +83,10 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
         for (SIZE_T offset = 0; offset + kValueSize <= bytesRead; offset += kValueSize) {
           double value = InterpretAsDouble(buffer.data() + offset, isFloat);
           if (ValuesEqual(value, target, isFloat)) {
-            result.Set(count++, Napi::String::New(env, ToHex(base + offset)));
+            Napi::Object item = Napi::Object::New(env);
+            item.Set("address", Napi::String::New(env, ToHex(base + offset)));
+            item.Set("value", Napi::Number::New(env, value));
+            result.Set(count++, item);
           }
         }
       }
@@ -105,7 +108,13 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
-  Napi::Array addrs = info[1].As<Napi::Array>();
+  // Each candidate carries its own previously-known value (from the last
+  // scanFirst/scanNext call), so relative filters (changed/increased/...)
+  // compare each address against its OWN prior value rather than a single
+  // value broadcast across every candidate — which would be wrong for any
+  // candidates whose values have diverged from each other since the last
+  // scan.
+  Napi::Array candidates = info[1].As<Napi::Array>();
   std::string dataType = info[2].As<Napi::String>().Utf8Value();
   bool isFloat = dataType == "float";
   Napi::Object filter = info[3].As<Napi::Object>();
@@ -114,8 +123,9 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
   Napi::Array result = Napi::Array::New(env);
   uint32_t count = 0;
 
-  for (uint32_t i = 0; i < addrs.Length(); i++) {
-    uintptr_t addr = ParseHex(addrs.Get(i).As<Napi::String>().Utf8Value());
+  for (uint32_t i = 0; i < candidates.Length(); i++) {
+    Napi::Object candidate = candidates.Get(i).As<Napi::Object>();
+    uintptr_t addr = ParseHex(candidate.Get("address").As<Napi::String>().Utf8Value());
     double current;
     if (!ReadValueAsDouble(h, addr, isFloat, &current)) continue;
 
@@ -124,15 +134,19 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
       double target = filter.Get("value").As<Napi::Number>().DoubleValue();
       keep = ValuesEqual(current, target, isFloat);
     } else {
-      double previous = filter.Get("previous").As<Napi::Array>()
-                             .Get(i).As<Napi::Number>().DoubleValue();
+      double previous = candidate.Get("value").As<Napi::Number>().DoubleValue();
       if (mode == "changed") keep = !ValuesEqual(current, previous, isFloat);
       else if (mode == "unchanged") keep = ValuesEqual(current, previous, isFloat);
       else if (mode == "increased") keep = current > previous;
       else if (mode == "decreased") keep = current < previous;
     }
 
-    if (keep) result.Set(count++, Napi::String::New(env, ToHex(addr)));
+    if (keep) {
+      Napi::Object item = Napi::Object::New(env);
+      item.Set("address", Napi::String::New(env, ToHex(addr)));
+      item.Set("value", Napi::Number::New(env, current));
+      result.Set(count++, item);
+    }
   }
 
   return result;

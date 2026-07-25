@@ -4,17 +4,22 @@ const addon = require(path.join(__dirname, '../../native/build/Release/memory_ad
 
 export interface ProcessInfo { pid: number; name: string }
 export interface AttachResult { handle: number; baseAddress: string }
+export interface Candidate { address: string; value: number }
 export type ScanFilter =
   | { mode: 'exact'; value: number }
-  | { mode: 'changed' | 'unchanged' | 'increased' | 'decreased'; previous: number[] }
+  | { mode: 'changed' | 'unchanged' | 'increased' | 'decreased' }
 
 export const nativeAddon = {
   listProcesses: (): ProcessInfo[] => addon.listProcesses(),
   attach: (pid: number): AttachResult => addon.attach(pid),
-  scanFirst: (handle: number, dataType: string, value: number): string[] =>
+  scanFirst: (handle: number, dataType: string, value: number): Candidate[] =>
     addon.scanFirst(handle, dataType, value),
-  scanNext: (handle: number, addresses: string[], dataType: string, filter: ScanFilter): string[] =>
-    addon.scanNext(handle, addresses, dataType, filter),
+  scanNext: (
+    handle: number,
+    candidates: Candidate[],
+    dataType: string,
+    filter: ScanFilter
+  ): Candidate[] => addon.scanNext(handle, candidates, dataType, filter),
   resolvePointerChain: (
     handle: number,
     target: string,
