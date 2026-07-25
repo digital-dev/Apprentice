@@ -37,7 +37,7 @@ export default function Scanner({
 
   async function resolve(address: string) {
     setSelected(address)
-    const result = await window.tamper.resolveChain(address, 3)
+    const result = await window.tamper.resolveChain(address, 5)
     setChain(result)
   }
 

@@ -76,14 +76,19 @@ std::vector<PointerEntry> CollectPointers(HANDLE h) {
     bool readable = (mbi.State == MEM_COMMIT) &&
         (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
         !(mbi.Protect & PAGE_GUARD);
-    if (readable) {
-      for (uintptr_t p = (uintptr_t)mbi.BaseAddress;
-           p + sizeof(uintptr_t) <= (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
-           p += sizeof(uintptr_t)) {
-        uintptr_t val;
-        SIZE_T read;
-        if (ReadProcessMemory(h, (LPCVOID)p, &val, sizeof(val), &read) && read == sizeof(val)) {
-          if (val != 0) out.push_back({p, val});
+    // One bulk read per region instead of one ReadProcessMemory syscall per
+    // 8-byte candidate — the latter is hundreds of millions of syscalls
+    // against a real game process and makes this look hung (same issue
+    // scanFirst had, fixed the same way here).
+    if (readable && mbi.RegionSize >= sizeof(uintptr_t)) {
+      std::vector<uint8_t> buffer(mbi.RegionSize);
+      SIZE_T bytesRead = 0;
+      if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
+        uintptr_t base = (uintptr_t)mbi.BaseAddress;
+        for (SIZE_T offset = 0; offset + sizeof(uintptr_t) <= bytesRead; offset += sizeof(uintptr_t)) {
+          uintptr_t val;
+          memcpy(&val, buffer.data() + offset, sizeof(val));
+          if (val != 0) out.push_back({base + offset, val});
         }
       }
     }
