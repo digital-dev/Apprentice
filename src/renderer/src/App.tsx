@@ -3,6 +3,7 @@ import './theme.css'
 import Sidebar from './components/Sidebar'
 import ProcessPicker from './screens/ProcessPicker'
 import CheatList from './screens/CheatList'
+import Scanner from './screens/Scanner'
 
 type Screen = 'picker' | 'cheats' | 'scanner'
 
@@ -25,7 +26,9 @@ export default function App() {
         {screen === 'cheats' && exeName && (
           <CheatList exeName={exeName} onOpenScanner={() => setScreen('scanner')} />
         )}
-        {screen === 'scanner' && exeName && <h2>Scanner — {exeName} (Task 13)</h2>}
+        {screen === 'scanner' && exeName && (
+          <Scanner exeName={exeName} onSaved={() => setScreen('cheats')} />
+        )}
       </div>
     </div>
   )
