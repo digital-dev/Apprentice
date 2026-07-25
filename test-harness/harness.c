@@ -7,6 +7,7 @@
 int g_health = 100;
 int* g_health_ptr = &g_health; // pointer.test.ts resolves through this
 float g_stamina = 100.0f; // scanner.test.ts float-path coverage
+volatile int g_drain_count = 1000000; // patch_ops.test.ts drains and NOPs this
 
 // Mimics a real object layout: the field we care about sits at a nonzero
 // offset inside a struct, and only the struct's base address is pointed
@@ -21,6 +22,20 @@ PlayerComponent g_player = { { 0, 0, 0, 0 }, 77.0f }; // distinct value, avoids 
 PlayerComponent* g_player_ptr = &g_player;
 
 static volatile int g_watch_running = 0;
+
+static volatile int g_drain_running = 0;
+
+// The instruction under test for code patching. Non-inlined and taking the
+// counter as a runtime pointer argument, so the compiler emits a real
+// memory read-modify-write through a general-purpose register (e.g.
+// `sub dword ptr [rcx], 1`) — the same shape as a game's stamina-drain
+// store, and something an AOB signature can match. A RIP-relative store to
+// a known global would not exercise the register-based path.
+#pragma optimize("", off)
+static void drain_step(volatile int* counter) {
+  *counter -= 1;
+}
+#pragma optimize("", on)
 
 // Non-inlined, takes the pointer as a runtime argument so the store is
 // `mov [reg+disp], xmm` (base register = the object pointer), matching a
@@ -37,6 +52,15 @@ static unsigned __stdcall watch_thread(void* arg) {
     write_stamina(g_player_ptr, v);
     v += 1.0f;
     Sleep(10);
+  }
+  return 0;
+}
+
+static unsigned __stdcall drain_thread(void* arg) {
+  (void)arg;
+  while (g_drain_running) {
+    drain_step(&g_drain_count);
+    Sleep(1);
   }
   return 0;
 }
@@ -60,6 +84,20 @@ int main(void) {
       printf("OK\n");
     } else if (sscanf(line, "setp %f", &fval) == 1) {
       g_player_ptr->stamina = fval; // lets pointer.test.ts narrow to this exact field
+      printf("OK\n");
+    } else if (sscanf(line, "setcount %d", &val) == 1) {
+      g_drain_count = val; // lets the test narrow the scan to this exact global
+      printf("OK\n");
+    } else if (strncmp(line, "getcount", 8) == 0) {
+      printf("OK %d\n", g_drain_count);
+    } else if (strncmp(line, "drainloop", 9) == 0) {
+      if (!g_drain_running) {
+        g_drain_running = 1;
+        _beginthreadex(NULL, 0, drain_thread, NULL, 0, NULL);
+      }
+      printf("OK\n");
+    } else if (strncmp(line, "stopdrain", 9) == 0) {
+      g_drain_running = 0;
       printf("OK\n");
     } else if (strncmp(line, "get", 3) == 0) {
       printf("OK %d\n", *g_health_ptr);
