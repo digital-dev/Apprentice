@@ -1,11 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CheatDefinition } from '../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat } from '../main/store'
 
 contextBridge.exposeInMainWorld('tamper', {
   listProcesses: () => ipcRenderer.invoke('process:list'),
   attach: (pid: number) => ipcRenderer.invoke('process:attach', pid),
   loadCheats: (exeName: string) => ipcRenderer.invoke('cheats:load', exeName),
-  saveCheat: (exeName: string, cheat: CheatDefinition) =>
+  saveCheat: (exeName: string, cheat: StoredCheat) =>
     ipcRenderer.invoke('cheats:save', exeName, cheat),
   deleteCheat: (exeName: string, cheatId: string) =>
     ipcRenderer.invoke('cheats:delete', exeName, cheatId),
@@ -25,5 +25,8 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.on('cheat:recovered', (_e, cheatId) => cb(cheatId)),
   startWriteWatch: (address: string) => ipcRenderer.invoke('writeWatch:start', address),
   pollWriteWatch: () => ipcRenderer.invoke('writeWatch:poll'),
-  stopWriteWatch: () => ipcRenderer.invoke('writeWatch:stop')
+  stopWriteWatch: () => ipcRenderer.invoke('writeWatch:stop'),
+  locatePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:locate', patch),
+  applyPatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:apply', patch),
+  restorePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:restore', patch)
 })

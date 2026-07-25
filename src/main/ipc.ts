@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { nativeAddon, Candidate } from './nativeAddon'
-import { loadCheats, saveCheat, deleteCheat, CheatDefinition, ChainTarget, StoredCheat } from './store'
+import { loadCheats, saveCheat, deleteCheat, CheatDefinition, ChainTarget, StoredCheat, PatchCheat } from './store'
+import { PatchEngine, PatchOps } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
 
 let attachedHandle: number | null = null
@@ -89,6 +90,30 @@ const freezeLoop = new FreezeLoop((cheat) => {
 })
 freezeLoop.start()
 
+// The engine's view of the target process. Each call reads the CURRENT
+// attachedHandle rather than capturing one, so the engine keeps working
+// across a re-attach without being rebuilt. Reads are the non-throwing
+// form: "can't read there" is an expected outcome for a patch whose code
+// has moved, not an error.
+const patchOps: PatchOps = {
+  getModuleBase: (moduleName) =>
+    attachedHandle === null ? null : nativeAddon.getModuleBase(attachedHandle, moduleName),
+  readBytes: (address, length) =>
+    attachedHandle === null ? null : nativeAddon.tryReadBytes(attachedHandle, address, length),
+  writeBytes: (address, hexBytes) =>
+    attachedHandle === null ? false : nativeAddon.writeBytes(attachedHandle, address, hexBytes),
+  scanAob: async (signature) =>
+    attachedHandle === null ? [] : nativeAddon.scanAob(attachedHandle, signature)
+}
+
+const patchEngine = new PatchEngine(patchOps)
+
+// Called on app quit (from index.ts) so Tamper never leaves a game's code
+// modified after it closes.
+export function restoreAllPatches(): void {
+  patchEngine.restoreAll()
+}
+
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   freezeLoop.onDegraded((cheatId) => {
     getWindow().webContents.send('cheat:broken', cheatId)
@@ -100,6 +125,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   ipcMain.handle('process:list', () => nativeAddon.listProcesses())
 
   ipcMain.handle('process:attach', (_e, pid: number) => {
+    // Attaching elsewhere means letting go of the current process — put its
+    // code back first, while its handle is still valid.
+    if (attachedHandle !== null && attachedPid !== pid) patchEngine.restoreAll()
     const { handle, baseAddress } = nativeAddon.attach(pid)
     attachedHandle = handle
     attachedBase = baseAddress
@@ -115,6 +143,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle('cheats:delete', (_e, exeName: string, cheatId: string) => {
     freezeLoop.disable(cheatId)
+    // A deleted patch must not stay in the game's code — restore it while
+    // we still have its recorded address and original bytes.
+    if (patchEngine.isApplied(cheatId)) {
+      const stored = loadCheats(exeName).find((c) => c.id === cheatId)
+      if (stored && stored.kind === 'patch') patchEngine.restore(stored)
+    }
     deleteCheat(exeName, cheatId)
   })
 
@@ -168,5 +202,20 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     const result = nativeAddon.stopWriteWatch()
     freezeLoop.start() // resume freezing
     return result
+  })
+
+  ipcMain.handle('patch:locate', (_e, patch: PatchCheat) => {
+    if (attachedHandle === null) throw new Error('not attached')
+    return patchEngine.locate(patch)
+  })
+
+  ipcMain.handle('patch:apply', (_e, patch: PatchCheat) => {
+    if (attachedHandle === null) throw new Error('not attached')
+    return patchEngine.apply(patch)
+  })
+
+  ipcMain.handle('patch:restore', (_e, patch: PatchCheat) => {
+    if (attachedHandle === null) return true // process gone; its code went with it
+    return patchEngine.restore(patch)
   })
 }

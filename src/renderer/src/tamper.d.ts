@@ -1,6 +1,14 @@
-import type { CheatDefinition } from '../../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat } from '../../main/store'
 
 export {}
+
+export type PatchState = 'original' | 'applied' | 'not-found' | 'mismatch'
+
+export interface PatchStatus {
+  address: string | null
+  state: PatchState
+  applicable: boolean
+}
 
 export interface Candidate {
   address: string
@@ -29,8 +37,8 @@ declare global {
     tamper: {
       listProcesses: () => Promise<{ pid: number; name: string }[]>
       attach: (pid: number) => Promise<{ handle: number; baseAddress: string }>
-      loadCheats: (exeName: string) => Promise<CheatDefinition[]>
-      saveCheat: (exeName: string, cheat: CheatDefinition) => Promise<void>
+      loadCheats: (exeName: string) => Promise<StoredCheat[]>
+      saveCheat: (exeName: string, cheat: StoredCheat) => Promise<void>
       deleteCheat: (exeName: string, cheatId: string) => Promise<void>
       toggleFreeze: (cheat: CheatDefinition, enabled: boolean) => Promise<void>
       oneShot: (cheat: CheatDefinition) => Promise<boolean>
@@ -50,6 +58,9 @@ declare global {
       startWriteWatch: (address: string) => Promise<void>
       pollWriteWatch: () => Promise<CaughtInstruction[]>
       stopWriteWatch: () => Promise<CaughtInstruction[]>
+      locatePatch: (patch: PatchCheat) => Promise<PatchStatus>
+      applyPatch: (patch: PatchCheat) => Promise<{ ok: boolean; error: string | null }>
+      restorePatch: (patch: PatchCheat) => Promise<boolean>
     }
   }
 }

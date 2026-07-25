@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, restoreAllPatches } from './ipc'
 
 let mainWindow: BrowserWindow
 
@@ -25,3 +25,5 @@ function createWindow() {
 
 app.whenReady().then(createWindow)
 app.on('window-all-closed', () => app.quit())
+// Never leave a game running with Tamper's NOPs in its code.
+app.on('before-quit', () => restoreAllPatches())
