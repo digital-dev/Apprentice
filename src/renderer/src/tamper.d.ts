@@ -12,6 +12,18 @@ export interface TargetStatus {
   value: number | null
 }
 
+export interface CaughtInstruction {
+  instructionAddress: string
+  bytes: string
+  length: number
+  signature: string
+  baseRegister: string
+  displacement: string
+  baseAddress: string
+  moduleName: string | null
+  moduleOffset: string | null
+}
+
 declare global {
   interface Window {
     tamper: {
@@ -35,6 +47,9 @@ declare global {
       // void return is intentional—idiomatic for event listeners; underlying IpcRenderer.on() return is not used
       onCheatBroken: (cb: (cheatId: string) => void) => void
       onCheatRecovered: (cb: (cheatId: string) => void) => void
+      startWriteWatch: (address: string) => Promise<void>
+      pollWriteWatch: () => Promise<CaughtInstruction[]>
+      stopWriteWatch: () => Promise<CaughtInstruction[]>
     }
   }
 }

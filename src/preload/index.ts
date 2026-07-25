@@ -22,5 +22,8 @@ contextBridge.exposeInMainWorld('tamper', {
   onCheatBroken: (cb: (cheatId: string) => void) =>
     ipcRenderer.on('cheat:broken', (_e, cheatId) => cb(cheatId)),
   onCheatRecovered: (cb: (cheatId: string) => void) =>
-    ipcRenderer.on('cheat:recovered', (_e, cheatId) => cb(cheatId))
+    ipcRenderer.on('cheat:recovered', (_e, cheatId) => cb(cheatId)),
+  startWriteWatch: (address: string) => ipcRenderer.invoke('writeWatch:start', address),
+  pollWriteWatch: () => ipcRenderer.invoke('writeWatch:poll'),
+  stopWriteWatch: () => ipcRenderer.invoke('writeWatch:stop')
 })

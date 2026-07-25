@@ -8,6 +8,17 @@ export interface Candidate { address: string; value: number }
 export type ScanFilter =
   | { mode: 'exact'; value: number }
   | { mode: 'changed' | 'unchanged' | 'increased' | 'decreased' }
+export interface CaughtInstruction {
+  instructionAddress: string
+  bytes: string
+  length: number
+  signature: string
+  baseRegister: string
+  displacement: string
+  baseAddress: string
+  moduleName: string | null
+  moduleOffset: string | null
+}
 
 export const nativeAddon = {
   listProcesses: (): ProcessInfo[] => addon.listProcesses(),
@@ -58,5 +69,9 @@ export const nativeAddon = {
     offsets: string[],
     dataType: string,
     value: number
-  ): boolean => addon.writeValue(handle, baseAddress, offsets, dataType, value)
+  ): boolean => addon.writeValue(handle, baseAddress, offsets, dataType, value),
+  startWriteWatch: (pid: number, address: string): void =>
+    addon.startWriteWatch(pid, address),
+  pollWriteWatch: (): CaughtInstruction[] => addon.pollWriteWatch(),
+  stopWriteWatch: (): CaughtInstruction[] => addon.stopWriteWatch()
 }

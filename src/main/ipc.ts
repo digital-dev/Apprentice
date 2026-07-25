@@ -5,6 +5,7 @@ import { FreezeLoop } from './freezeLoop'
 
 let attachedHandle: number | null = null
 let attachedBase: string | null = null
+let attachedPid: number | null = null
 
 // The native addon's readValue/writeValue walk a single combined offsets
 // array as: addr = base; for each offset: addr += offset; dereference
@@ -102,6 +103,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     const { handle, baseAddress } = nativeAddon.attach(pid)
     attachedHandle = handle
     attachedBase = baseAddress
+    attachedPid = pid
     return { handle, baseAddress }
   })
 
@@ -147,5 +149,19 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   ipcMain.handle('scan:resolveChain', (_e, target: string, maxLevels: number) => {
     if (attachedHandle === null) throw new Error('not attached')
     return nativeAddon.resolvePointerChain(attachedHandle, target, maxLevels)
+  })
+
+  ipcMain.handle('writeWatch:start', (_e, address: string) => {
+    if (attachedPid === null) throw new Error('not attached')
+    freezeLoop.stop() // pause freezing during a capture
+    nativeAddon.startWriteWatch(attachedPid, address)
+  })
+
+  ipcMain.handle('writeWatch:poll', () => nativeAddon.pollWriteWatch())
+
+  ipcMain.handle('writeWatch:stop', () => {
+    const result = nativeAddon.stopWriteWatch()
+    freezeLoop.start() // resume freezing
+    return result
   })
 }
