@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <windows.h>
 #include <string.h>
+#include <stdlib.h>
 
-int g_health = 100; // the value tests will scan for
+int g_health = 100;
+int* g_health_ptr = &g_health; // pointer.test.ts resolves through this
 
 int main(void) {
   DWORD pid = GetCurrentProcessId();
@@ -14,10 +16,10 @@ int main(void) {
     if (line[0] == 'q') break;
     int val;
     if (sscanf(line, "set %d", &val) == 1) {
-      g_health = val;
+      *g_health_ptr = val;
       printf("OK\n");
     } else if (strncmp(line, "get", 3) == 0) {
-      printf("OK %d\n", g_health);
+      printf("OK %d\n", *g_health_ptr);
     } else {
       printf("OK\n");
     }

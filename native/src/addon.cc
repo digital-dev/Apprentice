@@ -1,6 +1,7 @@
 #include <napi.h>
 #include "process_utils.h"
 #include "scanner.h"
+#include "pointer.h"
 
 Napi::Value Ping(const Napi::CallbackInfo& info) {
   return Napi::String::New(info.Env(), "pong");
@@ -39,6 +40,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("scanFirst", Napi::Function::New(env, ScanFirst));
   exports.Set("scanNext", Napi::Function::New(env, ScanNext));
+  exports.Set("resolvePointerChain", Napi::Function::New(env, ResolvePointerChain));
   return exports;
 }
 
