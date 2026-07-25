@@ -50,6 +50,113 @@ bool HexToBytes(const std::string& hex, std::vector<uint8_t>& out) {
   return true;
 }
 
+std::string ToHexAddr(uintptr_t addr) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)addr);
+  return buf;
+}
+
+// A parsed AOB pattern: one entry per byte. `wildcard` entries match any
+// byte ("??" in the signature text).
+struct PatternByte {
+  uint8_t value;
+  bool wildcard;
+};
+
+bool ParseSignature(const std::string& sig, std::vector<PatternByte>& out) {
+  out.clear();
+  size_t i = 0;
+  while (i < sig.size()) {
+    if (sig[i] == ' ') { i++; continue; }
+    if (i + 1 >= sig.size()) return false;
+    if (sig[i] == '?' && sig[i + 1] == '?') {
+      out.push_back({0, true});
+    } else {
+      char buf[3] = {sig[i], sig[i + 1], 0};
+      char* end = nullptr;
+      unsigned long v = strtoul(buf, &end, 16);
+      if (end != buf + 2) return false;
+      out.push_back({static_cast<uint8_t>(v), false});
+    }
+    i += 2;
+  }
+  return !out.empty();
+}
+
+// Walk committed executable memory looking for the pattern. Only
+// executable regions are searched: a code patch targets an instruction, and
+// skipping the (much larger) data regions keeps this fast. Bare
+// PAGE_EXECUTE is excluded because it isn't readable, so ReadProcessMemory
+// would fail on it anyway. One bulk read per region, same as the value
+// scanner — a per-address read is what made earlier scans look hung.
+std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& pattern) {
+  std::vector<uintptr_t> out;
+  const size_t plen = pattern.size();
+
+  MEMORY_BASIC_INFORMATION mbi;
+  uintptr_t addr = 0;
+  while (VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+    bool executable = (mbi.State == MEM_COMMIT) &&
+        (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
+        !(mbi.Protect & PAGE_GUARD);
+
+    if (executable && mbi.RegionSize >= plen) {
+      std::vector<uint8_t> buffer(mbi.RegionSize);
+      SIZE_T bytesRead = 0;
+      if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead) &&
+          bytesRead >= plen) {
+        uintptr_t base = (uintptr_t)mbi.BaseAddress;
+        for (SIZE_T offset = 0; offset + plen <= bytesRead; offset++) {
+          bool match = true;
+          for (size_t k = 0; k < plen; k++) {
+            if (pattern[k].wildcard) continue;
+            if (buffer[offset + k] != pattern[k].value) { match = false; break; }
+          }
+          if (match) out.push_back(base + offset);
+        }
+      }
+    }
+
+    uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+    if (next <= addr) break; // guard against non-advancing regions
+    addr = next;
+  }
+  return out;
+}
+
+// Same reasoning as ScanFirstWorker in scanner.cc: this walks a real game's
+// whole executable memory, so it runs on a libuv worker thread rather than
+// blocking the entire Electron app.
+class ScanAobWorker : public Napi::AsyncWorker {
+ public:
+  ScanAobWorker(Napi::Env env, HANDLE handle, std::vector<PatternByte> pattern)
+      : Napi::AsyncWorker(env),
+        handle_(handle),
+        pattern_(std::move(pattern)),
+        deferred_(Napi::Promise::Deferred::New(env)) {}
+
+  Napi::Promise GetPromise() { return deferred_.Promise(); }
+
+  void Execute() override { results_ = RunScanAob(handle_, pattern_); }
+
+  void OnOK() override {
+    Napi::Env env = Env();
+    Napi::Array result = Napi::Array::New(env, results_.size());
+    for (size_t i = 0; i < results_.size(); i++) {
+      result.Set((uint32_t)i, Napi::String::New(env, ToHexAddr(results_[i])));
+    }
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+ private:
+  HANDLE handle_;
+  std::vector<PatternByte> pattern_;
+  std::vector<uintptr_t> results_;
+  Napi::Promise::Deferred deferred_;
+};
+
 } // namespace
 
 Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
@@ -122,4 +229,22 @@ Napi::Value WriteBytes(const Napi::CallbackInfo& info) {
   FlushInstructionCache(h, (LPCVOID)address, bytes.size());
 
   return Napi::Boolean::New(env, ok);
+}
+
+Napi::Value ScanAob(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  HANDLE h = reinterpret_cast<HANDLE>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  std::string signature = info[1].As<Napi::String>().Utf8Value();
+
+  std::vector<PatternByte> pattern;
+  if (!ParseSignature(signature, pattern)) {
+    Napi::Error::New(env, "malformed AOB signature").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto* worker = new ScanAobWorker(env, h, std::move(pattern));
+  Napi::Promise promise = worker->GetPromise();
+  worker->Queue();
+  return promise;
 }

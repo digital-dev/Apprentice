@@ -55,6 +55,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("stopWriteWatch", Napi::Function::New(env, StopWriteWatch));
   exports.Set("readBytes", Napi::Function::New(env, ReadBytes));
   exports.Set("writeBytes", Napi::Function::New(env, WriteBytes));
+  exports.Set("scanAob", Napi::Function::New(env, ScanAob));
   return exports;
 }
 

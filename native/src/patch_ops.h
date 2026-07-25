@@ -3,3 +3,4 @@
 
 Napi::Value ReadBytes(const Napi::CallbackInfo& info);
 Napi::Value WriteBytes(const Napi::CallbackInfo& info);
+Napi::Value ScanAob(const Napi::CallbackInfo& info);

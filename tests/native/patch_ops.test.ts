@@ -44,7 +44,17 @@ async function catchDrainInstruction(): Promise<{
   length: number
   signature: string
 }> {
-  let candidates = await (addon as any).scanFirst(handle, 'int32', 1000000)
+  // Scan for whatever the counter currently holds rather than the hardcoded
+  // initial 1000000: this helper may run more than once per harness process
+  // (each caller drains the counter further, so by a later call it is some
+  // smaller remainder, never back to 1000000). Sending a `setcount 1000000`
+  // reset here would be wrong for a different reason — harness.c's command
+  // loop reuses one `int val` local for every `set*` command, so a
+  // `setcount N` call leaves N sitting at that fixed stack address too;
+  // scanning for a value we are about to (re)send would pick up that decoy
+  // address as a false candidate.
+  const current = await count()
+  let candidates = await (addon as any).scanFirst(handle, 'int32', current)
   await send('setcount 424242')
   candidates = (addon as any).scanNext(handle, candidates, 'int32', {
     mode: 'exact',
@@ -126,5 +136,50 @@ describe('readBytes on an unreadable address', () => {
     // Low, unmapped addresses in the target's address space are never
     // backed by a committed page, so ReadProcessMemory fails reliably.
     expect(() => (addon as any).readBytes(handle, '0x1', 4)).toThrow()
+  })
+})
+
+describe('scanAob', () => {
+  it('relocates the drain instruction by signature and patches it there', async () => {
+    const insn = await catchDrainInstruction()
+    const original = (addon as any).readBytes(handle, insn.instructionAddress, insn.length)
+
+    const matches: string[] = await (addon as any).scanAob(handle, insn.signature)
+    // The signature may legitimately match more than once (short
+    // instruction encodings recur), but it must find the real one.
+    expect(matches).toContain(insn.instructionAddress)
+
+    // Patching at the SCANNED address (not the captured one) must have the
+    // same effect — this is the path a patch takes after a game restart.
+    const found = matches.find((m) => m === insn.instructionAddress) as string
+    const nops = '90'.repeat(insn.length)
+    expect((addon as any).writeBytes(handle, found, nops)).toBe(true)
+
+    await send('drainloop')
+    await sleep(150)
+    const a = await count()
+    await sleep(300)
+    const b = await count()
+    expect(b).toBe(a)
+
+    expect((addon as any).writeBytes(handle, found, original)).toBe(true)
+    await sleep(300)
+    expect(await count()).toBeLessThan(b)
+    await send('stopdrain')
+  }, 30000)
+
+  it('returns an empty list for a signature that matches nothing', async () => {
+    const matches: string[] = await (addon as any).scanAob(
+      handle,
+      'de ad be ef de ad be ef de ad be ef'
+    )
+    expect(matches).toEqual([])
+  })
+
+  it('rejects a malformed signature', () => {
+    // scanAob throws synchronously for a malformed signature (the parse
+    // happens before the AsyncWorker is queued), so `rejects.toThrow()`
+    // proved brittle here; this form matches the actual throw site.
+    expect(() => (addon as any).scanAob(handle, 'zz 11')).toThrow()
   })
 })
