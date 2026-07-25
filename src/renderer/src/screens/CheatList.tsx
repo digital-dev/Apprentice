@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react'
-import type { CheatDefinition } from '../../../main/store'
-import type { TargetStatus } from '../tamper.d'
+import type { CheatDefinition, StoredCheat, PatchCheat } from '../../../main/store'
+import type { TargetStatus, PatchStatus } from '../tamper.d'
 import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
+
+// Deliberately re-declared here instead of importing store.ts's
+// isPatchCheat: that would be a VALUE import from the main process into the
+// renderer bundle, dragging node:fs/node:path in with it. The renderer only
+// ever gets these objects over IPC, so a one-line local guard is the right
+// boundary.
+function isPatch(cheat: StoredCheat): cheat is PatchCheat {
+  return cheat.kind === 'patch'
+}
 
 export default function CheatList({
   exeName,
@@ -12,6 +21,12 @@ export default function CheatList({
   onOpenScanner: () => void
 }) {
   const [cheats, setCheats] = useState<CheatDefinition[]>([])
+  const [patches, setPatches] = useState<PatchCheat[]>([])
+  // Where each patch currently sits and whether it's safe to toggle on.
+  // Checked once on attach and refreshed after each toggle.
+  const [patchStatuses, setPatchStatuses] = useState<Map<string, PatchStatus>>(new Map())
+  const [patchEnabled, setPatchEnabled] = useState<Set<string>>(new Set())
+  const [patchError, setPatchError] = useState<Map<string, string>>(new Map())
   const [enabled, setEnabled] = useState<Set<string>>(new Set())
   // "degraded" (all targets failing past the freeze-loop threshold). It is
   // a soft state now: the cheat stays enabled and keeps retrying, so this
@@ -26,8 +41,27 @@ export default function CheatList({
 
   useEffect(() => {
     async function loadAndRevalidate() {
-      const loaded = await window.tamper.loadCheats(exeName)
+      const all: StoredCheat[] = await window.tamper.loadCheats(exeName)
+      const loaded = all.filter((c): c is CheatDefinition => !isPatch(c))
+      const loadedPatches = all.filter(isPatch)
       setCheats(loaded)
+      setPatches(loadedPatches)
+
+      // A patch's address is only meaningful against the running process, so
+      // resolve each one on attach: module+offset for module code, an AOB
+      // scan for JIT code. This drives the located / can't-relocate chip.
+      for (const patch of loadedPatches) {
+        try {
+          const status = await window.tamper.locatePatch(patch)
+          setPatchStatuses((prev) => new Map(prev).set(patch.id, status))
+          // Re-attaching to a process we already patched: reflect reality.
+          if (status.state === 'applied') {
+            setPatchEnabled((prev) => new Set(prev).add(patch.id))
+          }
+        } catch {
+          // not attached / transient — leave this patch without a readout
+        }
+      }
       // Automatic readability check on (re)attach: populate a live "N of M
       // targets" health readout for each cheat, so a cheat now running on
       // only some of its targets (e.g. after a game restart shifted the
@@ -84,6 +118,55 @@ export default function CheatList({
     setEnabled((prev) => {
       const copy = new Set(prev)
       copy.delete(cheat.id)
+      return copy
+    })
+  }
+
+  async function togglePatch(patch: PatchCheat) {
+    const next = !patchEnabled.has(patch.id)
+    setPatchError((prev) => {
+      const copy = new Map(prev)
+      copy.delete(patch.id)
+      return copy
+    })
+
+    if (next) {
+      const result = await window.tamper.applyPatch(patch)
+      if (!result.ok) {
+        // Stays off: an un-locatable or mismatched patch is never written.
+        setPatchError((prev) => new Map(prev).set(patch.id, result.error ?? 'Patch failed'))
+        return
+      }
+      setPatchEnabled((prev) => new Set(prev).add(patch.id))
+    } else {
+      const ok = await window.tamper.restorePatch(patch)
+      if (!ok) {
+        setPatchError((prev) => new Map(prev).set(patch.id, 'Restore failed'))
+        return
+      }
+      setPatchEnabled((prev) => {
+        const copy = new Set(prev)
+        copy.delete(patch.id)
+        return copy
+      })
+    }
+
+    try {
+      const status = await window.tamper.locatePatch(patch)
+      setPatchStatuses((prev) => new Map(prev).set(patch.id, status))
+    } catch {
+      // leave the previous readout
+    }
+  }
+
+  async function removePatch(patch: PatchCheat) {
+    // Main restores an applied patch as part of deletion, so the game's code
+    // is clean regardless of the toggle state here.
+    await window.tamper.deleteCheat(exeName, patch.id)
+    setPatches((prev) => prev.filter((p) => p.id !== patch.id))
+    setPatchEnabled((prev) => {
+      const copy = new Set(prev)
+      copy.delete(patch.id)
       return copy
     })
   }
@@ -205,7 +288,47 @@ export default function CheatList({
           )
         })}
       </ul>
-      {cheats.length === 0 && <p>No cheats yet for {exeName}. Scan for one to get started.</p>}
+      {patches.length > 0 && (
+        <ul>
+          {patches.map((patch) => {
+            const status = patchStatuses.get(patch.id)
+            const error = patchError.get(patch.id)
+            return (
+              <li key={patch.id} style={{ flexWrap: 'wrap' }}>
+                <span>{patch.name}</span>
+                <AddressChip
+                  label={
+                    patch.moduleName
+                      ? `${patch.moduleName}+${patch.moduleOffset}`
+                      : `AOB ${patch.length}b`
+                  }
+                  pulsing={patchEnabled.has(patch.id)}
+                />
+                <span className="address-chip">code patch</span>
+                {status && (
+                  <span
+                    className="address-chip"
+                    style={{ color: status.applicable ? 'var(--muted)' : 'var(--error)' }}
+                  >
+                    {status.applicable ? `located ${status.address}` : "can't relocate"}
+                  </span>
+                )}
+                <Toggle
+                  enabled={patchEnabled.has(patch.id)}
+                  onChange={() => togglePatch(patch)}
+                />
+                <button onClick={() => removePatch(patch)}>Delete</button>
+                {error && (
+                  <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{error}</span>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {cheats.length === 0 && patches.length === 0 && (
+        <p>No cheats yet for {exeName}. Scan for one to get started.</p>
+      )}
     </div>
   )
 }
