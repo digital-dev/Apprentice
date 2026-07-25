@@ -38,6 +38,7 @@ export default function Scanner({
   const [watching, setWatching] = useState(false)
   const [caught, setCaught] = useState<CaughtInstruction[]>([])
   const [captureName, setCaptureName] = useState('')
+  const [captureError, setCaptureError] = useState<string | null>(null)
 
   async function firstScan() {
     setScanning(true)
@@ -138,16 +139,34 @@ export default function Scanner({
   }
 
   // Turn a caught instruction into a cheat target: resolve a chain to the
-  // object base the game used, then append the field displacement so the
-  // chain lands on the exact value. This is the rooted, high-quality path.
+  // object base the game used, then reach the exact field. This is the
+  // rooted, high-quality path.
   async function createCheatFromInstruction(insn: CaughtInstruction) {
     if (!captureName) return
+    setCaptureError(null)
     const chain = await window.tamper.resolveChain(insn.baseAddress, 5)
-    if (!chain) return
+    if (!chain) {
+      setCaptureError(
+        `No static pointer chain found to the object base (${insn.baseAddress}). ` +
+          `Try a different caught instruction.`
+      )
+      return
+    }
+    // The chain resolves — with its FINAL offset added but NOT dereferenced —
+    // to the object base address. The value we want sits at
+    // baseAddress + displacement. We must FOLD the displacement into the
+    // chain's last offset, NOT append it as a new offset: appending would
+    // make the previously-final offset get dereferenced, landing the walk on
+    // *(baseAddress) + displacement (garbage) instead of
+    // baseAddress + displacement.
+    const offsets = chain.offsets.slice()
+    const lastIdx = offsets.length - 1
+    offsets[lastIdx] =
+      '0x' + (BigInt(offsets[lastIdx]) + BigInt(insn.displacement)).toString(16)
     const target: ChainTarget = {
       moduleName: chain.moduleName,
-      baseOffset: chain.offsets[0],
-      offsets: [...chain.offsets.slice(1), insn.displacement]
+      baseOffset: offsets[0],
+      offsets: offsets.slice(1)
     }
     const cheat: CheatDefinition = {
       id: captureName.toLowerCase().replace(/\s+/g, '-'),
@@ -275,6 +294,7 @@ export default function Scanner({
               onChange={(e) => setCaptureName(e.target.value)}
             />
           )}
+          {captureError && <p style={{ color: 'var(--error)' }}>{captureError}</p>}
         </div>
       )}
 
