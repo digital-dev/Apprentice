@@ -37,6 +37,17 @@ export default function CheatList({
     })
   }
 
+  async function remove(cheat: CheatDefinition) {
+    if (enabled.has(cheat.id)) await window.tamper.toggleFreeze(cheat, false)
+    await window.tamper.deleteCheat(exeName, cheat.id)
+    setCheats((prev) => prev.filter((c) => c.id !== cheat.id))
+    setEnabled((prev) => {
+      const copy = new Set(prev)
+      copy.delete(cheat.id)
+      return copy
+    })
+  }
+
   return (
     <div>
       <h2>{exeName}</h2>
@@ -45,7 +56,14 @@ export default function CheatList({
         {cheats.map((cheat) => (
           <li key={cheat.id}>
             <span>{cheat.name}</span>
-            <AddressChip baseOffset={cheat.baseOffset} pulsing={enabled.has(cheat.id)} />
+            <AddressChip
+              label={
+                cheat.targets.length === 1
+                  ? cheat.targets[0].baseOffset
+                  : `${cheat.targets.length} targets`
+              }
+              pulsing={enabled.has(cheat.id)}
+            />
             {broken.has(cheat.id) && (
               <span style={{ color: 'var(--error)' }}>Broken — offsets no longer resolve</span>
             )}
@@ -54,6 +72,7 @@ export default function CheatList({
             ) : (
               <button onClick={() => window.tamper.oneShot(cheat)}>Apply</button>
             )}
+            <button onClick={() => remove(cheat)}>Delete</button>
           </li>
         ))}
       </ul>

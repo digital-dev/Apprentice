@@ -7,9 +7,7 @@ const cheat: CheatDefinition = {
   name: 'Unlimited Stamina',
   dataType: 'float',
   mode: 'freeze',
-  moduleName: 'valheim.exe',
-  baseOffset: '0x1000',
-  offsets: ['0x8'],
+  targets: [{ moduleName: 'valheim.exe', baseOffset: '0x1000', offsets: ['0x8'] }],
   value: 999
 }
 

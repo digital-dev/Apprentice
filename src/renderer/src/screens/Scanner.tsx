@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import type { CheatDefinition, CheatMode, DataType } from '../../../main/store'
+import type { CheatDefinition, ChainTarget, CheatMode, DataType } from '../../../main/store'
 import type { Candidate } from '../tamper.d'
 
 type Filter = 'exact' | 'changed' | 'unchanged' | 'increased' | 'decreased'
+type ResolveStatus = 'resolving' | 'resolved' | 'no-chain'
 
 export default function Scanner({
   exeName,
@@ -14,21 +15,31 @@ export default function Scanner({
   const [dataType, setDataType] = useState<DataType>('float')
   const [value, setValue] = useState('')
   const [candidates, setCandidates] = useState<Candidate[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [chain, setChain] = useState<{ moduleName: string; offsets: string[] } | null>(null)
+  // Naive memory scanning sometimes finds a chain that only looks static
+  // and stops resolving after a few seconds even though other candidates
+  // from the same scan keep working. Letting the user select several
+  // candidates and bundling their resolved chains into one cheat (written
+  // to every target on each tick, broken only if ALL of them fail) makes a
+  // saved cheat resilient to any single chain going stale.
+  const [selectedAddresses, setSelectedAddresses] = useState<Set<string>>(new Set())
+  const [targets, setTargets] = useState<Map<string, ChainTarget>>(new Map())
+  const [resolveStatus, setResolveStatus] = useState<Map<string, ResolveStatus>>(new Map())
   const [name, setName] = useState('')
   const [mode, setMode] = useState<CheatMode>('freeze')
   // scanFirst/resolveChain run on a background thread in the native addon
   // and can take a few seconds against a real game's memory, so the UI
   // shows progress instead of looking frozen while awaiting them.
   const [scanning, setScanning] = useState(false)
-  const [resolving, setResolving] = useState(false)
+  const [resolvingAll, setResolvingAll] = useState(false)
 
   async function firstScan() {
     setScanning(true)
     try {
       const found = await window.tamper.scanFirst(dataType, Number(value))
       setCandidates(found)
+      setSelectedAddresses(new Set())
+      setTargets(new Map())
+      setResolveStatus(new Map())
     } finally {
       setScanning(false)
     }
@@ -46,28 +57,52 @@ export default function Scanner({
     setCandidates(found)
   }
 
-  async function resolve(address: string) {
-    setSelected(address)
-    setChain(null)
-    setResolving(true)
+  function toggleSelected(address: string) {
+    setSelectedAddresses((prev) => {
+      const next = new Set(prev)
+      if (next.has(address)) next.delete(address)
+      else next.add(address)
+      return next
+    })
+  }
+
+  async function resolveSelected() {
+    setResolvingAll(true)
+    const addresses = Array.from(selectedAddresses)
+    setResolveStatus((prev) => {
+      const next = new Map(prev)
+      for (const address of addresses) next.set(address, 'resolving')
+      return next
+    })
     try {
-      const result = await window.tamper.resolveChain(address, 5)
-      setChain(result)
+      await Promise.all(
+        addresses.map(async (address) => {
+          const result = await window.tamper.resolveChain(address, 5)
+          setResolveStatus((prev) => new Map(prev).set(address, result ? 'resolved' : 'no-chain'))
+          if (result) {
+            setTargets((prev) =>
+              new Map(prev).set(address, {
+                moduleName: result.moduleName,
+                baseOffset: result.offsets[0],
+                offsets: result.offsets.slice(1)
+              })
+            )
+          }
+        })
+      )
     } finally {
-      setResolving(false)
+      setResolvingAll(false)
     }
   }
 
   async function save() {
-    if (!chain) return
+    if (targets.size === 0) return
     const cheat: CheatDefinition = {
       id: name.toLowerCase().replace(/\s+/g, '-'),
       name,
       dataType,
       mode,
-      moduleName: chain.moduleName,
-      baseOffset: chain.offsets[0],
-      offsets: chain.offsets.slice(1),
+      targets: Array.from(targets.values()),
       value: Number(value)
     }
     await window.tamper.saveCheat(exeName, cheat)
@@ -113,20 +148,42 @@ export default function Scanner({
       )}
 
       {candidates.length > 0 && candidates.length <= 20 && (
-        <ul>
-          {candidates.map((c) => (
-            <li key={c.address} onClick={() => resolve(c.address)}>
-              {c.address} = {c.value}{' '}
-              {selected === c.address && resolving && 'resolving…'}
-              {selected === c.address && !resolving && chain && '✓ chain resolved'}
-              {selected === c.address && !resolving && chain === null && '— no static chain found'}
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul>
+            {candidates.map((c) => {
+              const status = resolveStatus.get(c.address)
+              return (
+                <li key={c.address}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selectedAddresses.has(c.address)}
+                      onChange={() => toggleSelected(c.address)}
+                    />
+                    {' '}
+                    {c.address} = {c.value}{' '}
+                    {status === 'resolving' && 'resolving…'}
+                    {status === 'resolved' && '✓ chain resolved'}
+                    {status === 'no-chain' && '— no static chain found'}
+                  </label>
+                </li>
+              )
+            })}
+          </ul>
+          <button
+            onClick={resolveSelected}
+            disabled={selectedAddresses.size === 0 || resolvingAll}
+          >
+            {resolvingAll
+              ? 'Resolving…'
+              : `Resolve ${selectedAddresses.size || ''} Selected`.trim()}
+          </button>
+        </>
       )}
 
-      {chain && (
+      {targets.size > 0 && (
         <div>
+          <p>{targets.size} of {selectedAddresses.size} selected candidate(s) resolved to a static chain — the cheat will write to all of them, and stay working as long as any one keeps resolving.</p>
           <input placeholder="Cheat name" value={name} onChange={(e) => setName(e.target.value)} />
           <select value={mode} onChange={(e) => setMode(e.target.value as CheatMode)}>
             <option value="freeze">Freeze (continuous)</option>

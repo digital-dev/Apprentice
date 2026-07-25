@@ -4,15 +4,40 @@
     "name": "Stamina",
     "dataType": "float",
     "mode": "freeze",
-    "moduleName": "mono-2.0-bdwgc.dll",
-    "baseOffset": "0x9fd8c8",
-    "offsets": [
-      "0xaf0",
-      "0xee0",
-      "0xee0",
-      "0xc50",
-      "0xfd8",
-      "0xe80"
+    "targets": [
+      {
+        "moduleName": "mono-2.0-bdwgc.dll",
+        "baseOffset": "0x9fd8c8",
+        "offsets": ["0xaf0", "0xee0", "0xee0", "0xc50", "0xfd8", "0xe80"]
+      }
+    ],
+    "value": 115
+  },
+  {
+    "id": "stam1",
+    "name": "Stam1",
+    "dataType": "float",
+    "mode": "freeze",
+    "targets": [
+      {
+        "moduleName": "tier0_s64.dll",
+        "baseOffset": "0xffe78",
+        "offsets": ["0xfd8", "0xbd8", "0xff8", "0xfb0", "0xa20", "0xe80"]
+      }
+    ],
+    "value": 115
+  },
+  {
+    "id": "stam2",
+    "name": "Stam2",
+    "dataType": "float",
+    "mode": "freeze",
+    "targets": [
+      {
+        "moduleName": "mono-2.0-bdwgc.dll",
+        "baseOffset": "0xa012a0",
+        "offsets": ["0x3f0", "0xf50", "0xfd0", "0xa98", "0xe40", "0xfd8"]
+      }
     ],
     "value": 115
   }

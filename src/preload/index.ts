@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('tamper', {
   loadCheats: (exeName: string) => ipcRenderer.invoke('cheats:load', exeName),
   saveCheat: (exeName: string, cheat: CheatDefinition) =>
     ipcRenderer.invoke('cheats:save', exeName, cheat),
+  deleteCheat: (exeName: string, cheatId: string) =>
+    ipcRenderer.invoke('cheats:delete', exeName, cheatId),
   toggleFreeze: (cheat: CheatDefinition, enabled: boolean) =>
     ipcRenderer.invoke('cheats:toggleFreeze', cheat, enabled),
   oneShot: (cheat: CheatDefinition) => ipcRenderer.invoke('cheats:oneShot', cheat),

@@ -14,6 +14,7 @@ declare global {
       attach: (pid: number) => Promise<{ handle: number; baseAddress: string }>
       loadCheats: (exeName: string) => Promise<CheatDefinition[]>
       saveCheat: (exeName: string, cheat: CheatDefinition) => Promise<void>
+      deleteCheat: (exeName: string, cheatId: string) => Promise<void>
       toggleFreeze: (cheat: CheatDefinition, enabled: boolean) => Promise<void>
       oneShot: (cheat: CheatDefinition) => Promise<boolean>
       scanFirst: (dataType: string, value: number) => Promise<Candidate[]>
