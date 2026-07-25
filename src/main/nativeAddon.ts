@@ -35,6 +35,23 @@ export const nativeAddon = {
     addon.getModuleBase(handle, moduleName),
   readValue: (handle: number, baseAddress: string, offsets: string[], dataType: string): number =>
     addon.readValue(handle, baseAddress, offsets, dataType),
+  // readValue throws when the chain can't be resolved or the final address
+  // isn't readable. Revalidation checks many targets and treats "unreadable"
+  // as a normal, expected outcome (a dead target) rather than an error, so
+  // it uses this non-throwing form: the value if the chain resolves to
+  // readable memory, or null if it doesn't.
+  tryReadValue: (
+    handle: number,
+    baseAddress: string,
+    offsets: string[],
+    dataType: string
+  ): number | null => {
+    try {
+      return addon.readValue(handle, baseAddress, offsets, dataType)
+    } catch {
+      return null
+    }
+  },
   writeValue: (
     handle: number,
     baseAddress: string,

@@ -45,6 +45,43 @@ function writeCheat(handle: number, cheat: CheatDefinition): boolean {
   return anySucceeded
 }
 
+// Per-target liveness for revalidation: alive means the target's module is
+// loaded and its chain resolves to readable memory (optionally holding the
+// expected value). `value` is what the target currently reads, or null if
+// it doesn't resolve.
+export interface TargetStatus {
+  alive: boolean
+  value: number | null
+}
+
+// The user-facing value they read off a rounded in-game display won't
+// exactly equal the underlying float, so float verification tolerates a
+// small window; ints are matched exactly.
+function valueMatches(read: number, expected: number, dataType: string): boolean {
+  if (dataType === 'float') return Math.abs(read - expected) < 1.0
+  return read === expected
+}
+
+function verifyCheat(
+  handle: number,
+  cheat: CheatDefinition,
+  expectedValue: number | null
+): TargetStatus[] {
+  return cheat.targets.map((target) => {
+    const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
+    if (moduleBase === null) return { alive: false, value: null }
+    const value = nativeAddon.tryReadValue(
+      handle,
+      moduleBase,
+      fullOffsets(target),
+      cheat.dataType
+    )
+    if (value === null) return { alive: false, value: null }
+    const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
+    return { alive, value }
+  })
+}
+
 const freezeLoop = new FreezeLoop((cheat) => {
   if (attachedHandle === null) return false
   return writeCheat(attachedHandle, cheat)
@@ -52,8 +89,11 @@ const freezeLoop = new FreezeLoop((cheat) => {
 freezeLoop.start()
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
-  freezeLoop.onBroken((cheatId) => {
+  freezeLoop.onDegraded((cheatId) => {
     getWindow().webContents.send('cheat:broken', cheatId)
+  })
+  freezeLoop.onRecovered((cheatId) => {
+    getWindow().webContents.send('cheat:recovered', cheatId)
   })
 
   ipcMain.handle('process:list', () => nativeAddon.listProcesses())
@@ -85,6 +125,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (attachedHandle === null) return false
     return writeCheat(attachedHandle, cheat)
   })
+
+  ipcMain.handle(
+    'cheats:verify',
+    (_e, cheat: CheatDefinition, expectedValue: number | null): TargetStatus[] => {
+      if (attachedHandle === null) throw new Error('not attached')
+      return verifyCheat(attachedHandle, cheat, expectedValue)
+    }
+  )
 
   ipcMain.handle('scan:first', (_e, dataType: string, value: number) => {
     if (attachedHandle === null) throw new Error('not attached')

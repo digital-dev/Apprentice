@@ -11,13 +11,16 @@ const cheat: CheatDefinition = {
   value: 999
 }
 
+// Small threshold so tests don't have to advance 20 ticks.
+const DEGRADE_AFTER = 3
+
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('FreezeLoop', () => {
   it('calls writeFn repeatedly for an enabled freeze cheat on each tick', () => {
     const writeFn = vi.fn().mockReturnValue(true)
-    const loop = new FreezeLoop(writeFn, 100)
+    const loop = new FreezeLoop(writeFn, 100, DEGRADE_AFTER)
     loop.start()
     loop.enable(cheat)
 
@@ -30,7 +33,7 @@ describe('FreezeLoop', () => {
 
   it('stops calling writeFn after disable', () => {
     const writeFn = vi.fn().mockReturnValue(true)
-    const loop = new FreezeLoop(writeFn, 100)
+    const loop = new FreezeLoop(writeFn, 100, DEGRADE_AFTER)
     loop.start()
     loop.enable(cheat)
     vi.advanceTimersByTime(150)
@@ -41,19 +44,83 @@ describe('FreezeLoop', () => {
     loop.stop()
   })
 
-  it('auto-disables and fires onBroken when writeFn returns false', () => {
+  it('does not flag degraded before the failure threshold is reached', () => {
     const writeFn = vi.fn().mockReturnValue(false)
-    const loop = new FreezeLoop(writeFn, 100)
-    const broken = vi.fn()
-    loop.onBroken(broken)
+    const loop = new FreezeLoop(writeFn, 100, DEGRADE_AFTER)
+    const degraded = vi.fn()
+    loop.onDegraded(degraded)
     loop.start()
     loop.enable(cheat)
 
-    vi.advanceTimersByTime(150)
+    vi.advanceTimersByTime(250) // 2 failed ticks, threshold is 3
+    expect(degraded).not.toHaveBeenCalled()
+    loop.stop()
+  })
 
-    expect(broken).toHaveBeenCalledWith('stamina')
+  it('flags degraded after threshold consecutive failures but keeps retrying', () => {
+    const writeFn = vi.fn().mockReturnValue(false)
+    const loop = new FreezeLoop(writeFn, 100, DEGRADE_AFTER)
+    const degraded = vi.fn()
+    loop.onDegraded(degraded)
+    loop.start()
+    loop.enable(cheat)
+
+    vi.advanceTimersByTime(350) // 3 failed ticks -> degraded on the 3rd
+    expect(degraded).toHaveBeenCalledTimes(1)
+    expect(degraded).toHaveBeenCalledWith('stamina')
+
+    // Still being retried after going degraded (self-heal requires it).
+    const callsAtDegrade = writeFn.mock.calls.length
     vi.advanceTimersByTime(500)
-    expect(writeFn).toHaveBeenCalledTimes(1) // did not keep retrying a broken chain
+    expect(writeFn.mock.calls.length).toBeGreaterThan(callsAtDegrade)
+    // Degraded fires only once, not every subsequent failed tick.
+    expect(degraded).toHaveBeenCalledTimes(1)
+    loop.stop()
+  })
+
+  it('recovers and clears degraded when writes succeed again', () => {
+    let succeed = false
+    const writeFn = vi.fn(() => succeed)
+    const loop = new FreezeLoop(writeFn, 100, DEGRADE_AFTER)
+    const degraded = vi.fn()
+    const recovered = vi.fn()
+    loop.onDegraded(degraded)
+    loop.onRecovered(recovered)
+    loop.start()
+    loop.enable(cheat)
+
+    vi.advanceTimersByTime(350)
+    expect(degraded).toHaveBeenCalledTimes(1)
+
+    succeed = true
+    vi.advanceTimersByTime(100)
+    expect(recovered).toHaveBeenCalledTimes(1)
+    expect(recovered).toHaveBeenCalledWith('stamina')
+
+    // A later transient failure can degrade again (counter was reset).
+    succeed = false
+    vi.advanceTimersByTime(350)
+    expect(degraded).toHaveBeenCalledTimes(2)
+    loop.stop()
+  })
+
+  it('resets the failure counter on any success, so brief blips do not degrade', () => {
+    let succeed = true
+    const writeFn = vi.fn(() => succeed)
+    const loop = new FreezeLoop(writeFn, 100, DEGRADE_AFTER)
+    const degraded = vi.fn()
+    loop.onDegraded(degraded)
+    loop.start()
+    loop.enable(cheat)
+
+    // Alternating fail/success never reaches 3 consecutive failures.
+    for (let i = 0; i < 10; i++) {
+      succeed = false
+      vi.advanceTimersByTime(100)
+      succeed = true
+      vi.advanceTimersByTime(100)
+    }
+    expect(degraded).not.toHaveBeenCalled()
     loop.stop()
   })
 })
