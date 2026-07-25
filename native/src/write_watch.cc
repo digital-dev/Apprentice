@@ -68,11 +68,25 @@ void SetHwBreakpointOnThread(DWORD tid, uintptr_t address) {
     if (address) {
       ctx.Dr0 = address;
       // Dr7: bit0 = L0 (local enable Dr0). Bits 16-17 = condition for Dr0:
-      // 01 = break on data write. Bits 18-19 = length for Dr0: 11 = 4 bytes.
+      // 01 = break on data write. Bits 18-19 = length for Dr0 (LEN encoding:
+      // 00=1 byte, 01=2 bytes, 11=4 bytes).
+      //
+      // CRITICAL: x86 requires a data breakpoint's address to be aligned to
+      // its length — a 4-byte breakpoint on a non-4-aligned address is
+      // architecturally UNDEFINED and can make the CPU raise malformed
+      // exceptions (crashing the target). The watched address comes from a
+      // scan and has arbitrary alignment (e.g. a float in a heap object), so
+      // pick the largest length the address is actually aligned to. Any
+      // store that writes the value necessarily writes its first byte, so a
+      // shorter aligned watch on that byte still catches every write to it.
+      DWORD64 lenBits;
+      if ((address & 0x3) == 0) lenBits = 0x3;      // 4-byte watch (4-aligned)
+      else if ((address & 0x1) == 0) lenBits = 0x1; // 2-byte watch (2-aligned)
+      else lenBits = 0x0;                           // 1-byte watch (any address)
       ctx.Dr7 &= ~((DWORD64)0xF << 16); // clear Dr0 condition+len
       ctx.Dr7 |= (DWORD64)0x1;          // L0
       ctx.Dr7 |= ((DWORD64)0x1 << 16);  // write
-      ctx.Dr7 |= ((DWORD64)0x3 << 18);  // 4 bytes
+      ctx.Dr7 |= (lenBits << 18);       // length by alignment
     } else {
       ctx.Dr0 = 0;
       ctx.Dr7 &= ~((DWORD64)0x1);       // clear L0
@@ -313,6 +327,7 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
   attachResult.set_value(true);
 
   bool armed = false;
+  bool seenInitialBreakpoint = false;
   DEBUG_EVENT ev{};
 
   while (!g_session.stopRequested) {
@@ -353,8 +368,18 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
           if (!seen2) g_session.caught.push_back(std::move(c));
         }
         continueStatus = DBG_CONTINUE;
+      } else if (er.ExceptionCode == EXCEPTION_BREAKPOINT && !seenInitialBreakpoint) {
+        // On attach the OS injects a thread that executes an int3
+        // (DbgUiRemoteBreakin) — the expected "debugger attached" signal.
+        // It MUST be consumed with DBG_CONTINUE; passing it back unhandled
+        // can be delivered to the target as a fatal exception. Consume only
+        // the first breakpoint; later int3s (if the game uses them) pass
+        // through.
+        seenInitialBreakpoint = true;
+        continueStatus = DBG_CONTINUE;
       } else {
-        // Not ours (e.g. the game's own exceptions) — pass it back.
+        // Not ours (e.g. the game's own exceptions) — pass it back so the
+        // game's own handlers still run.
         continueStatus = DBG_EXCEPTION_NOT_HANDLED;
       }
     }
