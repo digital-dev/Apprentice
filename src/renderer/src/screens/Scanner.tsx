@@ -18,10 +18,20 @@ export default function Scanner({
   const [chain, setChain] = useState<{ moduleName: string; offsets: string[] } | null>(null)
   const [name, setName] = useState('')
   const [mode, setMode] = useState<CheatMode>('freeze')
+  // scanFirst/resolveChain run on a background thread in the native addon
+  // and can take a few seconds against a real game's memory, so the UI
+  // shows progress instead of looking frozen while awaiting them.
+  const [scanning, setScanning] = useState(false)
+  const [resolving, setResolving] = useState(false)
 
   async function firstScan() {
-    const found = await window.tamper.scanFirst(dataType, Number(value))
-    setCandidates(found)
+    setScanning(true)
+    try {
+      const found = await window.tamper.scanFirst(dataType, Number(value))
+      setCandidates(found)
+    } finally {
+      setScanning(false)
+    }
   }
 
   // Relative filters (changed/increased/...) compare each candidate against
@@ -38,8 +48,14 @@ export default function Scanner({
 
   async function resolve(address: string) {
     setSelected(address)
-    const result = await window.tamper.resolveChain(address, 5)
-    setChain(result)
+    setChain(null)
+    setResolving(true)
+    try {
+      const result = await window.tamper.resolveChain(address, 5)
+      setChain(result)
+    } finally {
+      setResolving(false)
+    }
   }
 
   async function save() {
@@ -75,7 +91,10 @@ export default function Scanner({
         value={value}
         onChange={(e) => setValue(e.target.value)}
       />
-      <button onClick={firstScan}>First Scan</button>
+      <button onClick={firstScan} disabled={scanning}>
+        {scanning ? 'Scanning…' : 'First Scan'}
+      </button>
+      {scanning && <p>Scanning game memory — this can take a few seconds…</p>}
 
       {candidates.length > 0 && (
         <>
@@ -98,8 +117,9 @@ export default function Scanner({
           {candidates.map((c) => (
             <li key={c.address} onClick={() => resolve(c.address)}>
               {c.address} = {c.value}{' '}
-              {selected === c.address && chain && '✓ chain resolved'}
-              {selected === c.address && chain === null && '— no static chain found'}
+              {selected === c.address && resolving && 'resolving…'}
+              {selected === c.address && !resolving && chain && '✓ chain resolved'}
+              {selected === c.address && !resolving && chain === null && '— no static chain found'}
             </li>
           ))}
         </ul>

@@ -19,8 +19,8 @@ afterAll(() => {
 })
 
 describe('resolvePointerChain', () => {
-  it('finds a static chain anchored in any loaded module, and it round-trips through readValue', () => {
-    const candidates: { address: string; value: number }[] = (addon as any).scanFirst(
+  it('finds a static chain anchored in any loaded module, and it round-trips through readValue', async () => {
+    const candidates: { address: string; value: number }[] = await (addon as any).scanFirst(
       handle,
       'int32',
       100
@@ -29,7 +29,7 @@ describe('resolvePointerChain', () => {
 
     let chain = null
     for (const candidate of candidates) {
-      chain = (addon as any).resolvePointerChain(handle, candidate.address, 2)
+      chain = await (addon as any).resolvePointerChain(handle, candidate.address, 2)
       if (chain) break
     }
     expect(chain).not.toBeNull()
@@ -45,12 +45,12 @@ describe('resolvePointerChain', () => {
     expect(value).toBe(100)
   })
 
-  it('finds a chain through a field at a nonzero offset inside a struct (real-world object shape)', () => {
+  it('finds a chain through a field at a nonzero offset inside a struct (real-world object shape)', async () => {
     // g_player_ptr points at PlayerComponent's base; g_player.stamina sits
     // 16 bytes in (four leading int padding fields). An exact-value-only
     // pointer match would never find this — only a pointer whose value is
     // AT the struct base, with the field offset applied afterward, works.
-    const candidates: { address: string; value: number }[] = (addon as any).scanFirst(
+    const candidates: { address: string; value: number }[] = await (addon as any).scanFirst(
       handle,
       'float',
       77.0
@@ -59,7 +59,7 @@ describe('resolvePointerChain', () => {
 
     let chain = null
     for (const candidate of candidates) {
-      chain = (addon as any).resolvePointerChain(handle, candidate.address, 2)
+      chain = await (addon as any).resolvePointerChain(handle, candidate.address, 2)
       if (chain) break
     }
     expect(chain).not.toBeNull()

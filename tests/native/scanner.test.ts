@@ -31,7 +31,7 @@ interface Candidate {
 
 describe('scanFirst / scanNext', () => {
   it('finds the harness health value and narrows it after a change', async () => {
-    let candidates: Candidate[] = (addon as any).scanFirst(handle, 'int32', 100)
+    let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'int32', 100)
     expect(candidates.length).toBeGreaterThan(0)
     expect(candidates.every((c) => c.value === 100)).toBe(true)
 
@@ -56,7 +56,7 @@ describe('scanFirst / scanNext', () => {
   })
 
   it('finds the harness stamina value as a float and narrows it after a change', async () => {
-    let candidates: Candidate[] = (addon as any).scanFirst(handle, 'float', 100.0)
+    let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'float', 100.0)
     expect(candidates.length).toBeGreaterThan(0)
 
     await send('setf 42.5')
@@ -75,7 +75,7 @@ describe('scanFirst / scanNext', () => {
 
   it('chains decreased then increased using each candidate\'s own tracked value', async () => {
     await send('setf 100.0')
-    let candidates: Candidate[] = (addon as any).scanFirst(handle, 'float', 100.0)
+    let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'float', 100.0)
     expect(candidates.length).toBeGreaterThan(0)
 
     await send('setf 50.0')

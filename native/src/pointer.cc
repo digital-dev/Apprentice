@@ -204,6 +204,60 @@ std::optional<ChainResult> FindChain(
   return std::nullopt;
 }
 
+// The full modules-collect-sort-search pipeline, kept free of Napi:: types
+// so it's safe to run on a background thread.
+std::optional<ChainResult> RunResolvePointerChain(HANDLE h, uintptr_t target, int maxLevels) {
+  auto modules = ListModules(h);
+  auto pointers = CollectPointers(h);
+  std::sort(pointers.begin(), pointers.end(), ByValue);
+  int nodesVisited = 0;
+  return FindChain(modules, target, maxLevels, pointers, &nodesVisited);
+}
+
+// Runs the search on a libuv worker thread instead of the main JS thread.
+// Collecting pointers across a real game's entire committed memory, even
+// with the sorted/bounded search, is real work — running it synchronously
+// on the main thread blocks the whole Electron app for that duration,
+// indistinguishable from a hang to the user.
+class ResolvePointerChainWorker : public Napi::AsyncWorker {
+ public:
+  ResolvePointerChainWorker(Napi::Env env, HANDLE handle, uintptr_t target, int maxLevels)
+      : Napi::AsyncWorker(env),
+        handle_(handle),
+        target_(target),
+        maxLevels_(maxLevels),
+        deferred_(Napi::Promise::Deferred::New(env)) {}
+
+  Napi::Promise GetPromise() { return deferred_.Promise(); }
+
+  void Execute() override { result_ = RunResolvePointerChain(handle_, target_, maxLevels_); }
+
+  void OnOK() override {
+    Napi::Env env = Env();
+    if (!result_) {
+      deferred_.Resolve(env.Null());
+      return;
+    }
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("moduleName", Napi::String::New(env, result_->moduleName));
+    Napi::Array offsets = Napi::Array::New(env, result_->offsets.size());
+    for (size_t i = 0; i < result_->offsets.size(); i++) {
+      offsets.Set((uint32_t)i, Napi::String::New(env, ToHex(result_->offsets[i])));
+    }
+    obj.Set("offsets", offsets);
+    deferred_.Resolve(obj);
+  }
+
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+ private:
+  HANDLE handle_;
+  uintptr_t target_;
+  int maxLevels_;
+  std::optional<ChainResult> result_;
+  Napi::Promise::Deferred deferred_;
+};
+
 } // namespace
 
 Napi::Value ResolvePointerChain(const Napi::CallbackInfo& info) {
@@ -213,22 +267,10 @@ Napi::Value ResolvePointerChain(const Napi::CallbackInfo& info) {
   uintptr_t target = ParseHex(info[1].As<Napi::String>().Utf8Value());
   int maxLevels = info[2].As<Napi::Number>().Int32Value();
 
-  auto modules = ListModules(h);
-  auto pointers = CollectPointers(h);
-  std::sort(pointers.begin(), pointers.end(), ByValue);
-  int nodesVisited = 0;
-  auto chain = FindChain(modules, target, maxLevels, pointers, &nodesVisited);
-
-  if (!chain) return env.Null();
-
-  Napi::Object result = Napi::Object::New(env);
-  result.Set("moduleName", Napi::String::New(env, chain->moduleName));
-  Napi::Array offsets = Napi::Array::New(env);
-  for (size_t i = 0; i < chain->offsets.size(); i++) {
-    offsets.Set((uint32_t)i, Napi::String::New(env, ToHex(chain->offsets[i])));
-  }
-  result.Set("offsets", offsets);
-  return result;
+  auto* worker = new ResolvePointerChainWorker(env, h, target, maxLevels);
+  Napi::Promise promise = worker->GetPromise();
+  worker->Queue();
+  return promise;
 }
 
 // Looks up a currently-loaded module's base address by name. Used to

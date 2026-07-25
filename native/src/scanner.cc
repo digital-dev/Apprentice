@@ -51,22 +51,16 @@ bool ReadValueAsDouble(HANDLE h, uintptr_t addr, bool isFloat, double* out) {
   return true;
 }
 
-} // namespace
+struct AddressValue {
+  uintptr_t address;
+  double value;
+};
 
-Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
-  std::string dataType = info[1].As<Napi::String>().Utf8Value();
-  bool isFloat = dataType == "float";
-  if (!isFloat && dataType != "int32") {
-    Napi::Error::New(env, "dataType must be 'int32' or 'float'").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-  double target = info[2].As<Napi::Number>().DoubleValue();
-
-  Napi::Array result = Napi::Array::New(env);
-  uint32_t count = 0;
+// The actual memory walk, kept free of any Napi:: types so it's safe to run
+// on a background thread (see ScanFirstWorker below) — Napi::Env/Value are
+// not thread-safe and must only be touched on the JS thread.
+std::vector<AddressValue> RunScanFirst(HANDLE h, bool isFloat, double target) {
+  std::vector<AddressValue> out;
 
   MEMORY_BASIC_INFORMATION mbi;
   uintptr_t addr = 0;
@@ -83,10 +77,7 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
         for (SIZE_T offset = 0; offset + kValueSize <= bytesRead; offset += kValueSize) {
           double value = InterpretAsDouble(buffer.data() + offset, isFloat);
           if (ValuesEqual(value, target, isFloat)) {
-            Napi::Object item = Napi::Object::New(env);
-            item.Set("address", Napi::String::New(env, ToHex(base + offset)));
-            item.Set("value", Napi::Number::New(env, value));
-            result.Set(count++, item);
+            out.push_back({base + offset, value});
           }
         }
       }
@@ -101,7 +92,68 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
     addr = next;
   }
 
-  return result;
+  return out;
+}
+
+// Runs RunScanFirst on a libuv worker thread instead of the main JS thread.
+// scanFirst walks the whole process's committed memory, which even after
+// the bulk-read optimization can take real wall-clock time against a large
+// real game process — running it synchronously on the main thread blocks
+// the ENTIRE Electron app (not just this call) for that whole duration,
+// which is indistinguishable from a hang to the user.
+class ScanFirstWorker : public Napi::AsyncWorker {
+ public:
+  ScanFirstWorker(Napi::Env env, HANDLE handle, bool isFloat, double target)
+      : Napi::AsyncWorker(env),
+        handle_(handle),
+        isFloat_(isFloat),
+        target_(target),
+        deferred_(Napi::Promise::Deferred::New(env)) {}
+
+  Napi::Promise GetPromise() { return deferred_.Promise(); }
+
+  void Execute() override { results_ = RunScanFirst(handle_, isFloat_, target_); }
+
+  void OnOK() override {
+    Napi::Env env = Env();
+    Napi::Array result = Napi::Array::New(env, results_.size());
+    for (size_t i = 0; i < results_.size(); i++) {
+      Napi::Object item = Napi::Object::New(env);
+      item.Set("address", Napi::String::New(env, ToHex(results_[i].address)));
+      item.Set("value", Napi::Number::New(env, results_[i].value));
+      result.Set((uint32_t)i, item);
+    }
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+ private:
+  HANDLE handle_;
+  bool isFloat_;
+  double target_;
+  std::vector<AddressValue> results_;
+  Napi::Promise::Deferred deferred_;
+};
+
+} // namespace
+
+Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  HANDLE h = reinterpret_cast<HANDLE>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  std::string dataType = info[1].As<Napi::String>().Utf8Value();
+  bool isFloat = dataType == "float";
+  if (!isFloat && dataType != "int32") {
+    Napi::Error::New(env, "dataType must be 'int32' or 'float'").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  double target = info[2].As<Napi::Number>().DoubleValue();
+
+  auto* worker = new ScanFirstWorker(env, h, isFloat, target);
+  Napi::Promise promise = worker->GetPromise();
+  worker->Queue();
+  return promise;
 }
 
 Napi::Value ScanNext(const Napi::CallbackInfo& info) {

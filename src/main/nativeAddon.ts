@@ -12,7 +12,12 @@ export type ScanFilter =
 export const nativeAddon = {
   listProcesses: (): ProcessInfo[] => addon.listProcesses(),
   attach: (pid: number): AttachResult => addon.attach(pid),
-  scanFirst: (handle: number, dataType: string, value: number): Candidate[] =>
+  // scanFirst and resolvePointerChain run on a background thread in the
+  // native addon (Napi::AsyncWorker) and return Promises — walking a real
+  // game's entire committed memory takes real wall-clock time even after
+  // the read/search optimizations, and running that synchronously on the
+  // main thread would block the whole Electron app for the duration.
+  scanFirst: (handle: number, dataType: string, value: number): Promise<Candidate[]> =>
     addon.scanFirst(handle, dataType, value),
   scanNext: (
     handle: number,
@@ -24,7 +29,7 @@ export const nativeAddon = {
     handle: number,
     target: string,
     maxLevels: number
-  ): { moduleName: string; offsets: string[] } | null =>
+  ): Promise<{ moduleName: string; offsets: string[] } | null> =>
     addon.resolvePointerChain(handle, target, maxLevels),
   getModuleBase: (handle: number, moduleName: string): string | null =>
     addon.getModuleBase(handle, moduleName),

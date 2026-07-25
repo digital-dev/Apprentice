@@ -1,1 +1,19 @@
-[]
+[
+  {
+    "id": "stamina",
+    "name": "Stamina",
+    "dataType": "float",
+    "mode": "freeze",
+    "moduleName": "mono-2.0-bdwgc.dll",
+    "baseOffset": "0x9fd8c8",
+    "offsets": [
+      "0xaf0",
+      "0xee0",
+      "0xee0",
+      "0xc50",
+      "0xfd8",
+      "0xe80"
+    ],
+    "value": 115
+  }
+]
