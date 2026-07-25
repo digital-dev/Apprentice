@@ -1,0 +1,47 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
+import path from 'node:path'
+import addon from '../../native/build/Release/memory_addon.node'
+
+let harness: ChildProcessWithoutNullStreams
+let handle: number
+
+function send(cmd: string): Promise<string> {
+  return new Promise((resolve) => {
+    harness.stdout.once('data', (d) => resolve(d.toString().trim()))
+    harness.stdin.write(cmd + '\n')
+  })
+}
+
+beforeAll(async () => {
+  harness = spawn(path.resolve('test-harness/harness.exe'))
+  await new Promise((r) => harness.stdout.once('data', r)) // consume "PID n" line
+  handle = (addon as any).attach(harness.pid).handle
+})
+
+afterAll(() => {
+  harness.stdin.write('q\n')
+  harness.kill()
+})
+
+describe('scanFirst / scanNext', () => {
+  it('finds the harness health value and narrows it after a change', async () => {
+    let candidates: string[] = (addon as any).scanFirst(handle, 'int32', 100)
+    expect(candidates.length).toBeGreaterThan(0)
+
+    await send('set 55')
+    const previous = candidates.map(() => 100)
+    candidates = (addon as any).scanNext(handle, candidates, 'int32', {
+      mode: 'exact',
+      value: 55
+    })
+    expect(candidates.length).toBeGreaterThan(0)
+
+    await send('set 999')
+    candidates = (addon as any).scanNext(handle, candidates, 'int32', {
+      mode: 'increased',
+      previous: candidates.map(() => 55)
+    })
+    expect(candidates.length).toBe(1)
+  })
+})
