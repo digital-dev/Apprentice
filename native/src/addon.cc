@@ -7,13 +7,31 @@ Napi::Value Ping(const Napi::CallbackInfo& info) {
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  // Warm up N-API's double boxing: on this toolchain the very first
-  // Napi::Number::New(...) created in the addon's lifetime reads back
-  // as a corrupted (denormalized-looking) value on the JS side; every
-  // subsequent Number is fine. Creating and discarding one harmless
-  // number here absorbs that one-time cold start before any real
-  // Number-returning export (attach's handle, listProcesses' pid, ...)
-  // is called.
+  // Cold-start workaround, confirmed reproducible on a clean tree (no
+  // debug instrumentation) via tests/native/scanner.test.ts run in
+  // isolation and a standalone ad-hoc probe script calling attach()
+  // fresh: without this line,
+  // the very first Napi::Number::New(...) created in a fresh addon
+  // Environment (one per worker thread/process, since this addon is
+  // context-aware) reads back on the JS side as a denormalized double
+  // (e.g. attach()'s `handle` field arriving as ~3e-313 instead of a
+  // small integer), which then breaks every downstream use of that
+  // value (e.g. scanFirst's reinterpret_cast<HANDLE> becomes garbage
+  // and VirtualQueryEx fails immediately, yielding zero candidates).
+  // Every Number created after this first one is fine.
+  //
+  // Root cause is NOT understood — this is not V8/N-API's documented
+  // behavior and no UB was found in this addon's code paths that would
+  // explain it. Do not extend this pattern elsewhere without also
+  // reproducing it there; treat it as a confirmed but unexplained
+  // toolchain quirk, not a general N-API property.
+  //
+  // (An earlier version of this comment additionally cited
+  // listProcesses()'s first entry showing pid: 0 as corruption
+  // evidence. That was a misdiagnosis: pid 0 is the genuine PID of the
+  // Windows System Idle Process, not a corrupted value. That evidence
+  // has been retracted; only the handle-corruption reproduction above
+  // is relied on.)
   Napi::Number::New(env, 0.0);
 
   exports.Set("ping", Napi::Function::New(env, Ping));
