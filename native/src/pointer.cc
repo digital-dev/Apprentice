@@ -123,21 +123,21 @@ constexpr uintptr_t kMaxFieldOffset = 0x1000;
 // binary search instead of a full scan.
 bool ByValue(const PointerEntry& a, const PointerEntry& b) { return a.value < b.value; }
 
-// FindChain explores a real search tree (each candidate can itself require
+// The search explores a real tree (each candidate can itself require
 // recursing into further candidates), and with an offset-tolerant match
 // the branching factor per level can be large against a real game's
-// gigabytes of memory. A per-call node budget bounds total work
-// independent of how deep or wide that tree gets, so a genuinely
-// unresolvable chain fails fast instead of exhaustively enumerating every
-// path up to maxLevels.
+// gigabytes of memory. A node budget bounds total work independent of how
+// deep or wide that tree gets, so a genuinely unresolvable chain fails fast
+// instead of exhaustively enumerating every path. A separate cap bounds how
+// many candidate chains we hold for ranking.
 constexpr int kMaxNodesVisited = 200000;
+constexpr size_t kMaxCandidateChains = 128;
 
-// FindChain(target, levelsLeft) returns an offset list which, when resolved
-// via the standard "deref all but the last offset" walk starting at the
-// anchor module's base, lands exactly on `target` itself (not a dereference
-// of it). That's the same invariant the exported offsets must satisfy per
-// the task interface: *(moduleBase + offsets[0]) + offsets[1] ... ==
-// targetAddress, with the final offset added but not dereferenced.
+// CollectChains gathers offset lists which, when resolved via the standard
+// "deref all but the last offset" walk from the anchor module's base, land
+// exactly on `target`. Each satisfies the interface invariant
+// *(moduleBase + offsets[0]) + offsets[1] ... == targetAddress, with the
+// final offset added but not dereferenced.
 //
 // The anchor is not restricted to a single module: any loaded module whose
 // static range contains the pointer entry is accepted, since real games
@@ -146,34 +146,29 @@ constexpr int kMaxNodesVisited = 200000;
 //
 // Base case: a pointer entry `e` whose value sits within kMaxFieldOffset
 // bytes at-or-before `target` (fieldOffset = target - e.value), and whose
-// own address already sits inside some module M (reachable from M's base
-// with zero dereferences via [e.address - M.base]). To go from "address of
-// e" to "value stored at e, plus fieldOffset" (== target) requires exactly
-// one more dereference followed by adding fieldOffset. In offset-list
-// terms, appending a trailing fieldOffset makes the previously-last offset
-// become non-last (so it gets dereferenced) and the new last offset
-// (fieldOffset) is added without dereferencing, landing on target. So the
-// base case must return {e.address - M.base, fieldOffset}, not just
-// {e.address - M.base} (which would land on the address of e, one
-// dereference short of target).
+// own address already sits inside some module M. Reaching target requires
+// one dereference of the pointer stored at e.address, then adding
+// fieldOffset — encoded as {e.address - M.base, fieldOffset} (the trailing
+// fieldOffset is added without a further dereference, landing on target).
 //
-// Recursive case: entry `e` whose value is within kMaxFieldOffset of
-// `target` but whose address is not itself in any module. Recurse to find
-// `inner`, an offset list that lands on e.address (by the same invariant,
-// applied to the smaller problem "reach e.address from some module's
-// base"). Since *e.address + fieldOffset == target, appending a trailing
-// fieldOffset to `inner` forces one more dereference at the point that
-// used to be `inner`'s last step, then adds fieldOffset, producing target —
-// exactly mirroring the base case's fix.
-// `pointers` must already be sorted by `.value` (see ByValue). `nodesVisited`
-// is threaded through the whole search (not reset per level) so the budget
-// caps total work across the entire recursion tree, not just one level of
-// it.
-std::optional<ChainResult> FindChain(
+// Recursive case: entry `e` whose value is within kMaxFieldOffset of target
+// but whose address is not itself in any module. Recurse to reach e.address
+// from some module base, then append fieldOffset to each inner chain — one
+// more dereference at what used to be the inner chain's last step, mirroring
+// the base case.
+//
+// `pointers` must already be sorted by `.value` (see ByValue). Unlike a
+// first-match search, this collects EVERY chain (up to the budget/cap)
+// rather than returning the first, so the caller can rank them: a chain's
+// existence doesn't make it trustworthy — a 5-level path through large
+// unaligned offsets is far more likely coincidental than a single-deref
+// path off a static base, and only ranking can tell them apart.
+void CollectChains(
     const std::vector<ModuleRange>& modules,
     uintptr_t target, int levelsLeft, const std::vector<PointerEntry>& pointers,
-    int* nodesVisited) {
-  if (*nodesVisited >= kMaxNodesVisited) return std::nullopt;
+    int* nodesVisited, std::vector<ChainResult>& out) {
+  if (out.size() >= kMaxCandidateChains) return;
+  if (*nodesVisited >= kMaxNodesVisited) return;
 
   // Candidates are exactly those with value in [target - kMaxFieldOffset,
   // target]; find that contiguous run in the sorted vector via two binary
@@ -185,33 +180,84 @@ std::optional<ChainResult> FindChain(
       PointerEntry{0, target}, ByValue);
 
   for (auto it = begin; it != end; ++it) {
-    if (++(*nodesVisited) > kMaxNodesVisited) return std::nullopt;
+    if (++(*nodesVisited) > kMaxNodesVisited) return;
+    if (out.size() >= kMaxCandidateChains) return;
 
     const PointerEntry& e = *it;
     uintptr_t fieldOffset = target - e.value;
 
     if (const ModuleRange* m = FindContainingModule(modules, e.address)) {
-      return ChainResult{m->name, {e.address - m->base, fieldOffset}};
-    }
-    if (levelsLeft > 0) {
-      auto inner = FindChain(modules, e.address, levelsLeft - 1, pointers, nodesVisited);
-      if (inner) {
-        inner->offsets.push_back(fieldOffset);
-        return inner;
+      out.push_back(ChainResult{m->name, {e.address - m->base, fieldOffset}});
+    } else if (levelsLeft > 0) {
+      std::vector<ChainResult> inner;
+      CollectChains(modules, e.address, levelsLeft - 1, pointers, nodesVisited, inner);
+      for (auto& ic : inner) {
+        ic.offsets.push_back(fieldOffset);
+        out.push_back(std::move(ic));
+        if (out.size() >= kMaxCandidateChains) return;
       }
     }
   }
-  return std::nullopt;
+}
+
+// Ranks a chain for likely-realness. Lower is better, compared
+// lexicographically: (depth, worst struct-traversal offset, misaligned
+// count). offsets[0] is the static pointer's location within its module —
+// essentially arbitrary (modules are megabytes), so its magnitude is NOT
+// scored; only the dereference offsets (offsets[1..], the actual
+// struct/object field traversals) are, since a real object graph uses
+// small, aligned field offsets.
+struct ChainScore {
+  size_t depth;
+  uintptr_t worstOffset;
+  int misaligned;
+};
+
+ChainScore ScoreOf(const std::vector<uintptr_t>& offsets) {
+  ChainScore s{offsets.size(), 0, 0};
+  for (size_t i = 1; i < offsets.size(); i++) {
+    if (offsets[i] > s.worstOffset) s.worstOffset = offsets[i];
+    if (offsets[i] % 4 != 0) s.misaligned++;
+  }
+  return s;
+}
+
+bool ScoreBetter(const ChainScore& a, const ChainScore& b) {
+  if (a.depth != b.depth) return a.depth < b.depth;
+  if (a.worstOffset != b.worstOffset) return a.worstOffset < b.worstOffset;
+  return a.misaligned < b.misaligned;
 }
 
 // The full modules-collect-sort-search pipeline, kept free of Napi:: types
-// so it's safe to run on a background thread.
+// so it's safe to run on a background thread. Uses iterative deepening: try
+// the shallowest depth first and stop at the first depth that yields any
+// chains, so a direct single-deref static path is always preferred over a
+// deeper one even before per-depth ranking runs. Re-searching the empty
+// shallow depths is cheap, and the shared node budget still caps total work.
 std::optional<ChainResult> RunResolvePointerChain(HANDLE h, uintptr_t target, int maxLevels) {
   auto modules = ListModules(h);
   auto pointers = CollectPointers(h);
   std::sort(pointers.begin(), pointers.end(), ByValue);
+
   int nodesVisited = 0;
-  return FindChain(modules, target, maxLevels, pointers, &nodesVisited);
+  for (int limit = 0; limit <= maxLevels; limit++) {
+    std::vector<ChainResult> candidates;
+    CollectChains(modules, target, limit, pointers, &nodesVisited, candidates);
+    if (!candidates.empty()) {
+      const ChainResult* best = &candidates[0];
+      ChainScore bestScore = ScoreOf(best->offsets);
+      for (size_t i = 1; i < candidates.size(); i++) {
+        ChainScore s = ScoreOf(candidates[i].offsets);
+        if (ScoreBetter(s, bestScore)) {
+          best = &candidates[i];
+          bestScore = s;
+        }
+      }
+      return *best;
+    }
+    if (nodesVisited >= kMaxNodesVisited) break;
+  }
+  return std::nullopt;
 }
 
 // Runs the search on a libuv worker thread instead of the main JS thread.

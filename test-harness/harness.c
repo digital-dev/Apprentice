@@ -35,6 +35,9 @@ int main(void) {
     } else if (sscanf(line, "setf %f", &fval) == 1) {
       g_stamina = fval;
       printf("OK\n");
+    } else if (sscanf(line, "setp %f", &fval) == 1) {
+      g_player_ptr->stamina = fval; // lets pointer.test.ts narrow to this exact field
+      printf("OK\n");
     } else if (strncmp(line, "get", 3) == 0) {
       printf("OK %d\n", *g_health_ptr);
     } else {
