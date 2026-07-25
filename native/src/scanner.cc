@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -14,14 +15,6 @@ std::string ToHex(uintptr_t addr) {
   char buf[32];
   snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)addr);
   return buf;
-}
-
-bool MatchesInt32(HANDLE h, uintptr_t addr, int32_t target) {
-  int32_t buf;
-  SIZE_T read;
-  if (!ReadProcessMemory(h, (LPCVOID)addr, &buf, sizeof(buf), &read) || read != sizeof(buf))
-    return false;
-  return buf == target;
 }
 
 bool ReadInt32(HANDLE h, uintptr_t addr, int32_t* out) {
@@ -53,14 +46,23 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
         (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
         !(mbi.Protect & PAGE_GUARD);
 
-    if (readable) {
-      for (uintptr_t p = (uintptr_t)mbi.BaseAddress;
-           p + sizeof(int32_t) <= (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
-           p += sizeof(int32_t)) {
-        if (MatchesInt32(h, p, target)) {
-          result.Set(count++, Napi::String::New(env, ToHex(p)));
+    if (readable && mbi.RegionSize >= sizeof(int32_t)) {
+      std::vector<uint8_t> buffer(mbi.RegionSize);
+      SIZE_T bytesRead = 0;
+      if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
+        uintptr_t base = (uintptr_t)mbi.BaseAddress;
+        for (SIZE_T offset = 0; offset + sizeof(int32_t) <= bytesRead; offset += sizeof(int32_t)) {
+          int32_t value;
+          memcpy(&value, buffer.data() + offset, sizeof(value));
+          if (value == target) {
+            result.Set(count++, Napi::String::New(env, ToHex(base + offset)));
+          }
         }
       }
+      // A whole-region read can legitimately fail (e.g. protection changed
+      // between VirtualQueryEx and ReadProcessMemory) — skip that region
+      // rather than falling back to a per-address read, which is what made
+      // scanning slow enough to look hung against a real game process.
     }
 
     uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
