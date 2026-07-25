@@ -10,7 +10,7 @@ export default function Scanner({
   exeName: string
   onSaved: () => void
 }) {
-  const [dataType] = useState<DataType>('int32')
+  const [dataType, setDataType] = useState<DataType>('float')
   const [value, setValue] = useState('')
   const [candidates, setCandidates] = useState<string[]>([])
   const [previousValue, setPreviousValue] = useState<number | null>(null)
@@ -61,6 +61,14 @@ export default function Scanner({
     <div>
       <h2>Scan for a new cheat — {exeName}</h2>
 
+      <select
+        value={dataType}
+        onChange={(e) => setDataType(e.target.value as DataType)}
+        disabled={candidates.length > 0}
+      >
+        <option value="float">Float (most common — health, stamina, position)</option>
+        <option value="int32">Whole number (gold, item count)</option>
+      </select>
       <input
         placeholder="Current value in-game"
         value={value}

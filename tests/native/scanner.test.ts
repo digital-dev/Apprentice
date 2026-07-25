@@ -44,4 +44,22 @@ describe('scanFirst / scanNext', () => {
     })
     expect(candidates.length).toBe(1)
   })
+
+  it('finds the harness stamina value as a float and narrows it after a change', async () => {
+    let candidates: string[] = (addon as any).scanFirst(handle, 'float', 100.0)
+    expect(candidates.length).toBeGreaterThan(0)
+
+    await send('setf 42.5')
+    candidates = (addon as any).scanNext(handle, candidates, 'float', {
+      mode: 'exact',
+      value: 42.5
+    })
+    expect(candidates.length).toBe(1)
+
+    // readValue's chain walk with an empty offsets array is just "read at
+    // base" (no add, no deref), so this directly verifies the scanned
+    // address really holds 42.5 as a float, not just that it was reported.
+    const value = (addon as any).readValue(handle, candidates[0], [], 'float')
+    expect(value).toBeCloseTo(42.5, 4)
+  })
 })

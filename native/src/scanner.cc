@@ -4,6 +4,7 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 namespace {
 
@@ -17,9 +18,37 @@ std::string ToHex(uintptr_t addr) {
   return buf;
 }
 
-bool ReadInt32(HANDLE h, uintptr_t addr, int32_t* out) {
+// int32 and float are both 4 bytes; scanning/filtering only differs in how
+// the raw bytes are interpreted and compared, so both data types share the
+// same walk/read code with a runtime branch on interpretation.
+constexpr size_t kValueSize = 4;
+
+double InterpretAsDouble(const uint8_t* bytes, bool isFloat) {
+  if (isFloat) {
+    float v;
+    memcpy(&v, bytes, sizeof(v));
+    return static_cast<double>(v);
+  }
+  int32_t v;
+  memcpy(&v, bytes, sizeof(v));
+  return static_cast<double>(v);
+}
+
+// Float equality after a game tick can differ by tiny rounding error even
+// when "the same" value was written, so float comparisons use a small
+// epsilon; int32 comparisons stay exact.
+bool ValuesEqual(double a, double b, bool isFloat) {
+  if (isFloat) return std::abs(a - b) < 0.0001;
+  return a == b;
+}
+
+bool ReadValueAsDouble(HANDLE h, uintptr_t addr, bool isFloat, double* out) {
+  uint8_t buf[kValueSize];
   SIZE_T read;
-  return ReadProcessMemory(h, (LPCVOID)addr, out, sizeof(*out), &read) && read == sizeof(*out);
+  if (!ReadProcessMemory(h, (LPCVOID)addr, buf, sizeof(buf), &read) || read != sizeof(buf))
+    return false;
+  *out = InterpretAsDouble(buf, isFloat);
+  return true;
 }
 
 } // namespace
@@ -29,12 +58,12 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   std::string dataType = info[1].As<Napi::String>().Utf8Value();
-  int32_t target = info[2].As<Napi::Number>().Int32Value();
-
-  if (dataType != "int32") {
-    Napi::Error::New(env, "only int32 supported in v1").ThrowAsJavaScriptException();
+  bool isFloat = dataType == "float";
+  if (!isFloat && dataType != "int32") {
+    Napi::Error::New(env, "dataType must be 'int32' or 'float'").ThrowAsJavaScriptException();
     return env.Null();
   }
+  double target = info[2].As<Napi::Number>().DoubleValue();
 
   Napi::Array result = Napi::Array::New(env);
   uint32_t count = 0;
@@ -46,15 +75,14 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
         (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
         !(mbi.Protect & PAGE_GUARD);
 
-    if (readable && mbi.RegionSize >= sizeof(int32_t)) {
+    if (readable && mbi.RegionSize >= kValueSize) {
       std::vector<uint8_t> buffer(mbi.RegionSize);
       SIZE_T bytesRead = 0;
       if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
         uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        for (SIZE_T offset = 0; offset + sizeof(int32_t) <= bytesRead; offset += sizeof(int32_t)) {
-          int32_t value;
-          memcpy(&value, buffer.data() + offset, sizeof(value));
-          if (value == target) {
+        for (SIZE_T offset = 0; offset + kValueSize <= bytesRead; offset += kValueSize) {
+          double value = InterpretAsDouble(buffer.data() + offset, isFloat);
+          if (ValuesEqual(value, target, isFloat)) {
             result.Set(count++, Napi::String::New(env, ToHex(base + offset)));
           }
         }
@@ -78,10 +106,8 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   Napi::Array addrs = info[1].As<Napi::Array>();
-  // info[2] is dataType ('int32' | 'float') per the public signature
-  // scanNext(handle, addresses, dataType, filter); only int32 is
-  // supported in v1 (mirrors ScanFirst), so it is accepted but unused
-  // beyond this point. The filter object is info[3].
+  std::string dataType = info[2].As<Napi::String>().Utf8Value();
+  bool isFloat = dataType == "float";
   Napi::Object filter = info[3].As<Napi::Object>();
   std::string mode = filter.Get("mode").As<Napi::String>().Utf8Value();
 
@@ -90,18 +116,18 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
 
   for (uint32_t i = 0; i < addrs.Length(); i++) {
     uintptr_t addr = ParseHex(addrs.Get(i).As<Napi::String>().Utf8Value());
-    int32_t current;
-    if (!ReadInt32(h, addr, &current)) continue;
+    double current;
+    if (!ReadValueAsDouble(h, addr, isFloat, &current)) continue;
 
     bool keep = false;
     if (mode == "exact") {
-      int32_t target = filter.Get("value").As<Napi::Number>().Int32Value();
-      keep = current == target;
+      double target = filter.Get("value").As<Napi::Number>().DoubleValue();
+      keep = ValuesEqual(current, target, isFloat);
     } else {
-      int32_t previous = filter.Get("previous").As<Napi::Array>()
-                              .Get(i).As<Napi::Number>().Int32Value();
-      if (mode == "changed") keep = current != previous;
-      else if (mode == "unchanged") keep = current == previous;
+      double previous = filter.Get("previous").As<Napi::Array>()
+                             .Get(i).As<Napi::Number>().DoubleValue();
+      if (mode == "changed") keep = !ValuesEqual(current, previous, isFloat);
+      else if (mode == "unchanged") keep = ValuesEqual(current, previous, isFloat);
       else if (mode == "increased") keep = current > previous;
       else if (mode == "decreased") keep = current < previous;
     }
