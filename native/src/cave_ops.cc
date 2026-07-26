@@ -36,6 +36,33 @@ bool IsPositionDependent(const ZydisDecodedInstruction& insn,
   return false;
 }
 
+std::string BytesToHex(const uint8_t* data, size_t len) {
+  std::string out;
+  char hb[4];
+  for (size_t i = 0; i < len; i++) {
+    snprintf(hb, sizeof(hb), "%02x", data[i]);
+    out += hb;
+  }
+  return out;
+}
+
+// Only the 16 general-purpose 64-bit registers can hold an object pointer,
+// so an unknown name is a caller bug, not something to guess at.
+ZydisRegister RegisterByName(const std::string& name) {
+  static const struct { const char* name; ZydisRegister reg; } kMap[] = {
+    {"rax", ZYDIS_REGISTER_RAX}, {"rbx", ZYDIS_REGISTER_RBX},
+    {"rcx", ZYDIS_REGISTER_RCX}, {"rdx", ZYDIS_REGISTER_RDX},
+    {"rsi", ZYDIS_REGISTER_RSI}, {"rdi", ZYDIS_REGISTER_RDI},
+    {"rbp", ZYDIS_REGISTER_RBP}, {"rsp", ZYDIS_REGISTER_RSP},
+    {"r8", ZYDIS_REGISTER_R8},   {"r9", ZYDIS_REGISTER_R9},
+    {"r10", ZYDIS_REGISTER_R10}, {"r11", ZYDIS_REGISTER_R11},
+    {"r12", ZYDIS_REGISTER_R12}, {"r13", ZYDIS_REGISTER_R13},
+    {"r14", ZYDIS_REGISTER_R14}, {"r15", ZYDIS_REGISTER_R15},
+  };
+  for (const auto& e : kMap) if (name == e.name) return e.reg;
+  return ZYDIS_REGISTER_NONE;
+}
+
 } // namespace
 
 Napi::Value AllocateCave(const Napi::CallbackInfo& info) {
@@ -91,4 +118,58 @@ Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
   result.Set("decodable", Napi::Boolean::New(env, decodable));
   result.Set("relocatable", Napi::Boolean::New(env, decodable && relocatable));
   return result;
+}
+
+// Hand-encoded rather than routed through Zydis: `jmp rel32` is one opcode
+// and a signed displacement from the END of the instruction, and encoding it
+// directly keeps the arithmetic visible at the one place it matters.
+Napi::Value EncodeJump(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  uintptr_t from = ParseHex(info[0].As<Napi::String>().Utf8Value());
+  uintptr_t to = ParseHex(info[1].As<Napi::String>().Utf8Value());
+
+  int64_t rel = (int64_t)to - (int64_t)(from + 5);
+  if (rel > INT32_MAX || rel < INT32_MIN) {
+    Napi::Error::New(env, "jump target out of rel32 range")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  int32_t rel32 = (int32_t)rel;
+  uint8_t bytes[5];
+  bytes[0] = 0xE9;
+  memcpy(bytes + 1, &rel32, sizeof(rel32));
+  return Napi::String::New(env, BytesToHex(bytes, sizeof(bytes)));
+}
+
+Napi::Value EncodeStore(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string regName = info[0].As<Napi::String>().Utf8Value();
+  int64_t offset = info[1].As<Napi::Number>().Int64Value();
+  uint32_t imm = info[2].As<Napi::Number>().Uint32Value();
+
+  ZydisRegister reg = RegisterByName(regName);
+  if (reg == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown base register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  ZydisEncoderRequest req;
+  memset(&req, 0, sizeof(req));
+  req.mnemonic = ZYDIS_MNEMONIC_MOV;
+  req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+  req.operand_count = 2;
+  req.operands[0].type = ZYDIS_OPERAND_TYPE_MEMORY;
+  req.operands[0].mem.base = reg;
+  req.operands[0].mem.displacement = offset;
+  req.operands[0].mem.size = 4; // dword: int32 and float alike
+  req.operands[1].type = ZYDIS_OPERAND_TYPE_IMMEDIATE;
+  req.operands[1].imm.u = imm;
+
+  uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
+  ZyanUSize len = sizeof(buf);
+  if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
+    Napi::Error::New(env, "failed to encode store").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  return Napi::String::New(env, BytesToHex(buf, (size_t)len));
 }

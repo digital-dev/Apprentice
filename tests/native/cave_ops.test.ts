@@ -101,3 +101,43 @@ describe('decodeRun', () => {
     expect(result.relocatable).toBe(false)
   })
 })
+
+describe('encodeJump', () => {
+  it('encodes a 5-byte relative jump', () => {
+    // From 0x1000 to 0x1010: rel32 = to - (from + 5) = 0x0b.
+    const hex: string = (addon as any).encodeJump('0x1000', '0x1010')
+    expect(hex).toBe('e90b000000')
+  })
+
+  it('encodes a backward jump', () => {
+    // From 0x1010 to 0x1000: rel32 = -0x15 = 0xffffffeb.
+    const hex: string = (addon as any).encodeJump('0x1010', '0x1000')
+    expect(hex).toBe('e9ebffffff')
+  })
+})
+
+describe('encodeStore', () => {
+  it('encodes mov dword ptr [rdi+offset], imm32', () => {
+    // C7 87 <disp32> <imm32> — the canonical encoding for this form.
+    const hex: string = (addon as any).encodeStore('rdi', 0x818, 0x43af0000)
+    expect(hex).toBe('c78718080000' + '0000af43')
+  })
+
+  it('round-trips through the decoder as the instruction we meant', async () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const scratch: string = (addon as any).allocateCave(handle, near)
+    const hex: string = (addon as any).encodeStore('rcx', 0x10, 1234)
+    ;(addon as any).writeBytes(handle, scratch, hex)
+    // It must decode as one whole, relocatable instruction of exactly the
+    // length we produced — proof we emitted a real instruction, not bytes
+    // that merely look plausible.
+    const run = (addon as any).decodeRun(handle, scratch, 1)
+    expect(run.decodable).toBe(true)
+    expect(run.relocatable).toBe(true)
+    expect(run.length).toBe(hex.length / 2)
+  })
+
+  it('rejects an unknown register instead of encoding nonsense', () => {
+    expect(() => (addon as any).encodeStore('notareg', 0, 0)).toThrow()
+  })
+})
