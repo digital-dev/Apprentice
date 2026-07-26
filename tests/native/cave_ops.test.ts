@@ -171,14 +171,17 @@ describe('suspendThreads / resumeThreads', () => {
     await sleep(100)
 
     expect((addon as any).suspendThreads(handle, harness.pid)).toBe(true)
+    let during: string
+    try {
+      // Frozen: the writer thread cannot advance the value.
+      const before = (addon as any).readBytes(handle, forceAddress, 4)
+      await sleep(200)
+      during = (addon as any).readBytes(handle, forceAddress, 4)
+      expect(during).toBe(before)
+    } finally {
+      (addon as any).resumeThreads()
+    }
 
-    // Frozen: the writer thread cannot advance the value.
-    const before = (addon as any).readBytes(handle, forceAddress, 4)
-    await sleep(200)
-    const during = (addon as any).readBytes(handle, forceAddress, 4)
-    expect(during).toBe(before)
-
-    ;(addon as any).resumeThreads()
     await sleep(200)
     const after = (addon as any).readBytes(handle, forceAddress, 4)
     expect(after).not.toBe(during)
