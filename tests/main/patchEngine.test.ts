@@ -45,7 +45,136 @@ class FakeOps implements PatchOps {
   async scanAob(): Promise<string[]> {
     return this.aobMatches
   }
+
+  caves: string[] = []
+  nextCave = 0x50000000
+  suspended = 0
+  resumed = 0
+  runLength = 5
+  runDecodable = true
+  runRelocatable = true
+
+  allocateCave(): string | null {
+    const address = '0x' + (this.nextCave += 0x1000).toString(16)
+    this.caves.push(address)
+    return address
+  }
+  decodeRun(): { length: number; decodable: boolean; relocatable: boolean } {
+    return {
+      length: this.runLength,
+      decodable: this.runDecodable,
+      relocatable: this.runRelocatable
+    }
+  }
+  encodeStore(): string {
+    return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f
+  }
+  encodeJump(): string {
+    return 'e900000000'
+  }
+  suspendThreads(): boolean {
+    this.suspended++
+    return true
+  }
+  resumeThreads(): void {
+    this.resumed++
+  }
 }
+
+const forcePatch: PatchCheat = {
+  kind: 'patch',
+  mode: 'force',
+  id: 'patch-stamina',
+  name: 'Stamina',
+  originalBytes: ORIGINAL,
+  length: 5,
+  signature: 'f3 0f 11 41 10',
+  moduleName: 'game.exe',
+  moduleOffset: '0x100',
+  baseRegister: 'rdi',
+  fieldOffset: '0x818',
+  value: 350,
+  dataType: 'float'
+}
+
+describe('PatchEngine — force injection', () => {
+  it('writes a jump at the site and leaves the cave holding the original bytes', async () => {
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(true)
+
+    // The site now begins with a jump, padded to the displaced run length.
+    const site = ops.memory.get('0x400100') as string
+    expect(site.startsWith('e9')).toBe(true)
+    expect(site.length / 2).toBe(5)
+
+    // The cave carries the displaced original so the game's own write still
+    // happens before ours.
+    const cave = ops.memory.get(ops.caves[0]) as string
+    expect(cave.includes(ORIGINAL)).toBe(true)
+  })
+
+  it('suspends threads around the site write and resumes them', async () => {
+    await engine.apply(forcePatch)
+    expect(ops.suspended).toBe(1)
+    expect(ops.resumed).toBe(1)
+  })
+
+  it('refuses when the displaced run cannot be relocated', async () => {
+    ops.runRelocatable = false
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('own address')
+    expect(ops.writes).toHaveLength(0)
+    expect(engine.isApplied('patch-stamina')).toBe(false)
+  })
+
+  it('refuses when the run cannot be decoded', async () => {
+    ops.runDecodable = false
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses when no cave can be allocated', async () => {
+    ops.allocateCave = () => null
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('memory')
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('resumes threads even when the site write fails', async () => {
+    // The cave write succeeds, the site write does not: threads must not be
+    // left suspended, or the game is frozen forever.
+    let writes = 0
+    const realWrite = ops.writeBytes.bind(ops)
+    ops.writeBytes = (address: string, hex: string) => {
+      writes++
+      return writes === 1 ? realWrite(address, hex) : false
+    }
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(ops.resumed).toBe(1)
+    expect(engine.isApplied('patch-stamina')).toBe(false)
+  })
+
+  it('restores the original bytes and keeps the cave allocated', async () => {
+    await engine.apply(forcePatch)
+    expect(engine.restore(forcePatch)).toBe(true)
+    expect(ops.memory.get('0x400100')).toBe(ORIGINAL)
+    // Caves are never freed: a thread suspended inside one must still have
+    // valid code to return through.
+    expect(ops.caves).toHaveLength(1)
+  })
+
+  it('still NOPs when the patch has no mode', async () => {
+    const legacy = { ...forcePatch, id: 'patch-legacy' } as PatchCheat
+    delete (legacy as Partial<PatchCheat>).mode
+    const result = await engine.apply(legacy)
+    expect(result.ok).toBe(true)
+    expect(ops.memory.get('0x400100')).toBe(NOPS)
+  })
+})
 
 let ops: FakeOps
 let engine: PatchEngine

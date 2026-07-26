@@ -1,4 +1,5 @@
-import type { PatchCheat } from './store'
+import type { PatchCheat, DataType } from './store'
+import { patchMode } from './store'
 
 // Everything PatchEngine needs from the target process. Injected rather
 // than imported so the engine's locate/apply/restore logic — the part that
@@ -9,6 +10,15 @@ export interface PatchOps {
   readBytes(address: string, length: number): string | null
   writeBytes(address: string, hexBytes: string): boolean
   scanAob(signature: string): Promise<string[]>
+  allocateCave(nearAddress: string): string | null
+  decodeRun(
+    address: string,
+    minBytes: number
+  ): { length: number; decodable: boolean; relocatable: boolean }
+  encodeStore(baseRegister: string, offset: number, imm32: number): string
+  encodeJump(from: string, to: string): string
+  suspendThreads(): boolean
+  resumeThreads(): void
 }
 
 export type PatchState = 'original' | 'applied' | 'not-found' | 'mismatch' | 'unreadable'
@@ -55,6 +65,35 @@ export function relocationError(status: PatchStatus): string {
 interface AppliedPatch {
   address: string
   originalBytes: string
+  // Kept for diagnostics and for capture-mode readers; never freed.
+  caveAddress: string | null
+}
+
+// A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
+// range, so the site must give up at least that many bytes — always whole
+// instructions, which is what decodeRun computes.
+const JUMP_LENGTH = 5
+
+// `value` becomes the exact 32 bits the injected store writes. A float has
+// to go through its IEEE-754 bit pattern: 350.0 is 0x43af0000, and writing
+// the integer 350 instead would land as a denormal fraction in the game.
+export function valueBits(value: number, dataType: DataType): number {
+  if (dataType === 'float') {
+    const buffer = new ArrayBuffer(4)
+    new DataView(buffer).setFloat32(0, value, true)
+    return new DataView(buffer).getUint32(0, true)
+  }
+  return value >>> 0
+}
+
+interface InstallResult {
+  ok: boolean
+  error: string | null
+  caveAddress: string | null
+}
+
+function addHex(address: string, delta: number): string {
+  return '0x' + (BigInt(address) + BigInt(delta)).toString(16)
 }
 
 export class PatchEngine {
@@ -117,10 +156,15 @@ export class PatchEngine {
       }
     }
 
+    let caveAddress: string | null = null
     if (status.state === 'original') {
-      if (!this.ops.writeBytes(status.address, nopHex(patch.length))) {
-        return { ok: false, error: 'Write failed — the patch was not applied.' }
-      }
+      const mode = patchMode(patch)
+      const installed =
+        mode === 'nop'
+          ? this.installNop(patch, status.address)
+          : this.installInjection(patch, status.address)
+      if (!installed.ok) return installed
+      caveAddress = installed.caveAddress
     }
     // 'applied' falls through: the NOPs are already there (e.g. we
     // re-attached to a process we had patched), so nothing needs writing —
@@ -129,15 +173,22 @@ export class PatchEngine {
       address: status.address,
       // Normalize once here so restore() can never write a differently
       // cased blob than the one locate() compared against.
-      originalBytes: patch.originalBytes.toLowerCase()
+      originalBytes: patch.originalBytes.toLowerCase(),
+      caveAddress
     })
     return { ok: true, error: null }
   }
 
   restore(patch: PatchCheat): boolean {
     const entry = this.applied.get(patch.id)
-    if (!entry) return true // never applied — nothing to undo
-    const ok = this.ops.writeBytes(entry.address, entry.originalBytes)
+    if (!entry) return true
+    this.ops.suspendThreads()
+    let ok: boolean
+    try {
+      ok = this.ops.writeBytes(entry.address, entry.originalBytes)
+    } finally {
+      this.ops.resumeThreads()
+    }
     if (ok) this.applied.delete(patch.id)
     return ok
   }
@@ -145,12 +196,93 @@ export class PatchEngine {
   // Detach / app quit: put every patched instruction back. A failed write
   // here is ignored — it means the process is already gone, and its code
   // went with it. The set is cleared either way so a later attach starts
-  // from a clean slate.
+  // from a clean slate. Suspended once around the whole loop rather than
+  // per patch.
   restoreAll(): void {
-    for (const entry of this.applied.values()) {
-      this.ops.writeBytes(entry.address, entry.originalBytes)
+    this.ops.suspendThreads()
+    try {
+      for (const entry of this.applied.values()) {
+        this.ops.writeBytes(entry.address, entry.originalBytes)
+      }
+    } finally {
+      this.ops.resumeThreads()
     }
     this.applied.clear()
+  }
+
+  private installNop(patch: PatchCheat, address: string): InstallResult {
+    if (!this.ops.writeBytes(address, nopHex(patch.length))) {
+      return { ok: false, error: 'Write failed — the patch was not applied.', caveAddress: null }
+    }
+    return { ok: true, error: null, caveAddress: null }
+  }
+
+  // Build the cave first, while nothing is redirected into it, then swap the
+  // site under suspension. Ordering matters: a jump installed before its
+  // cave holds valid code sends the game into garbage.
+  private installInjection(patch: PatchCheat, address: string): InstallResult {
+    const run = this.ops.decodeRun(address, JUMP_LENGTH)
+    if (!run.decodable) {
+      return {
+        ok: false,
+        error: "Couldn't read enough whole instructions at that address to redirect it.",
+        caveAddress: null
+      }
+    }
+    if (!run.relocatable) {
+      return {
+        ok: false,
+        error:
+          "This instruction sits with code that refers to its own address, so moving it would change what it does. Try a different caught instruction.",
+        caveAddress: null
+      }
+    }
+
+    const displaced = this.ops.readBytes(address, run.length)
+    if (displaced === null) {
+      return { ok: false, error: 'That memory became unreadable.', caveAddress: null }
+    }
+
+    const cave = this.ops.allocateCave(address)
+    if (cave === null) {
+      return {
+        ok: false,
+        error: "No memory available near the instruction to hold the injected code.",
+        caveAddress: null
+      }
+    }
+
+    // The injected code starts at the cave's own address; there is no
+    // reserved header in force mode (capture mode, not built yet, will
+    // define its own layout when it lands).
+    const codeAddress = cave
+    const effect = this.ops.encodeStore(
+      patch.baseRegister as string,
+      Number(BigInt(patch.fieldOffset as string)),
+      valueBits(patch.value as number, patch.dataType as DataType)
+    )
+    const returnTo = addHex(address, run.length)
+    const jumpBackFrom = addHex(codeAddress, displaced.length / 2 + effect.length / 2)
+    const body = displaced + effect + this.ops.encodeJump(jumpBackFrom, returnTo)
+
+    if (!this.ops.writeBytes(codeAddress, body)) {
+      return { ok: false, error: 'Failed to write the injected code.', caveAddress: null }
+    }
+
+    const jump = this.ops.encodeJump(address, codeAddress)
+    const padded = jump + nopHex(run.length - JUMP_LENGTH)
+
+    this.ops.suspendThreads()
+    try {
+      if (!this.ops.writeBytes(address, padded)) {
+        return { ok: false, error: 'Failed to redirect the instruction.', caveAddress: null }
+      }
+    } finally {
+      // Always resume: a target left suspended is a hung game, which is
+      // worse than a failed patch.
+      this.ops.resumeThreads()
+    }
+    return { ok: true, error: null, caveAddress: cave }
   }
 
   private async resolveAddress(patch: PatchCheat): Promise<Resolution> {

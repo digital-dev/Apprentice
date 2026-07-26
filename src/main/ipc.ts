@@ -103,7 +103,28 @@ const patchOps: PatchOps = {
   writeBytes: (address, hexBytes) =>
     attachedHandle === null ? false : nativeAddon.writeBytes(attachedHandle, address, hexBytes),
   scanAob: async (signature) =>
-    attachedHandle === null ? [] : nativeAddon.scanAob(attachedHandle, signature)
+    attachedHandle === null ? [] : nativeAddon.scanAob(attachedHandle, signature),
+  allocateCave: (nearAddress) =>
+    attachedHandle === null ? null : nativeAddon.allocateCave(attachedHandle, nearAddress),
+  decodeRun: (address, minBytes) => {
+    if (attachedHandle === null) return { length: 0, decodable: false, relocatable: false }
+    return nativeAddon.decodeRun(attachedHandle, address, minBytes)
+  },
+  encodeStore: (baseRegister, offset, imm32) => nativeAddon.encodeStore(baseRegister, offset, imm32),
+  encodeJump: (from, to) => nativeAddon.encodeJump(from, to),
+  // The native call throws on failure (after resuming whatever it already
+  // suspended) rather than returning false — PatchOps promises a plain
+  // boolean, so catch here rather than let it escape as a rejected promise
+  // out of PatchEngine.apply.
+  suspendThreads: () => {
+    if (attachedHandle === null || attachedPid === null) return false
+    try {
+      return nativeAddon.suspendThreads(attachedHandle, attachedPid)
+    } catch {
+      return false
+    }
+  },
+  resumeThreads: () => nativeAddon.resumeThreads()
 }
 
 const patchEngine = new PatchEngine(patchOps)
