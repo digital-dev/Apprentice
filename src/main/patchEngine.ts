@@ -269,9 +269,12 @@ export class PatchEngine {
     // guards against for moduleOffset. Checked before allocateCave so a bad
     // patch never leaks an allocated cave. A capture patch needs only
     // baseRegister — it has no fieldOffset/value/dataType to validate, and
-    // must not be rejected for lacking fields it does not use.
+    // must not be rejected for lacking fields it does not use. This only
+    // validates that the fields parse; fieldOffset itself is recomputed
+    // where it's used, in the force branch of the effect below, so the
+    // compiler can enforce it's a plain `number` rather than a
+    // possibly-unset one carried across this whole function.
     const mode = patchMode(patch)
-    let fieldOffset = 0
     try {
       if (typeof patch.baseRegister !== 'string') {
         throw new Error('missing base register')
@@ -280,13 +283,15 @@ export class PatchEngine {
         if (typeof patch.value !== 'number' || !patch.dataType) {
           throw new Error('missing force-mode fields')
         }
-        fieldOffset = Number(BigInt(patch.fieldOffset as string))
+        BigInt(patch.fieldOffset as string) // throws on unparsable hex
       }
     } catch {
       return {
         ok: false,
         error:
-          "This patch is missing the register, offset, value, or data type a force injection needs, or its offset isn't valid hex — can't compute what to write.",
+          mode === 'capture'
+            ? "This patch is missing the register a capture injection needs — can't install it."
+            : "This patch is missing the register, offset, value, or data type a force injection needs, or its offset isn't valid hex — can't compute what to write.",
         caveAddress: null
       }
     }
@@ -320,7 +325,7 @@ export class PatchEngine {
           )
         : this.ops.encodeStore(
             patch.baseRegister as string,
-            fieldOffset,
+            Number(BigInt(patch.fieldOffset as string)),
             valueBits(patch.value as number, patch.dataType as DataType)
           )
     const returnTo = addHex(address, run.length)

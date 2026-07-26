@@ -55,6 +55,7 @@ class FakeOps implements PatchOps {
   runDecodable = true
   runRelocatable = true
   encodeJumpCalls: { from: string; to: string }[] = []
+  encodeCaptureCalls: { baseRegister: string; atAddress: string; slotAddress: string }[] = []
 
   allocateCave(): string | null {
     const address = '0x' + (this.nextCave += 0x1000).toString(16)
@@ -71,7 +72,8 @@ class FakeOps implements PatchOps {
   encodeStore(): string {
     return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f
   }
-  encodeCapture(): string {
+  encodeCapture(baseRegister: string, atAddress: string, slotAddress: string): string {
+    this.encodeCaptureCalls.push({ baseRegister, atAddress, slotAddress })
     return '488905' + '00000000'
   }
   encodeJump(from: string, to: string): string {
@@ -261,6 +263,28 @@ describe('PatchEngine — capture injection', () => {
     expect(engine.slotAddress('patch-player')).toBe(ops.caves[0])
   })
 
+  it('encodes the capture store for the address it actually executes at, not the cave code start', async () => {
+    // The capture store is RIP-relative, so encoding it for the wrong
+    // address silently corrupts whatever the wrong displacement happens to
+    // land on. The cave body is displaced + effect + jumpBack, so the
+    // capture instruction executes after the displaced bytes — at
+    // codeAddress + displaced.length / 2 — not at codeAddress itself. This
+    // is the exact defect the brief flagged as most likely; a regression
+    // here must fail this assertion.
+    await engine.apply(capturePatch)
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const atAddress = '0x' + (BigInt(codeAddress) + BigInt(ORIGINAL.length / 2)).toString(16)
+    expect(ops.encodeCaptureCalls).toEqual([
+      { baseRegister: 'rdi', atAddress, slotAddress: ops.caves[0] }
+    ])
+
+    // The cave body places the capture effect between the displaced bytes
+    // and the jump back, in that order — not merely somewhere in the cave.
+    const effect = '48890500000000' // FakeOps.encodeCapture's fixed output
+    const backJump = 'e900000000' // FakeOps.encodeJump's fixed output
+    expect(ops.memory.get(codeAddress)).toBe(ORIGINAL + effect + backJump)
+  })
+
   it('reports no slot for a patch that is not installed', () => {
     expect(engine.slotAddress('patch-player')).toBeNull()
   })
@@ -268,6 +292,17 @@ describe('PatchEngine — capture injection', () => {
   it('reports no slot for a force patch', async () => {
     await engine.apply(forcePatch)
     expect(engine.slotAddress('patch-stamina')).toBeNull()
+  })
+
+  it('refuses, before allocating a cave, when a capture patch is missing baseRegister', async () => {
+    const incomplete = { ...capturePatch, id: 'patch-incomplete', baseRegister: undefined } as PatchCheat
+    const result = await engine.apply(incomplete)
+    expect(result.ok).toBe(false)
+    expect(result.error).not.toContain('offset')
+    expect(result.error).not.toContain('value')
+    expect(result.error).not.toContain('data type')
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
   })
 })
 
