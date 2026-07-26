@@ -34,6 +34,9 @@ export interface CheatDefinition {
 // loading unchanged.
 export interface PatchCheat {
   kind: 'patch'
+  // How this patch changes the game. Absent means 'nop': every patch saved
+  // before injection existed keeps working through the same code path.
+  mode?: 'nop' | 'force' | 'capture'
   id: string
   name: string
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
@@ -41,12 +44,23 @@ export interface PatchCheat {
   signature: string // AOB with ?? wildcards, for relocating JIT code
   moduleName: string | null // named module, or null for JIT/anonymous code
   moduleOffset: string | null // hex offset within that module
+  // force and capture: which register held the object at capture time.
+  baseRegister?: string
+  // force only: where the field sits relative to that register, what to
+  // write, and how to turn `value` into the 32 bits that get written.
+  fieldOffset?: string
+  value?: number
+  dataType?: DataType
 }
 
 export type StoredCheat = CheatDefinition | PatchCheat
 
 export function isPatchCheat(cheat: StoredCheat): cheat is PatchCheat {
   return cheat.kind === 'patch'
+}
+
+export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' {
+  return patch.mode ?? 'nop'
 }
 
 let gamesDir = path.resolve(__dirname, '../../games')

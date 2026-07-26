@@ -102,5 +102,23 @@ export const nativeAddon = {
   startWriteWatch: (pid: number, address: string): void =>
     addon.startWriteWatch(pid, address),
   pollWriteWatch: (): CaughtInstruction[] => addon.pollWriteWatch(),
-  stopWriteWatch: (): CaughtInstruction[] => addon.stopWriteWatch()
+  stopWriteWatch: (): CaughtInstruction[] => addon.stopWriteWatch(),
+  allocateCave: (handle: number, nearAddress: string): string | null =>
+    addon.allocateCave(handle, nearAddress),
+  decodeRun: (
+    handle: number,
+    address: string,
+    minBytes: number
+  ): { length: number; decodable: boolean; relocatable: boolean } =>
+    addon.decodeRun(handle, address, minBytes),
+  encodeStore: (baseRegister: string, offset: number, imm32: number): string =>
+    addon.encodeStore(baseRegister, offset, imm32),
+  encodeJump: (from: string, to: string): string => addon.encodeJump(from, to),
+  // Which backend the addon was built with, and whether injection works on
+  // it. The Linux stub loads and reports false rather than failing at some
+  // later, more confusing point.
+  platformName: (): { name: string; supported: boolean } => addon.platformName(),
+  suspendThreads: (handle: number, pid: number): boolean =>
+    addon.suspendThreads(handle, pid),
+  resumeThreads: (): void => addon.resumeThreads()
 }

@@ -8,7 +8,8 @@ import {
   deleteCheat,
   setGamesDir,
   isPatchCheat,
-  PatchCheat
+  PatchCheat,
+  patchMode
 } from '../../src/main/store'
 
 let dir: string
@@ -136,5 +137,41 @@ describe('store — patch cheats', () => {
     const loaded = loadCheats('valheim.exe').filter(isPatchCheat)[0]
     expect(loaded.moduleName).toBeNull()
     expect(loaded.signature).toBe('f3 0f 11 41 10')
+  })
+})
+
+describe('store — patch modes', () => {
+  const forcePatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'force',
+    id: 'patch-stamina',
+    name: 'Stamina',
+    originalBytes: 'f30f11af18080000',
+    length: 8,
+    signature: 'f3 0f 11 af 18 08 00 00',
+    moduleName: null,
+    moduleOffset: null,
+    baseRegister: 'rdi',
+    fieldOffset: '0x818',
+    value: 350,
+    dataType: 'float'
+  }
+
+  it('round-trips a force patch with its value and register', () => {
+    saveCheat('valheim.exe', forcePatch)
+    const loaded = loadCheats('valheim.exe').filter(isPatchCheat)[0]
+    expect(loaded.mode).toBe('force')
+    expect(loaded.baseRegister).toBe('rdi')
+    expect(loaded.value).toBe(350)
+    expect(loaded.dataType).toBe('float')
+  })
+
+  it('treats a patch with no mode as a NOP patch', () => {
+    const legacy: PatchCheat = { ...forcePatch, id: 'patch-legacy' }
+    delete (legacy as Partial<PatchCheat>).mode
+    saveCheat('valheim.exe', legacy)
+    const loaded = loadCheats('valheim.exe').filter(isPatchCheat)
+      .find((p) => p.id === 'patch-legacy') as PatchCheat
+    expect(patchMode(loaded)).toBe('nop')
   })
 })
