@@ -13,6 +13,49 @@ The three non-negotiable safety rules they are all judged against:
   patch a guess.
 - Always restore original bytes on disable and on detach/app-exit.
 
+## Real-game findings (Valheim, 2026-07-25)
+
+The manual validation pass against Valheim found more than the automated
+suite ever could. Fixed during the pass, each verified against the harness:
+AOB signatures were built from a single instruction and matched hundreds of
+places (992 in the harness, 575 in Valheim), making every JIT patch
+unrelocatable; closing the app mid-capture killed the game via a queued
+debug exception delivered after detach; the capture panel discarded a scan
+on every save; and the instruction matcher ignored index registers and
+required an exact rather than covering effective-address match.
+
+What remains unresolved, and matters more than any of the above:
+
+- **Patching Valheim's stamina writers is not reliably safe.** Of the
+  instructions caught watching a stamina address, one cleanly disabled
+  regeneration, one blocked movement, one blocked running, and two crashed
+  the game outright. Nothing stopped stamina drain.
+- Two mechanisms could explain the crashes and they were not separated:
+  the AOB may relocate to a *different* copy of identical JIT'd code (Mono
+  emits identical bodies for generic instantiations, so `locate`'s
+  verify-bytes-match check passes at the wrong instance), or the NOPped
+  store may be load-bearing, leaving a field uninitialised that something
+  later dereferences. Distinguishing them needs a disassembly view around
+  the patch site — the tool shows bytes, never context.
+- **Value cheats do not survive a restart for Mono-heap objects.** Confirmed
+  empirically. A scanned pointer chain reaches the Player object through
+  whatever path existed that session; after a restart the object has moved
+  and the chain resolves to nothing. A durable path needs Mono metadata
+  traversal (domain → assembly → class → static field), which this codebase
+  has no notion of. That is a limitation of the original design, not of the
+  patch feature.
+- **Patch relocation across a restart was never proven either way** — the
+  hunt never produced a patch worth keeping long enough to test it.
+- A `movs`-style block copy still cannot be attributed to a field: the
+  destination register auto-advances, so the post-trap register state no
+  longer points at the watched address. `wideloop` in the harness covers
+  this case and it is deliberately left undecoded.
+
+Read together: the feature is mechanically correct and proven against the
+harness, and is not yet an effective tool against a Mono/IL2CPP game. The
+next step is a design conversation about anchoring to the runtime's own
+metadata, not more repairs here.
+
 ## Worth doing next
 
 **`ipc.ts` lifecycle wiring has no tests.** Restore-on-re-attach, restore-on-
