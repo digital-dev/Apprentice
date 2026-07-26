@@ -23,11 +23,23 @@ export default function App() {
             }}
           />
         )}
+        {/* The cheat list is mounted per visit on purpose: mounting is what
+            reloads the saved cheats and re-checks every patch's status
+            against the running game. */}
         {screen === 'cheats' && exeName && (
           <CheatList exeName={exeName} onOpenScanner={() => setScreen('scanner')} />
         )}
-        {screen === 'scanner' && exeName && (
-          <Scanner exeName={exeName} onDone={() => setScreen('cheats')} />
+        {/* The scanner is the opposite: it stays mounted and is merely
+            hidden, because its state is expensive to rebuild. A scan plus a
+            find-what-writes capture can take minutes of triggering the value
+            in-game, and trying several caught writers in turn means leaving
+            for the cheat list and coming back between attempts. Unmounting
+            here sent every one of those round trips back to a blank screen.
+            "Clear scan" is how you throw it away deliberately. */}
+        {exeName && (
+          <div style={{ display: screen === 'scanner' ? 'block' : 'none' }}>
+            <Scanner exeName={exeName} onDone={() => setScreen('cheats')} />
+          </div>
         )}
       </div>
     </div>
