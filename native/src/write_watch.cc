@@ -38,6 +38,23 @@ struct Caught {
   std::string baseRegister;
   int64_t displacement = 0;
   uintptr_t baseAddress = 0;
+  // The actually-decoded destination (base + disp + index*scale) and the
+  // operand's access width, as distinct from `displacement` above. Once the
+  // matcher accepts a covering write (see FindWriteInstruction), `baseAddress
+  // + displacement` is trivially == the watched address BY CONSTRUCTION — it
+  // can no longer stand in for "did we identify the right instruction?". This
+  // pair carries the native invariant the capture panel actually needs to
+  // check: that the watched address falls inside [effectiveAddress,
+  // effectiveAddress + accessBytes).
+  uintptr_t effectiveAddress = 0;
+  uint32_t accessBytes = 0;
+  // Whether the matched operand used an index register ([base+index*scale]).
+  // `displacement` folds index*scale into a single constant for the
+  // pointer-cheat chain, which is only stable if the index is invariant
+  // across runs (e.g. a fixed slot) — for a real runtime array index it
+  // isn't, so the capture panel surfaces this rather than silently pinning
+  // whichever slot was live at capture time.
+  bool indexed = false;
   std::string moduleName;
   uintptr_t moduleOffset = 0;
   bool hasModule = false;
@@ -309,9 +326,21 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
     // the start of the block, which is not the field the user is chasing;
     // a pointer cheat built from it would read the wrong offset. Deriving it
     // from the watched address keeps base + displacement == watched for
-    // every caught instruction, which is the invariant the capture panel
-    // now checks and the pointer-cheat path depends on.
+    // every caught instruction, which is what the pointer-cheat path
+    // depends on — but that identity is true BY CONSTRUCTION and can't also
+    // serve as a safety check, so effectiveAddress/accessBytes below carry
+    // the actually-decoded destination separately for the capture panel to
+    // check against.
     out.displacement = (int64_t)g_session.address - (int64_t)out.baseAddress;
+
+    int64_t rawDisp = op.mem.disp.has_displacement ? op.mem.disp.value : 0;
+    out.indexed = op.mem.index != ZYDIS_REGISTER_NONE;
+    int64_t indexTerm = 0;
+    if (out.indexed && haveCtx) {
+      indexTerm = (int64_t)RegValue(ctx, op.mem.index) * (int64_t)op.mem.scale;
+    }
+    out.accessBytes = op.size ? (uint32_t)(op.size / 8) : 1;
+    out.effectiveAddress = (uintptr_t)((int64_t)out.baseAddress + rawDisp + indexTerm);
     break;
   }
 
@@ -377,6 +406,24 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
 
       offset += cur.length;
       if (offset >= kMinSigBytes) break;
+    }
+
+    // The widening window can legitimately come back empty: winGot can be 0
+    // (the read failed) or smaller than the caught instruction's own length,
+    // in which case the decode above breaks before producing a single token.
+    // FindWriteInstruction already proved `out.bytes` — the caught
+    // instruction alone — decodes and was read successfully, so fall back to
+    // signing just those bytes (the pre-widening behaviour) rather than
+    // leaving out.signature empty. ParseSignature rejects an empty pattern
+    // outright, which otherwise turns into a patch that saves fine and then
+    // can never be located — a silently permanent break, not a scan miss.
+    if (out.signature.empty() && !out.bytes.empty()) {
+      char hb2[4];
+      for (uint8_t b : out.bytes) {
+        if (!out.signature.empty()) out.signature += " ";
+        snprintf(hb2, sizeof(hb2), "%02x", b);
+        out.signature += hb2;
+      }
     }
   }
 
@@ -475,8 +522,24 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
   // Pump until WaitForDebugEvent times out, meaning nothing is left
   // pending, and consume debug exceptions rather than passing them back —
   // they are ours, and the game has no handler for them.
+  //
+  // "No event within the timeout" is NOT the same as "the queue is drained"
+  // on a live process: CREATE_THREAD/EXIT_THREAD, LOAD_DLL/UNLOAD_DLL, and
+  // the game's own first-chance exceptions are all real debug events that
+  // reset a plain per-call timeout. A Unity/Mono game with steady thread
+  // churn can keep events arriving indefinitely, and since StopWriteWatch
+  // joins this thread and before-quit calls it synchronously, an unbounded
+  // loop here hangs the whole app on quit with the debugger still attached
+  // — worse than the crash this drain exists to prevent. So bound it by
+  // wall clock instead: a few hundred ms is far more than the queue actually
+  // needs (it's typically empty on the very first check), and once we're
+  // past the deadline we give up and detach regardless of what's still
+  // arriving.
+  constexpr ULONGLONG kDrainBudgetMs = 300;
+  ULONGLONG drainDeadline = GetTickCount64() + kDrainBudgetMs;
   DEBUG_EVENT drain;
-  while (WaitForDebugEvent(&drain, 100)) {
+  DWORD waitMs = 100; // first wait: same as before, for the common empty-queue case
+  while (GetTickCount64() < drainDeadline && WaitForDebugEvent(&drain, waitMs)) {
     DWORD status = DBG_CONTINUE;
     if (drain.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
       DWORD code = drain.u.Exception.ExceptionRecord.ExceptionCode;
@@ -486,6 +549,7 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
       }
     }
     ContinueDebugEvent(drain.dwProcessId, drain.dwThreadId, status);
+    waitMs = 20; // subsequent waits: re-check the deadline often, not block on it
   }
 
   DebugActiveProcessStop(pid); // detach cleanly
@@ -554,6 +618,9 @@ static Napi::Array SnapshotToArray(Napi::Env env) {
     o.Set("baseRegister", Napi::String::New(env, c.baseRegister));
     o.Set("displacement", Napi::String::New(env, ToHex((uintptr_t)c.displacement)));
     o.Set("baseAddress", Napi::String::New(env, ToHex(c.baseAddress)));
+    o.Set("effectiveAddress", Napi::String::New(env, ToHex(c.effectiveAddress)));
+    o.Set("accessBytes", Napi::Number::New(env, c.accessBytes));
+    o.Set("indexed", Napi::Boolean::New(env, c.indexed));
     if (c.hasModule) {
       o.Set("moduleName", Napi::String::New(env, c.moduleName));
       o.Set("moduleOffset", Napi::String::New(env, ToHex(c.moduleOffset)));

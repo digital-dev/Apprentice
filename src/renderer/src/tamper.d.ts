@@ -26,6 +26,17 @@ export interface CaughtInstruction {
   baseRegister: string
   displacement: string
   baseAddress: string
+  // The actually-decoded destination and its access width — distinct from
+  // baseAddress/displacement, which (once a covering match is accepted) are
+  // trivially reconstructible to the watched address and can't also serve as
+  // a check that the right instruction was found. See write_watch.cc's
+  // Caught struct comment.
+  effectiveAddress: string
+  accessBytes: number
+  // Whether the matched operand used an index register — if so, the folded
+  // `displacement` pins whatever index was live at capture time, which is
+  // not necessarily stable across runs.
+  indexed: boolean
   moduleName: string | null
   moduleOffset: string | null
 }

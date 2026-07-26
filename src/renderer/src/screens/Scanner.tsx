@@ -124,18 +124,24 @@ export default function Scanner({
   }
 
   // The native side only accepts a caught instruction whose computed
-  // effective address equals the address we armed the watch on
-  // (write_watch.cc's FindWriteInstruction). If a row ever shows otherwise,
-  // the instruction we identified is NOT the one that tripped the
-  // breakpoint — which means the bytes a patch would NOP are the wrong
-  // bytes, and NOPping into the middle of some other instruction corrupts
-  // whatever function it belongs to. That is unsafe to patch, so say so
-  // rather than letting it look like a normal candidate.
+  // effective address COVERS the address we armed the watch on
+  // (write_watch.cc's FindWriteInstruction) — a wide SIMD/struct store's
+  // effective address is the start of the block, not the watched field
+  // itself. `baseAddress + displacement` is NOT useful for this check: since
+  // `displacement` is derived FROM the watched address (see write_watch.cc),
+  // that sum equals watchAddress by construction for every row, which is why
+  // this used to be dead code. `effectiveAddress`/`accessBytes` carry the
+  // actually-decoded destination and width instead, so this asserts the real
+  // native invariant — if it ever fails, the instruction we identified is
+  // NOT the one that tripped the breakpoint, and NOPping it would corrupt
+  // whatever function it belongs to.
   function writesWatchedAddress(insn: CaughtInstruction): boolean {
     if (!watchAddress || !insn.baseRegister) return true // nothing to check against
     try {
-      const effective = BigInt(insn.baseAddress) + BigInt(insn.displacement)
-      return effective === BigInt(watchAddress)
+      const watched = BigInt(watchAddress)
+      const effective = BigInt(insn.effectiveAddress)
+      const accessBytes = BigInt(insn.accessBytes)
+      return effective <= watched && watched < effective + accessBytes
     } catch {
       return true // unparseable — don't cry wolf on a formatting problem
     }
@@ -368,10 +374,15 @@ export default function Scanner({
                 </span>
                 {!writesWatchedAddress(insn) && (
                   <span style={{ color: 'var(--error)' }}>
-                    ⚠ writes{' '}
-                    {'0x' +
-                      (BigInt(insn.baseAddress) + BigInt(insn.displacement)).toString(16)}
-                    , not the watched {watchAddress} — don't patch this
+                    ⚠ writes {insn.effectiveAddress} (+{insn.accessBytes} bytes), not the
+                    watched {watchAddress} — don't patch this
+                  </span>
+                )}
+                {insn.indexed && (
+                  <span className="muted">
+                    {' '}
+                    (indexed write — the offset folded a runtime index and may not be stable
+                    across runs)
                   </span>
                 )}
                 <button

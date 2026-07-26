@@ -117,9 +117,11 @@ already gone and there is nothing to undo.
 - `removePatch` is not busy-guarded. Deleting mid-apply orphans the on-disk
   record (the in-memory applied-map still restores the bytes, so no code is left
   modified). A one-liner now that `patchBusy` exists.
-- `locate` conflates "module not loaded" with "found but unreadable" by returning
-  `address: null` for both, so the status chip can only ever say "can't
-  relocate".
+- `locate` already distinguishes "module not loaded" (`matchCount: null`,
+  `state: 'not-found'`) from "found but unreadable" (`state: 'unreadable'`,
+  address populated) — this is fixed. Worth a look next: whether the status
+  chip's wording for each state is as clear to a user as the underlying data
+  now is.
 - `ParseHex` is now duplicated in three native translation units. House pattern,
   but a shared `hex_util.h` would be cheap.
 - `_beginthreadex`'s thread handle is never `CloseHandle`d in the harness's

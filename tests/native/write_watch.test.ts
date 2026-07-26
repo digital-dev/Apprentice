@@ -88,6 +88,57 @@ describe('write watch — capture', () => {
   }, 15000)
 })
 
+describe('write watch — covering write (wide store)', () => {
+  // `wideloop` writes the whole PlayerComponent in one store rather than
+  // just the stamina field — the covering-write relaxation in
+  // FindWriteInstruction exists for exactly this shape (a struct copy /
+  // SIMD store whose effective address is the start of a block containing
+  // the watched field), and until now nothing in the suite drove it; it was
+  // exercised only by manual testing against a real game.
+  it('decodes the wide store or reports it as documented-undecoded', async () => {
+    const address = await staminaAddress()
+
+    ;(addon as any).startWriteWatch(harness.pid, address)
+    await send('wideloop')
+
+    let list: any[] = []
+    for (let i = 0; i < 40 && list.length === 0; i++) {
+      await sleep(50)
+      list = (addon as any).pollWriteWatch()
+    }
+    await send('stopwide')
+    const final = (addon as any).stopWriteWatch()
+
+    expect(list.length).toBeGreaterThan(0)
+    expect(final.length).toBeGreaterThan(0)
+
+    const insn = final[0]
+    if (insn.length > 0) {
+      // Decoded: the covering-write relaxation worked, and the watched
+      // address must fall inside [effectiveAddress, effectiveAddress +
+      // accessBytes) — the exact invariant the capture panel's
+      // writesWatchedAddress guard checks.
+      expect(insn.baseRegister.length).toBeGreaterThan(0)
+      const watched = BigInt(address)
+      const effective = BigInt(insn.effectiveAddress)
+      const accessBytes = BigInt(insn.accessBytes)
+      expect(effective <= watched).toBe(true)
+      expect(watched < effective + accessBytes).toBe(true)
+    } else {
+      // Documented limitation (docs/superpowers/follow-ups/2026-07-25-code-
+      // patch-cheats.md): a movs-style block copy auto-advances its
+      // destination register as it runs, so by the time the #DB trap lands,
+      // post-trap register state no longer points at the watched address —
+      // the row is caught (it exists) but left undecoded rather than guessed
+      // at.
+      expect(insn.length).toBe(0)
+    }
+
+    const reply = await send('get')
+    expect(reply.startsWith('OK')).toBe(true)
+  }, 15000)
+})
+
 describe('write watch — detaching while the target is still writing', () => {
   it('leaves the target alive when the watch stops mid-write', async () => {
     const address = await staminaAddress()
