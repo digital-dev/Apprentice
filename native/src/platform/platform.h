@@ -37,6 +37,13 @@ bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out);
 // eats the identifier wherever it appears.)
 uintptr_t AllocateNear(ProcessHandle handle, uintptr_t nearAddr, size_t size);
 // All-or-nothing: on failure nothing stays suspended.
+// Not reentrant: a second call before the matching ResumeAll() refuses
+// (returns false, touches nothing) rather than adding to the held set,
+// because the held set is shared process-wide state — if it were allowed to
+// grow and a later call then failed partway, that call's own cleanup would
+// resume every handle in the set, including threads an earlier caller is
+// still relying on staying frozen. Always pair one SuspendAll with one
+// ResumeAll before suspending again.
 bool SuspendAll(ProcessHandle handle, uint32_t pid);
 void ResumeAll();
 

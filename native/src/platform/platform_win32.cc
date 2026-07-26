@@ -80,9 +80,9 @@ bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
   return true;
 }
 
-// Walks free regions outward from `near` and commits the first page within
-// jump reach. Windows allocates on 64KB granularity, so candidates align to
-// that rather than to the page size.
+// Walks free regions outward from `nearAddr` and commits the first page
+// within jump reach. Windows allocates on 64KB granularity, so candidates
+// align to that rather than to the page size.
 uintptr_t AllocateNear(ProcessHandle handle, uintptr_t nearAddr, size_t size) {
   SYSTEM_INFO si;
   GetSystemInfo(&si);
@@ -125,8 +125,17 @@ uintptr_t AllocateNear(ProcessHandle handle, uintptr_t nearAddr, size_t size) {
   return 0;
 }
 
+// Refuses to run while a previous SuspendAll's threads are still held (i.e.
+// g_suspended is non-empty), rather than appending to them: g_suspended is
+// one flat list shared by all callers, so a second, unrelated SuspendAll
+// that later failed partway would have its ResumeAll cleanup resume EVERY
+// handle in the list, including threads an earlier, already-succeeded
+// caller is still relying on staying frozen. Callers must pair each
+// SuspendAll with a ResumeAll before suspending again.
 bool SuspendAll(ProcessHandle handle, uint32_t pid) {
   (void)handle;
+  if (!g_suspended.empty()) return false;
+
   HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
   if (snap == INVALID_HANDLE_VALUE) return false;
 
