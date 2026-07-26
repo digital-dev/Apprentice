@@ -123,6 +123,24 @@ export default function Scanner({
     setSavedNotice(`Saved "${name}" to your cheat list.`)
   }
 
+  // The native side only accepts a caught instruction whose computed
+  // effective address equals the address we armed the watch on
+  // (write_watch.cc's FindWriteInstruction). If a row ever shows otherwise,
+  // the instruction we identified is NOT the one that tripped the
+  // breakpoint — which means the bytes a patch would NOP are the wrong
+  // bytes, and NOPping into the middle of some other instruction corrupts
+  // whatever function it belongs to. That is unsafe to patch, so say so
+  // rather than letting it look like a normal candidate.
+  function writesWatchedAddress(insn: CaughtInstruction): boolean {
+    if (!watchAddress || !insn.baseRegister) return true // nothing to check against
+    try {
+      const effective = BigInt(insn.baseAddress) + BigInt(insn.displacement)
+      return effective === BigInt(watchAddress)
+    } catch {
+      return true // unparseable — don't cry wolf on a formatting problem
+    }
+  }
+
   // Leaving the scanner ends any capture. An armed capture keeps a debugger
   // attached with hardware breakpoints set on every thread of the game, and
   // if Tamper is killed rather than closed in that state, nothing can take
@@ -348,6 +366,14 @@ export default function Scanner({
                 <span>
                   base {insn.baseRegister} + {insn.displacement} → {insn.baseAddress}
                 </span>
+                {!writesWatchedAddress(insn) && (
+                  <span style={{ color: 'var(--error)' }}>
+                    ⚠ writes{' '}
+                    {'0x' +
+                      (BigInt(insn.baseAddress) + BigInt(insn.displacement)).toString(16)}
+                    , not the watched {watchAddress} — don't patch this
+                  </span>
+                )}
                 <button
                   disabled={!captureName || !insn.baseRegister || insn.baseRegister === 'rip'}
                   onClick={() => createCheatFromInstruction(insn)}
@@ -358,7 +384,7 @@ export default function Scanner({
                   <span className="muted"> (can't chain this instruction)</span>
                 )}
                 <button
-                  disabled={!captureName || insn.length === 0}
+                  disabled={!captureName || insn.length === 0 || !writesWatchedAddress(insn)}
                   title="Replace this instruction with no-ops so the write never happens"
                   onClick={() => createPatchFromInstruction(insn)}
                 >
