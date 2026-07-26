@@ -219,7 +219,27 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
         baseAddr = RegValue(ctx, base);
         haveBase = true;
       }
-      if (haveBase && (uintptr_t)((int64_t)baseAddr + disp) == watchedAddress) {
+
+      // Indexed addressing — [rbx+rax*4] and friends — is ordinary in
+      // compiled code, and ignoring the index term computes an effective
+      // address that is simply wrong, so the candidate never matches and
+      // the write is reported as undecodable.
+      int64_t indexTerm = 0;
+      if (op.mem.index != ZYDIS_REGISTER_NONE) {
+        if (!haveCtx) continue; // can't evaluate it; don't guess
+        indexTerm = (int64_t)RegValue(ctx, op.mem.index) * (int64_t)op.mem.scale;
+      }
+
+      if (!haveBase) continue;
+      uintptr_t effective = (uintptr_t)((int64_t)baseAddr + disp + indexTerm);
+
+      // The write only has to COVER the watched address, not start at it.
+      // A 16-byte SIMD store or a struct copy writes a block containing the
+      // field, so its effective address is the start of that block; demanding
+      // equality rejected exactly those instructions and dropped them from
+      // the results. op.size is the access width in bits.
+      uintptr_t accessBytes = op.size ? (uintptr_t)(op.size / 8) : 1;
+      if (effective <= watchedAddress && watchedAddress < effective + accessBytes) {
         insnAddrOut = cand;
         insnOut = tryInsn;
         memcpy(opsOut, tryOps, sizeof(ZydisDecodedOperand) * ZYDIS_MAX_OPERAND_COUNT);
@@ -272,17 +292,26 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
     if (!(op.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE)) continue;
 
     ZydisRegister base = op.mem.base;
-    int64_t disp = op.mem.disp.has_displacement ? op.mem.disp.value : 0;
 
     if (base == ZYDIS_REGISTER_RIP) {
       out.baseRegister = "rip";
-      out.displacement = disp;
       out.baseAddress = insnAddr + insn.length; // RIP-relative base = next insn
     } else if (base != ZYDIS_REGISTER_NONE && haveCtx) {
       out.baseRegister = ZydisRegisterGetString(base);
-      out.displacement = disp;
       out.baseAddress = RegValue(ctx, base);
+    } else {
+      break; // no usable base — leave this one undecoded rather than guess
     }
+
+    // Report the displacement from the base register to the WATCHED field,
+    // not the instruction's own displacement. For a store that covers a
+    // block — a SIMD or struct copy — the encoded displacement points at
+    // the start of the block, which is not the field the user is chasing;
+    // a pointer cheat built from it would read the wrong offset. Deriving it
+    // from the watched address keeps base + displacement == watched for
+    // every caught instruction, which is the invariant the capture panel
+    // now checks and the pointer-cheat path depends on.
+    out.displacement = (int64_t)g_session.address - (int64_t)out.baseAddress;
     break;
   }
 

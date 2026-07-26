@@ -24,6 +24,7 @@ PlayerComponent* g_player_ptr = &g_player;
 static volatile int g_watch_running = 0;
 
 static volatile int g_drain_running = 0;
+static volatile int g_wide_running = 0;
 
 // The instruction under test for code patching. Non-inlined and taking the
 // counter as a runtime pointer argument, so the compiler emits a real
@@ -56,6 +57,30 @@ static unsigned __stdcall watch_thread(void* arg) {
   return 0;
 }
 
+// Writes the whole component in one wide store rather than touching the
+// field directly, the way a compiler emits a value-type/struct copy. The
+// effective address is the START of the block, so the watched field sits
+// at an offset INSIDE the access — the case that used to be discarded as
+// undecodable, and the reason a real game's drain instruction could never
+// be caught while its regen instruction could.
+#pragma optimize("", off)
+static void wide_write(PlayerComponent* p, PlayerComponent v) {
+  *p = v;
+}
+static unsigned __stdcall wide_thread(void* arg) {
+  (void)arg;
+  float f = 0.0f;
+  while (g_wide_running) {
+    PlayerComponent v = { { 1, 2, 3, 4 }, f };
+    wide_write(g_player_ptr, v);
+    f += 1.0f;
+    Sleep(10);
+  }
+  return 0;
+}
+#pragma optimize("", on)
+
+#pragma optimize("", off)
 static unsigned __stdcall drain_thread(void* arg) {
   (void)arg;
   while (g_drain_running) {
@@ -95,6 +120,15 @@ int main(void) {
         g_drain_running = 1;
         _beginthreadex(NULL, 0, drain_thread, NULL, 0, NULL);
       }
+      printf("OK\n");
+    } else if (strncmp(line, "wideloop", 8) == 0) {
+      if (!g_wide_running) {
+        g_wide_running = 1;
+        _beginthreadex(NULL, 0, wide_thread, NULL, 0, NULL);
+      }
+      printf("OK\n");
+    } else if (strncmp(line, "stopwide", 8) == 0) {
+      g_wide_running = 0;
       printf("OK\n");
     } else if (strncmp(line, "stopdrain", 9) == 0) {
       g_drain_running = 0;
