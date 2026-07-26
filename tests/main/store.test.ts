@@ -8,7 +8,9 @@ import {
   deleteCheat,
   setGamesDir,
   isPatchCheat,
+  isAnchorTarget,
   PatchCheat,
+  CheatDefinition,
   patchMode
 } from '../../src/main/store'
 
@@ -173,5 +175,25 @@ describe('store — patch modes', () => {
     const loaded = loadCheats('valheim.exe').filter(isPatchCheat)
       .find((p) => p.id === 'patch-legacy') as PatchCheat
     expect(patchMode(loaded)).toBe('nop')
+  })
+})
+
+describe('store — anchored targets', () => {
+  it('round-trips a cheat targeting a captured pointer', () => {
+    saveCheat('valheim.exe', {
+      id: 'stamina',
+      name: 'Stamina',
+      dataType: 'float',
+      mode: 'freeze',
+      targets: [{ kind: 'anchor', patchId: 'patch-player', offset: '0x818' }],
+      value: 350
+    })
+    const cheat = loadCheats('valheim.exe').find((c) => c.id === 'stamina') as CheatDefinition
+    const target = cheat.targets[0]
+    expect(isAnchorTarget(target)).toBe(true)
+    if (isAnchorTarget(target)) {
+      expect(target.patchId).toBe('patch-player')
+      expect(target.offset).toBe('0x818')
+    }
   })
 })

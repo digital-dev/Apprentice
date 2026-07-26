@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { CheatDefinition, StoredCheat, PatchCheat } from '../../../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat, CheatTarget } from '../../../main/store'
 import type { TargetStatus, PatchStatus } from '../tamper.d'
 import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
@@ -11,6 +11,24 @@ import AddressChip from '../components/AddressChip'
 // boundary.
 function isPatch(cheat: StoredCheat): cheat is PatchCheat {
   return cheat.kind === 'patch'
+}
+
+// Same reasoning as isPatch above: a local guard rather than importing
+// store.ts's isAnchorTarget. Anchored targets have no module/offset chain to
+// display, so the list needs a display label and key that work for either
+// kind of target.
+function isAnchor(target: CheatTarget): target is Extract<CheatTarget, { kind: 'anchor' }> {
+  return (target as { kind?: string }).kind === 'anchor'
+}
+
+function targetLabel(target: CheatTarget): string {
+  return isAnchor(target) ? `${target.patchId} +${target.offset}` : target.baseOffset
+}
+
+function targetKey(target: CheatTarget, index: number): string {
+  return isAnchor(target)
+    ? `anchor-${target.patchId}-${index}`
+    : `${target.moduleName}-${target.baseOffset}-${index}`
 }
 
 // A patch can fail to locate for opposite reasons that need opposite
@@ -284,7 +302,7 @@ export default function CheatList({
               <AddressChip
                 label={
                   cheat.targets.length === 1
-                    ? cheat.targets[0].baseOffset
+                    ? targetLabel(cheat.targets[0])
                     : `${cheat.targets.length} targets`
                 }
                 pulsing={enabled.has(cheat.id) && !degraded.has(cheat.id)}
@@ -326,10 +344,8 @@ export default function CheatList({
                     <>
                       <ul>
                         {cheat.targets.map((t, i) => (
-                          <li key={`${t.moduleName}-${t.baseOffset}-${i}`}>
-                            <span className="address-chip">
-                              {t.moduleName} {t.baseOffset}
-                            </span>
+                          <li key={targetKey(t, i)}>
+                            <span className="address-chip">{targetLabel(t)}</span>
                             <span
                               style={{ color: result[i]?.alive ? 'var(--active)' : 'var(--error)' }}
                             >

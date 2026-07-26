@@ -6,6 +6,8 @@ import {
   deleteCheat,
   CheatDefinition,
   ChainTarget,
+  AnchorTarget,
+  isAnchorTarget,
   StoredCheat,
   PatchCheat,
   patchMode
@@ -26,6 +28,32 @@ function fullOffsets(target: ChainTarget): string[] {
   return [target.baseOffset, ...target.offsets]
 }
 
+// The slot holds a raw little-endian pointer: byte 0 is the least
+// significant byte. Reading the unspaced hex blob as-is would parse it
+// big-endian and produce a plausible-looking but wrong address, so the byte
+// pairs are reversed before parsing.
+export function littleEndianToBigInt(hex: string): bigint {
+  let reversed = ''
+  for (let i = hex.length - 2; i >= 0; i -= 2) {
+    reversed += hex.slice(i, i + 2)
+  }
+  return BigInt('0x' + reversed)
+}
+
+// An anchored target resolves in two reads: the captured pointer, then the
+// field. A slot that still reads zero means the game has not executed the
+// captured instruction yet this session, which is a not-live target rather
+// than an error — the same state a stale chain produces.
+function resolveAnchor(handle: number, target: AnchorTarget): string | null {
+  const slot = patchEngine.slotAddress(target.patchId)
+  if (slot === null) return null
+  const pointerHex = nativeAddon.tryReadBytes(handle, slot, 8)
+  if (pointerHex === null) return null
+  const pointer = littleEndianToBigInt(pointerHex)
+  if (pointer === 0n) return null
+  return '0x' + (pointer + BigInt(target.offset)).toString(16)
+}
+
 // A cheat writes to every one of its targets on each call, not just the
 // first. Naive memory scanning sometimes resolves a chain that only looks
 // static and stops working after a few seconds even though other
@@ -42,6 +70,13 @@ function fullOffsets(target: ChainTarget): string[] {
 function writeCheat(handle: number, cheat: CheatDefinition): boolean {
   let anySucceeded = false
   for (const target of cheat.targets) {
+    if (isAnchorTarget(target)) {
+      const resolved = resolveAnchor(handle, target)
+      if (resolved === null) continue
+      const ok = nativeAddon.writeValue(handle, resolved, [], cheat.dataType, cheat.value)
+      if (ok) anySucceeded = true
+      continue
+    }
     const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
     if (moduleBase === null) continue
     const ok = nativeAddon.writeValue(
@@ -79,6 +114,14 @@ function verifyCheat(
   expectedValue: number | null
 ): TargetStatus[] {
   return cheat.targets.map((target) => {
+    if (isAnchorTarget(target)) {
+      const resolved = resolveAnchor(handle, target)
+      if (resolved === null) return { alive: false, value: null }
+      const value = nativeAddon.tryReadValue(handle, resolved, [], cheat.dataType)
+      if (value === null) return { alive: false, value: null }
+      const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
+      return { alive, value }
+    }
     const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
     if (moduleBase === null) return { alive: false, value: null }
     const value = nativeAddon.tryReadValue(
@@ -279,6 +322,4 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (attachedHandle === null) return true // process gone; its code went with it
     return patchEngine.restore(patch)
   })
-
-  ipcMain.handle('patch:slot', (_e, patchId: string) => patchEngine.slotAddress(patchId))
 }

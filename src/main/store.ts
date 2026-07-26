@@ -17,13 +17,31 @@ export interface ChainTarget {
   offsets: string[]
 }
 
+// A target reached through a pointer captured by an injection, rather than
+// through a chain found by scanning. Scanned chains walk whatever path
+// existed in that session and do not survive a restart of a managed runtime;
+// a capture patch relocates by byte pattern and records the object's real
+// address every time the game touches it, so a cheat anchored to one keeps
+// working across restarts.
+export interface AnchorTarget {
+  kind: 'anchor'
+  patchId: string
+  offset: string
+}
+
+export type CheatTarget = ChainTarget | AnchorTarget
+
+export function isAnchorTarget(target: CheatTarget): target is AnchorTarget {
+  return (target as AnchorTarget).kind === 'anchor'
+}
+
 export interface CheatDefinition {
   kind?: 'value'
   id: string
   name: string
   dataType: DataType
   mode: CheatMode
-  targets: ChainTarget[]
+  targets: CheatTarget[]
   value: number
 }
 
