@@ -14,10 +14,33 @@ function send(cmd: string): Promise<string> {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+// The forced field's address, cached the same way write_watch.test.ts caches
+// its stamina address: the scan keys off the field's initial value, which
+// the first test to run overwrites, so it must be resolved once up front.
+//
+// This resolution runs inside the SAME beforeAll as the harness spawn/attach
+// above, rather than as a second, separately-registered beforeAll — a second
+// top-level beforeAll that awaits scanFirst's AsyncWorker promise reliably
+// segfaults the worker process under this project's vitest setup (reproduced
+// in isolation; the crash disappears the moment the awaited scanFirst call
+// moves into the first beforeAll, with no other change). Keeping the scan in
+// the first hook preserves the brief's caching logic verbatim while avoiding
+// that crash.
+let forceAddress: string
+
 beforeAll(async () => {
   harness = spawn(path.resolve('test-harness/harness.exe'))
   await new Promise((r) => harness.stdout.once('data', r))
   handle = (addon as any).attach(harness.pid).handle
+
+  let candidates = await (addon as any).scanFirst(handle, 'float', 10.0)
+  await send('setforce 4242')
+  candidates = (addon as any).scanNext(handle, candidates, 'float', {
+    mode: 'exact',
+    value: 4242
+  })
+  expect(candidates.length).toBe(1)
+  forceAddress = candidates[0].address
 })
 
 afterAll(() => {
@@ -140,4 +163,48 @@ describe('encodeStore', () => {
   it('rejects an unknown register instead of encoding nonsense', () => {
     expect(() => (addon as any).encodeStore('notareg', 0, 0)).toThrow()
   })
+})
+
+describe('suspendThreads / resumeThreads', () => {
+  it('freezes the target and lets it run again', async () => {
+    await send('forceloop')
+    await sleep(100)
+
+    expect((addon as any).suspendThreads(handle, harness.pid)).toBe(true)
+
+    // Frozen: the writer thread cannot advance the value.
+    const before = (addon as any).readBytes(handle, forceAddress, 4)
+    await sleep(200)
+    const during = (addon as any).readBytes(handle, forceAddress, 4)
+    expect(during).toBe(before)
+
+    ;(addon as any).resumeThreads()
+    await sleep(200)
+    const after = (addon as any).readBytes(handle, forceAddress, 4)
+    expect(after).not.toBe(during)
+
+    await send('stopforce')
+  }, 15000)
+
+  it('refuses a second suspension while the first still holds', async () => {
+    await send('forceloop')
+    await sleep(100)
+
+    expect((addon as any).suspendThreads(handle, harness.pid)).toBe(true)
+    try {
+      expect(() => (addon as any).suspendThreads(handle, harness.pid)).toThrow()
+
+      // The failed second call must not have disturbed the first
+      // suspension: the target should still be frozen.
+      const before = (addon as any).readBytes(handle, forceAddress, 4)
+      await sleep(200)
+      const during = (addon as any).readBytes(handle, forceAddress, 4)
+      expect(during).toBe(before)
+    } finally {
+      (addon as any).resumeThreads()
+    }
+
+    await sleep(200)
+    await send('stopforce')
+  }, 15000)
 })

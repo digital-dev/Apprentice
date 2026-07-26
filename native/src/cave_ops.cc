@@ -173,3 +173,24 @@ Napi::Value EncodeStore(const Napi::CallbackInfo& info) {
   }
   return Napi::String::New(env, BytesToHex(buf, (size_t)len));
 }
+
+// Thin N-API wrapper over platform::SuspendAll/ResumeAll (Task 2). No OS
+// calls of their own: everything goes through platform::.
+Napi::Value SuspendThreads(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  platform::ProcessHandle h = static_cast<platform::ProcessHandle>(
+      info[0].As<Napi::Number>().Int64Value());
+  uint32_t pid = info[1].As<Napi::Number>().Uint32Value();
+
+  if (!platform::SuspendAll(h, pid)) {
+    Napi::Error::New(env, "failed to suspend every thread")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  return Napi::Boolean::New(env, true);
+}
+
+Napi::Value ResumeThreads(const Napi::CallbackInfo& info) {
+  platform::ResumeAll();
+  return info.Env().Undefined();
+}
