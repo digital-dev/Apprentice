@@ -261,3 +261,169 @@ describe('write watch — attach failure handling', () => {
     expect((addon as any).ping()).toBe('pong')
   })
 })
+
+// Regressions for FindWriteInstruction's candidate ranking (write_watch.cc).
+// Both hand-build the ENTIRE instruction stream at the capture site — via
+// allocateCave/writeBytes/encodeJump, the same primitives cave_ops.test.ts
+// proves work end to end — rather than hoping the compiler emits a
+// particular byte pattern for probe_write. That keeps the adversarial bytes
+// exact and deterministic: whichever register/displacement form the
+// compiler actually chose for probe_write's own store is irrelevant, since
+// `movabsRax` loads the watched address directly and the crafted store
+// always targets it through `rax`.
+//
+// Neither test proves a value gets forced (that is Task 9's job) — they
+// only prove the captured instruction's address/length is the real store,
+// not a coincidental neighboring decode, which is the thing a NOP patch or
+// a force injection is built from.
+describe('write watch — decode-ranking regressions', () => {
+  // Resolved once: like staminaAddress/shieldAddress above, the scan keys
+  // off g_probe_value's initial 30.0, which the first use overwrites, and
+  // once redirected the site is committed to running hand-crafted cave code
+  // for the rest of the suite — recomputing it per test would break.
+  let cachedProbeSite: { watchedAddress: string; codeAddress: string; runLength: number } | null =
+    null
+
+  // Crafted code is written starting this far into the cave, not at its
+  // very first byte. FindWriteInstruction reads up to 15 bytes BACKWARD
+  // from the trap's rip to find the real instruction; with code starting
+  // at the cave's own first byte, that backward window reads past the
+  // start of the (page-granular) allocation into whatever precedes it,
+  // which can be unmapped and makes the whole read fail. Leaving room
+  // before the crafted bytes keeps the backward window entirely inside the
+  // cave's own allocated page.
+  const CODE_PAD = 16
+
+  async function stopWriteWatchSettled(): Promise<any[]> {
+    return (addon as any).stopWriteWatch()
+  }
+
+  // DebugActiveProcessStop (inside stopWriteWatch) returns before the OS has
+  // necessarily finished tearing down the debugger's injected thread in the
+  // target — a suspendThreads soon afterward can catch that thread mid-
+  // teardown, where OpenThread fails and SuspendAll reports "failed to
+  // suspend every thread" even though nothing is actually wrong. A fixed
+  // delay was tried first and was not reliable (the exact gap needed varies
+  // run to run), so this retries instead: poll until suspendThreads either
+  // succeeds or a generous budget elapses, mirroring how the rest of this
+  // suite already polls pollWriteWatch rather than assuming a fixed wait is
+  // long enough.
+  async function suspendThreadsRetrying(): Promise<void> {
+    const deadline = Date.now() + 5000
+    for (;;) {
+      try {
+        expect((addon as any).suspendThreads(handle, harness.pid)).toBe(true)
+        return
+      } catch (err) {
+        if (Date.now() >= deadline) throw err
+        await sleep(100)
+      }
+    }
+  }
+
+  async function probeSite(): Promise<{
+    watchedAddress: string
+    codeAddress: string
+    runLength: number
+  }> {
+    if (cachedProbeSite) return cachedProbeSite
+
+    let candidates = await (addon as any).scanFirst(handle, 'float', 30.0)
+    await send('setprobe 3939')
+    candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 3939 })
+    expect(candidates.length).toBe(1)
+    const watchedAddress = candidates[0].address
+
+    ;(addon as any).startWriteWatch(harness.pid, watchedAddress)
+    await send('probeloop')
+    let caught: any[] = []
+    for (let i = 0; i < 40 && caught.length === 0; i++) {
+      await sleep(50)
+      caught = (addon as any).pollWriteWatch()
+    }
+    const insn = (await stopWriteWatchSettled())[0]
+    await send('stopprobe')
+    expect(insn.length).toBeGreaterThan(0)
+
+    const codeAddress = insn.instructionAddress
+    const run = (addon as any).decodeRun(handle, codeAddress, 5)
+    expect(run.decodable).toBe(true)
+
+    cachedProbeSite = { watchedAddress, codeAddress, runLength: run.length }
+    return cachedProbeSite
+  }
+
+  // `48 b8 <8-byte little-endian address>` = `movabs rax, address` — loads
+  // the watched address directly, so the crafted store's destination never
+  // depends on whatever register probe_write's compiled prologue happens to
+  // use.
+  function movabsRax(address: string): string {
+    const buf = Buffer.alloc(8)
+    buf.writeBigUInt64LE(BigInt(address))
+    return '48b8' + buf.toString('hex')
+  }
+
+  // Redirects the (already-captured) probe site into a fresh cave running
+  // `nop * CODE_PAD + movabsRax(watched) + storeAndReturn`, under the same
+  // suspend/write/resume bracketing the brief's own end-to-end test uses.
+  async function redirectProbeSiteTo(storeAndReturnHex: string): Promise<string> {
+    const { watchedAddress, codeAddress, runLength } = await probeSite()
+    const cave = (addon as any).allocateCave(handle, codeAddress)
+    expect(cave).not.toBeNull()
+    const entry = '0x' + (BigInt(cave) + BigInt(CODE_PAD)).toString(16)
+    const body = '90'.repeat(CODE_PAD) + movabsRax(watchedAddress) + storeAndReturnHex
+    expect((addon as any).writeBytes(handle, cave, body)).toBe(true)
+
+    const jump = (addon as any).encodeJump(codeAddress, entry)
+    const padded = jump + '90'.repeat(runLength - 5)
+    await suspendThreadsRetrying()
+    try {
+      expect((addon as any).writeBytes(handle, codeAddress, padded)).toBe(true)
+    } finally {
+      (addon as any).resumeThreads()
+    }
+    return watchedAddress
+  }
+
+  async function captureOnce(watchedAddress: string): Promise<any> {
+    ;(addon as any).startWriteWatch(harness.pid, watchedAddress)
+    await send('probeloop')
+    let caught: any[] = []
+    for (let i = 0; i < 40 && caught.length === 0; i++) {
+      await sleep(50)
+      caught = (addon as any).pollWriteWatch()
+    }
+    const insn = (await stopWriteWatchSettled())[0]
+    await send('stopprobe')
+    return insn
+  }
+
+  it('picks the real 4-byte store over a coincidental 2-byte suffix decode', async () => {
+    // `f3 0f 11 00` (movss [rax], xmm0, 4 bytes) followed by `c3` (ret) —
+    // the exact organic shape that originally hid the real store: the
+    // store's own last two bytes (`11 00`) also independently decode as a
+    // valid, shorter `adc [rax], eax` landing on the same rip with the same
+    // effective address. If ranking ever regresses to "first match nearest
+    // rip", this reproduces that bug deterministically.
+    const watchedAddress = await redirectProbeSiteTo('f30f1100c3')
+    const insn = await captureOnce(watchedAddress)
+
+    expect(insn.length).toBe(4)
+    expect(insn.bytes).toBe('f30f1100')
+  }, 15000)
+
+  it('picks the real 4-byte store over a coincidental prefix-extended decode', async () => {
+    // `3e` (a DS segment-override prefix, architecturally ignored for
+    // ordinary memory addressing in 64-bit mode) tacked directly in front
+    // of the same real store. `3e f3 0f 11 00` decodes as ONE 5-byte
+    // instruction ending at the same rip as the 4-byte `f3 0f 11 00` alone,
+    // with the identical operand — a coincidental over-decode that must not
+    // outrank the genuine, shorter, prefix-free instruction found nearer to
+    // rip.
+    const watchedAddress = await redirectProbeSiteTo('3ef30f1100c3')
+    const insn = await captureOnce(watchedAddress)
+
+    expect(insn.length).toBe(4)
+    expect(insn.bytes).toBe('f30f1100')
+  }, 15000)
+})

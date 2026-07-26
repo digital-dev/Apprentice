@@ -123,6 +123,43 @@ describe('decodeRun', () => {
     const result = (addon as any).decodeRun(handle, scratch, 5)
     expect(result.relocatable).toBe(false)
   })
+
+  it('refuses a run that must fold in the function\'s own ret', async () => {
+    // harness.c's tight_write (`*p = v;`, deliberately unpadded — unlike
+    // force_write above) compiles under /Od to a 4-byte `movss [reg], xmm`
+    // sitting immediately against its `ret`, with no other code between
+    // them. Asking decodeRun for 5 bytes (a jmp rel32's footprint) forces it
+    // to fold that `ret` into the run — and a cave built from `displaced +
+    // effect + jumpBack` would then hit the `ret` and return before the
+    // effect or jump-back ever runs, installing a cheat that silently does
+    // nothing. decodeRun must refuse this outright rather than report it
+    // installable; a NOP-style patch or a force injection built from it
+    // would otherwise report success while doing nothing (or, for a NOP,
+    // corrupt the tail byte of whatever follows).
+    let candidates = await (addon as any).scanFirst(handle, 'float', 20.0)
+    await send('settight 4141')
+    candidates = (addon as any).scanNext(handle, candidates, 'float', {
+      mode: 'exact',
+      value: 4141
+    })
+    expect(candidates.length).toBe(1)
+    const tightAddress = candidates[0].address
+
+    ;(addon as any).startWriteWatch(harness.pid, tightAddress)
+    await send('tightloop')
+    let caught: any[] = []
+    for (let i = 0; i < 40 && caught.length === 0; i++) {
+      await sleep(50)
+      caught = (addon as any).pollWriteWatch()
+    }
+    const insn = (addon as any).stopWriteWatch()[0]
+    await send('stoptight')
+    expect(insn.length).toBeGreaterThan(0)
+
+    const result = (addon as any).decodeRun(handle, insn.instructionAddress, 5)
+    expect(result.decodable).toBe(true)
+    expect(result.relocatable).toBe(false)
+  }, 15000)
 })
 
 describe('encodeJump', () => {
@@ -256,8 +293,11 @@ describe('force injection — end to end', () => {
     const jump = (addon as any).encodeJump(site, codeAddress)
     const padded = jump + '90'.repeat(run.length - 5)
     ;(addon as any).suspendThreads(handle, harness.pid)
-    expect((addon as any).writeBytes(handle, site, padded)).toBe(true)
-    ;(addon as any).resumeThreads()
+    try {
+      expect((addon as any).writeBytes(handle, site, padded)).toBe(true)
+    } finally {
+      (addon as any).resumeThreads()
+    }
 
     // The harness keeps writing an increasing value; the injection must win
     // every time, so every sample reads exactly 777.
@@ -268,13 +308,24 @@ describe('force injection — end to end', () => {
       await sleep(100)
     }
 
-    // Restore: the field must start moving again.
+    // Restore: the field must start moving again. Asserting the value
+    // CHANGED between two samples (rather than "not close to 777") is
+    // strictly stronger and flake-free: force_thread increments by 1.0
+    // every 10ms from 0, so it passes through exactly 777.0 once per
+    // `forceloop` run — a single sample landing on that tick would fail
+    // "not close to 777" spuriously even though the release genuinely
+    // worked.
     ;(addon as any).suspendThreads(handle, harness.pid)
-    expect((addon as any).writeBytes(handle, site, displaced)).toBe(true)
-    ;(addon as any).resumeThreads()
+    try {
+      expect((addon as any).writeBytes(handle, site, displaced)).toBe(true)
+    } finally {
+      (addon as any).resumeThreads()
+    }
     await sleep(300)
-    const after = parseFloat((await send('getforce')).split(' ')[1])
-    expect(after).not.toBeCloseTo(777, 3)
+    const first = parseFloat((await send('getforce')).split(' ')[1])
+    await sleep(200)
+    const second = parseFloat((await send('getforce')).split(' ')[1])
+    expect(second).not.toBe(first)
 
     await send('stopforce')
   }, 30000)

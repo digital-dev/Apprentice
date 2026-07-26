@@ -34,6 +34,22 @@ PlayerComponent* g_player_ptr = &g_player;
 float g_force_value = 10.0f; // cave_ops.test.ts forces a constant into this
 static volatile int g_force_running = 0;
 
+// cave_ops.test.ts's decodeRun regression: a store with zero trailing slack
+// before its function's own `ret`, deliberately kept bare (unlike
+// force_write's padded version above) so there's a real, live instance of
+// the "displaced run must fold in the ret" hazard for decodeRun to refuse.
+float g_tight_value = 20.0f;
+static volatile int g_tight_running = 0;
+
+// write_watch.test.ts's decode-ranking regressions: a dedicated field whose
+// captured write site gets deliberately redirected into hand-crafted cave
+// code, so the test can construct exact adversarial byte patterns (a
+// coincidental short suffix decode, and a coincidental prefix-extended
+// decode) without depending on whatever registers/bytes the compiler
+// happens to pick.
+float g_probe_value = 30.0f;
+static volatile int g_probe_running = 0;
+
 static volatile int g_watch_running = 0;
 
 static volatile int g_drain_running = 0;
@@ -158,6 +174,49 @@ static unsigned __stdcall force_thread(void* arg) {
 }
 #pragma optimize("", on)
 
+// Deliberately bare — no padding after the store, unlike force_write above.
+// `*p = v;` alone compiles (under /Od) to a 4-byte `movss [reg], xmm`
+// immediately against this function's `ret`, so a run asked to cover 5
+// bytes (the size of a `jmp rel32` redirect) has nothing to extend into
+// except that `ret`. decodeRun must refuse this (`relocatable: false`),
+// not report it installable.
+#pragma optimize("", off)
+static void tight_write(float* p, float v) {
+  *p = v;
+}
+static unsigned __stdcall tight_thread(void* arg) {
+  (void)arg;
+  float v = 0.0f;
+  while (g_tight_running) {
+    tight_write(&g_tight_value, v);
+    v += 1.0f;
+    Sleep(10);
+  }
+  return 0;
+}
+#pragma optimize("", on)
+
+// Written through a runtime pointer argument for the same reason as
+// force_write/tight_write above (a real `movss [reg], xmm` store, not a
+// RIP-relative one) — used only as a capture target whose site gets
+// redirected into hand-built cave code by write_watch.test.ts's decode-
+// ranking regressions, never for the value-forcing pipeline itself.
+#pragma optimize("", off)
+static void probe_write(float* p, float v) {
+  *p = v;
+}
+static unsigned __stdcall probe_thread(void* arg) {
+  (void)arg;
+  float v = 0.0f;
+  while (g_probe_running) {
+    probe_write(&g_probe_value, v);
+    v += 1.0f;
+    Sleep(10);
+  }
+  return 0;
+}
+#pragma optimize("", on)
+
 #pragma optimize("", off)
 static unsigned __stdcall drain_thread(void* arg) {
   (void)arg;
@@ -236,6 +295,34 @@ int main(void) {
       printf("OK\n");
     } else if (strncmp(line, "stopforce", 9) == 0) {
       g_force_running = 0;
+      printf("OK\n");
+    } else if (sscanf(line, "settight %f", &fval) == 1) {
+      g_tight_value = fval;
+      printf("OK\n");
+    } else if (strncmp(line, "gettight", 8) == 0) {
+      printf("OK %f\n", g_tight_value);
+    } else if (strncmp(line, "tightloop", 9) == 0) {
+      if (!g_tight_running) {
+        g_tight_running = 1;
+        _beginthreadex(NULL, 0, tight_thread, NULL, 0, NULL);
+      }
+      printf("OK\n");
+    } else if (strncmp(line, "stoptight", 9) == 0) {
+      g_tight_running = 0;
+      printf("OK\n");
+    } else if (sscanf(line, "setprobe %f", &fval) == 1) {
+      g_probe_value = fval;
+      printf("OK\n");
+    } else if (strncmp(line, "getprobe", 8) == 0) {
+      printf("OK %f\n", g_probe_value);
+    } else if (strncmp(line, "probeloop", 9) == 0) {
+      if (!g_probe_running) {
+        g_probe_running = 1;
+        _beginthreadex(NULL, 0, probe_thread, NULL, 0, NULL);
+      }
+      printf("OK\n");
+    } else if (strncmp(line, "stopprobe", 9) == 0) {
+      g_probe_running = 0;
       printf("OK\n");
     } else if (strncmp(line, "get", 3) == 0) {
       printf("OK %d\n", *g_health_ptr);

@@ -213,16 +213,39 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
   // instruction landing on the same rip (observed in practice — a 4-byte
   // `movss [rax], xmm0` whose last two bytes `11 00` also parse standalone
   // as a 2-byte `adc [rax], eax`, which happens to share the same write-to-
-  // rax operand and so passes the effective-address check too). Returning
-  // on the first match would silently prefer that shorter, coincidental
-  // decode — which then includes the bytes AFTER the real store (here, the
-  // function's own `ret`) in what gets displaced into a cave, corrupting
-  // the target the moment the site is patched. So every candidate in range
-  // is tried, and the LONGEST matching one wins: a coincidental sub-decode
-  // is, by construction, a fragment of the real instruction's tail plus
-  // whatever follows it, so it is never longer than the genuine instruction
-  // it overlaps.
+  // rax operand and so passes the effective-address check too). Naively
+  // returning on the first match would silently prefer that shorter,
+  // coincidental decode — which then includes the bytes AFTER the real
+  // store (here, the function's own `ret`) in what gets displaced into a
+  // cave, corrupting the target the moment the site is patched.
+  //
+  // The reverse mistake is just as real, though: naively preferring the
+  // LONGEST match instead is not safe either. Any byte immediately before
+  // the genuine instruction that happens to be a legal-but-inert prefix for
+  // it — a CS/SS/DS/ES segment override (architecturally ignored for
+  // ordinary memory addressing in 64-bit mode; only FS/GS have any effect)
+  // or a REX byte with every bit clear (0x40, which changes nothing for an
+  // operand that doesn't need REX at all) — makes `[that byte] + genuine`
+  // decode as one instruction, ending at the same rip, with the identical
+  // memory-write operand and therefore the same effective address. Such a
+  // byte is completely ordinary as the tail of whatever instruction
+  // precedes the real one (an 8-bit displacement, an immediate, part of
+  // another opcode), and it would then outrank — and silently replace —
+  // the genuine decode purely because it happens to be one byte longer.
+  //
+  // So every candidate in range is tried, and ranking uses each decode's
+  // CORE length — its raw length minus any consumed prefix bytes that
+  // contribute nothing to this specific decode — rather than raw length.
+  // A coincidental SHORTER sub-decode (case one) is, by construction, a
+  // fragment of the real instruction's tail plus whatever follows it, so
+  // its core length is never larger than the genuine instruction's. A
+  // coincidental LONGER over-decode (case two) has a core length equal to
+  // the genuine instruction found nearer to rip, so it ties rather than
+  // wins, and the nearer (already-recorded) genuine decode is kept. This is
+  // not a general proof for every conceivable byte pattern — it resolves
+  // both directions observed and reasoned about here, not more.
   bool haveMatch = false;
+  size_t bestRankLength = 0;
   uintptr_t bestAddr = 0;
   ZydisDecodedInstruction bestInsn{};
   ZydisDecodedOperand bestOps[ZYDIS_MAX_OPERAND_COUNT];
@@ -278,8 +301,28 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
       // the results. op.size is the access width in bits.
       uintptr_t accessBytes = op.size ? (uintptr_t)(op.size / 8) : 1;
       if (effective <= watchedAddress && watchedAddress < effective + accessBytes) {
-        if (!haveMatch || tryInsn.length > bestInsn.length) {
+        // A prefix byte is "inert" for ranking if Zydis itself says this
+        // decode didn't actually use it (ZYDIS_PREFIX_TYPE_IGNORED covers
+        // "not accepted by the instruction" generally), or if it's one of
+        // the segment overrides that 64-bit mode always ignores for memory
+        // addressing regardless of how Zydis classifies it, or if it's a
+        // REX byte encoding no bits at all (0x40 exactly — W=R=X=B=0).
+        size_t inertPrefixBytes = 0;
+        for (ZyanU8 pfx = 0; pfx < tryInsn.raw.prefix_count; pfx++) {
+          const auto& p = tryInsn.raw.prefixes[pfx];
+          bool segOverrideIgnoredIn64Bit =
+              p.value == 0x2e || p.value == 0x36 || p.value == 0x3e || p.value == 0x26;
+          bool contentFreeRex = p.value == 0x40;
+          if (p.type == ZYDIS_PREFIX_TYPE_IGNORED || segOverrideIgnoredIn64Bit ||
+              contentFreeRex) {
+            inertPrefixBytes++;
+          }
+        }
+        size_t rankLength = (size_t)tryInsn.length - inertPrefixBytes;
+
+        if (!haveMatch || rankLength > bestRankLength) {
           haveMatch = true;
+          bestRankLength = rankLength;
           bestAddr = cand;
           bestInsn = tryInsn;
           memcpy(bestOps, tryOps, sizeof(ZydisDecodedOperand) * ZYDIS_MAX_OPERAND_COUNT);

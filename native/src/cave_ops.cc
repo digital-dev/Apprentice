@@ -36,6 +36,44 @@ bool IsPositionDependent(const ZydisDecodedInstruction& insn,
   return false;
 }
 
+// True if control never falls through to whatever follows this instruction
+// in the byte stream — a different hazard than IsPositionDependent's: not
+// that the instruction computes something from where it sits, but that
+// nothing placed after it in a displaced run would ever execute. A cave's
+// whole point is `displaced + effect + jumpBack`, replayed in that order so
+// the game's own instructions run, then the forced effect runs, then
+// control returns; a RET/unconditional-JMP/INT3/UD2/HLT anywhere in that
+// run ends execution right there, silently turning the effect and
+// jump-back into dead code — an installed cheat that reports success and
+// does nothing. Direct (relative) CALL/JMP are not listed here: their
+// relative-immediate operand already makes IsPositionDependent refuse them,
+// and a CALL — direct or indirect — returns control to the very next byte
+// regardless, so only an INDIRECT call (through a register or memory
+// operand, whose target isn't a relative immediate) is refused here.
+bool IsFlowTerminating(const ZydisDecodedInstruction& insn,
+                       const ZydisDecodedOperand* ops) {
+  switch (insn.mnemonic) {
+    case ZYDIS_MNEMONIC_RET:
+    case ZYDIS_MNEMONIC_IRET:
+    case ZYDIS_MNEMONIC_IRETD:
+    case ZYDIS_MNEMONIC_IRETQ:
+    case ZYDIS_MNEMONIC_INT3:
+    case ZYDIS_MNEMONIC_UD2:
+    case ZYDIS_MNEMONIC_HLT:
+    case ZYDIS_MNEMONIC_JMP:
+      return true;
+    case ZYDIS_MNEMONIC_CALL:
+      for (int i = 0; i < insn.operand_count; i++) {
+        if (ops[i].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && ops[i].imm.is_relative) {
+          return false; // direct call — already refused via IsPositionDependent
+        }
+      }
+      return true; // indirect call
+    default:
+      return false;
+  }
+}
+
 std::string BytesToHex(const uint8_t* data, size_t len) {
   std::string out;
   char hb[4];
@@ -110,6 +148,7 @@ Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
       break;
     }
     if (IsPositionDependent(insn, ops)) relocatable = false;
+    if (IsFlowTerminating(insn, ops)) relocatable = false;
     offset += insn.length;
   }
 
