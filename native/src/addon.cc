@@ -5,6 +5,7 @@
 #include "memory_ops.h"
 #include "write_watch.h"
 #include "patch_ops.h"
+#include "cave_ops.h"
 #include "platform/platform.h"
 
 #include <string>
@@ -66,6 +67,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("writeBytes", Napi::Function::New(env, WriteBytes));
   exports.Set("scanAob", Napi::Function::New(env, ScanAob));
   exports.Set("platformName", Napi::Function::New(env, PlatformName));
+  exports.Set("allocateCave", Napi::Function::New(env, AllocateCave));
+  exports.Set("decodeRun", Napi::Function::New(env, DecodeRun));
   return exports;
 }
 

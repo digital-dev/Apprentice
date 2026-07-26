@@ -10,6 +10,7 @@
         "src/memory_ops.cc",
         "src/write_watch.cc",
         "src/patch_ops.cc",
+        "src/cave_ops.cc",
         "third_party/zydis/Zydis.c"
       ],
       "include_dirs": [
