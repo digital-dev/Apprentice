@@ -241,9 +241,10 @@ export default function Scanner({
   }
 
   // Turn a caught instruction into a code patch. Unlike the pointer-cheat
-  // path this needs no base register and no chain — only the instruction's
-  // own bytes, length, signature and module anchor — so it works for
-  // rip-relative and otherwise-undecoded writes too.
+  // path this needs no chain — only the instruction's own bytes, length,
+  // signature and module anchor — so a NOP patch works for rip-relative and
+  // otherwise-undecoded writes too. A force patch is the exception: it still
+  // needs a base register, to address the field it writes through.
   async function createPatchFromInstruction(insn: CaughtInstruction) {
     if (!captureName) return
     setCaptureError(null)
@@ -429,9 +430,15 @@ export default function Scanner({
                     insn.length === 0 ||
                     !writesWatchedAddress(insn) ||
                     (patchModeChoice === 'force' &&
-                      (forceValue.trim() === '' || !insn.baseRegister))
+                      (forceValue.trim() === '' ||
+                        !Number.isFinite(Number(forceValue)) ||
+                        !insn.baseRegister))
                   }
-                  title="Replace this instruction with no-ops so the write never happens"
+                  title={
+                    patchModeChoice === 'force'
+                      ? 'Redirect this instruction to force the field to the given value instead'
+                      : 'Replace this instruction with no-ops so the write never happens'
+                  }
                   onClick={() => createPatchFromInstruction(insn)}
                 >
                   Create patch
