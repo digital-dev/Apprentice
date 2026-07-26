@@ -114,6 +114,26 @@ export function restoreAllPatches(): void {
   patchEngine.restoreAll()
 }
 
+// Everything that must happen before Tamper stops existing, in this order.
+//
+// Stopping the capture is not optional politeness: an armed write-watch has
+// a hardware breakpoint (Dr0/Dr7) set on every thread of the target. Those
+// live in the threads' contexts, and detaching the debugger does not clear
+// them — so a Tamper that exits mid-capture leaves the game primed to raise
+// a debug exception with no debugger attached to handle it, and Windows
+// kills the game. Quitting used to restore patches but never stop the
+// capture, which is exactly how closing Tamper took Valheim down with it.
+//
+// Patches are restored second, while the process handle is still valid.
+export function releaseTarget(): void {
+  try {
+    nativeAddon.stopWriteWatch() // clears the breakpoints, then detaches
+  } catch {
+    // No session, or the target is already gone — nothing to disarm.
+  }
+  patchEngine.restoreAll()
+}
+
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   freezeLoop.onDegraded((cheatId) => {
     getWindow().webContents.send('cheat:broken', cheatId)

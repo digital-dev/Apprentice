@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
-import { registerIpcHandlers, restoreAllPatches } from './ipc'
+import { registerIpcHandlers, releaseTarget } from './ipc'
 
 let mainWindow: BrowserWindow
 
@@ -25,5 +25,6 @@ function createWindow() {
 
 app.whenReady().then(createWindow)
 app.on('window-all-closed', () => app.quit())
-// Never leave a game running with Tamper's NOPs in its code.
-app.on('before-quit', () => restoreAllPatches())
+// Never leave a game holding Tamper's NOPs — or, worse, an armed hardware
+// breakpoint with no debugger left to service it, which kills the game.
+app.on('before-quit', () => releaseTarget())

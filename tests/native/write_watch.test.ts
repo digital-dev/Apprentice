@@ -28,7 +28,20 @@ afterAll(() => {
 
 // Resolve the address of g_player.stamina by scanning for its 77.0 value,
 // narrowed to one via the setp command.
+//
+// Cached because the scan only works once: it keys off the field's INITIAL
+// 77.0, and the first test to run overwrites that. The address itself stays
+// valid for the harness's lifetime, so later tests reuse it rather than
+// re-deriving it from a value that is no longer there.
+let cachedStaminaAddress: string | null = null
+
 async function staminaAddress(): Promise<string> {
+  if (cachedStaminaAddress) return cachedStaminaAddress
+  cachedStaminaAddress = await resolveStaminaAddress()
+  return cachedStaminaAddress
+}
+
+async function resolveStaminaAddress(): Promise<string> {
   let candidates = await (addon as any).scanFirst(handle, 'float', 77.0)
   await send('setp 33')
   candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 33 })
@@ -72,6 +85,37 @@ describe('write watch — capture', () => {
 
     const reply = await send('get')
     expect(reply.startsWith('OK')).toBe(true)
+  }, 15000)
+})
+
+describe('write watch — detaching while the target is still writing', () => {
+  it('leaves the target alive when the watch stops mid-write', async () => {
+    const address = await staminaAddress()
+
+    ;(addon as any).startWriteWatch(harness.pid, address)
+    await send('watchloop')
+
+    let list: any[] = []
+    for (let i = 0; i < 40 && list.length === 0; i++) {
+      await sleep(50)
+      list = (addon as any).pollWriteWatch()
+    }
+    expect(list.length).toBeGreaterThan(0)
+
+    // Deliberately do NOT stop the harness's write loop first. Every other
+    // test here sends 'stoploop' before stopping the watch, which empties
+    // the debug-event queue and hides the failure this test exists for:
+    // clearing Dr7 does not un-raise an exception the CPU has already
+    // fired, so any queued debug exception gets delivered after detach to a
+    // process with no debugger and kills it with STATUS_SINGLE_STEP. That
+    // is what made closing the app take the game down with it.
+    ;(addon as any).stopWriteWatch()
+
+    await sleep(500) // let the loop keep writing across the detach
+    const reply = await send('get')
+    expect(reply.startsWith('OK')).toBe(true) // still alive and responsive
+
+    await send('stoploop')
   }, 15000)
 })
 

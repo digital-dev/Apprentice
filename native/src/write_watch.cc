@@ -432,7 +432,34 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
   }
 
   SetHwBreakpointAllThreads(pid, 0); // clear
-  DebugActiveProcessStop(pid);       // detach cleanly
+
+  // Drain whatever the CPU already raised before those breakpoints came
+  // down. Clearing Dr7 does not un-raise an exception that has already
+  // fired: any in-flight debug exception sits queued for the debugger, and
+  // DebugActiveProcessStop delivers the queue to a process that no longer
+  // has one. Unhandled, that is a fatal STATUS_SINGLE_STEP — the target
+  // dies moments after we let go, which is exactly what "closing Tamper
+  // crashes the game" was. The existing tests never saw it because they
+  // stop the target's writes before stopping the watch, so the queue is
+  // always empty by then.
+  //
+  // Pump until WaitForDebugEvent times out, meaning nothing is left
+  // pending, and consume debug exceptions rather than passing them back —
+  // they are ours, and the game has no handler for them.
+  DEBUG_EVENT drain;
+  while (WaitForDebugEvent(&drain, 100)) {
+    DWORD status = DBG_CONTINUE;
+    if (drain.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
+      DWORD code = drain.u.Exception.ExceptionRecord.ExceptionCode;
+      // Anything that isn't one of ours still belongs to the game.
+      if (code != EXCEPTION_SINGLE_STEP && code != EXCEPTION_BREAKPOINT) {
+        status = DBG_EXCEPTION_NOT_HANDLED;
+      }
+    }
+    ContinueDebugEvent(drain.dwProcessId, drain.dwThreadId, status);
+  }
+
+  DebugActiveProcessStop(pid); // detach cleanly
   g_session.running = false;
 }
 

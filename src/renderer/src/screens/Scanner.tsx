@@ -123,6 +123,17 @@ export default function Scanner({
     setSavedNotice(`Saved "${name}" to your cheat list.`)
   }
 
+  // Leaving the scanner ends any capture. An armed capture keeps a debugger
+  // attached with hardware breakpoints set on every thread of the game, and
+  // if Tamper is killed rather than closed in that state, nothing can take
+  // them back down and the game dies. Triggering the value in-game doesn't
+  // require leaving this screen, so anyone navigating away is done capturing
+  // — narrowing that window is free.
+  async function leaveScanner() {
+    if (watching) await stopWatch()
+    onDone()
+  }
+
   // Throwing away a scan is now an explicit act rather than a side effect of
   // saving. Stops an in-flight capture first, so clearing can't strand the
   // debugger attached to the game.
@@ -235,7 +246,7 @@ export default function Scanner({
       <h2>Scan for a new cheat — {exeName}</h2>
 
       <div style={{ marginBottom: 12 }}>
-        <button onClick={onDone}>← Cheat list</button>
+        <button onClick={leaveScanner}>← Cheat list</button>
         <button onClick={clearScan} disabled={candidates.length === 0 && caught.length === 0}>
           Clear scan
         </button>
@@ -243,7 +254,7 @@ export default function Scanner({
 
       {savedNotice && (
         <p style={{ color: 'var(--active)' }}>
-          {savedNotice} <button onClick={onDone}>Go to cheat list</button>
+          {savedNotice} <button onClick={leaveScanner}>Go to cheat list</button>
         </p>
       )}
 
