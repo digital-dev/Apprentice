@@ -14,14 +14,18 @@
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
-        "third_party/zydis"
+        "third_party/zydis",
+        "src/platform"
       ],
       "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
-      "libraries": ["-lpsapi.lib"],
       "defines": ["NAPI_DISABLE_CPP_EXCEPTIONS", "ZYDIS_STATIC_BUILD"],
       "msvs_settings": {
         "VCCLCompilerTool": { "ExceptionHandling": 1, "AdditionalOptions": ["/std:c++17"] }
-      }
+      },
+      "conditions": [
+        ["OS=='win'", { "sources": [ "src/platform/platform_win32.cc" ], "libraries": ["-lpsapi.lib"] }],
+        ["OS=='linux'", { "sources": [ "src/platform/platform_linux.cc" ] }]
+      ]
     }
   ]
 }

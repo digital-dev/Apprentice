@@ -5,12 +5,21 @@
 #include "memory_ops.h"
 #include "write_watch.h"
 #include "patch_ops.h"
+#include "platform/platform.h"
 
 #include <string>
 #include <vector>
 
 Napi::Value Ping(const Napi::CallbackInfo& info) {
   return Napi::String::New(info.Env(), "pong");
+}
+
+Napi::Value PlatformName(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("name", Napi::String::New(env, platform::Name()));
+  result.Set("supported", Napi::Boolean::New(env, platform::IsSupported()));
+  return result;
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -56,6 +65,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("readBytes", Napi::Function::New(env, ReadBytes));
   exports.Set("writeBytes", Napi::Function::New(env, WriteBytes));
   exports.Set("scanAob", Napi::Function::New(env, ScanAob));
+  exports.Set("platformName", Napi::Function::New(env, PlatformName));
   return exports;
 }
 
