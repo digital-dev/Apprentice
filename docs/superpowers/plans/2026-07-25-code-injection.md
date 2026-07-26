@@ -6,11 +6,12 @@
 
 **Architecture:** Six new native primitives (allocate a cave near an address, decode a displaceable run, encode a store, encode a capture, suspend/resume threads) plus a hand-encoded 5-byte jump. `PatchEngine` composes them in TypeScript over its existing injected `PatchOps` boundary, so every decision — including every refusal — stays testable against a fake process. The existing NOP patch becomes one `mode` of the same cheat kind, and value cheats gain a target type anchored to a captured pointer.
 
-**Tech Stack:** Existing — Electron + electron-vite, React + TypeScript, N-API via `node-addon-api` + `node-gyp` (C++17), Vitest, vendored Zydis (decoder **and** encoder). New Win32 surface — `VirtualAllocEx`, `VirtualQueryEx` over free regions, `SuspendThread`/`ResumeThread`.
+**Tech Stack:** Existing — Electron + electron-vite, React + TypeScript, N-API via `node-addon-api` + `node-gyp` (C++17), Vitest, vendored Zydis (decoder **and** encoder). New OS surface, reached only through the platform seam — remote allocation near an address, free-region queries, and all-or-nothing thread suspension (`VirtualAllocEx`, `VirtualQueryEx`, `SuspendThread`/`ResumeThread` in the Windows backend; a refusing stub in the Linux one).
 
 ## Global Constraints
 
-- Windows only, x86-64. No network calls anywhere in the stack.
+- x86-64. No network calls anywhere in the stack.
+- **All new OS calls go through the platform seam** (`native/src/platform/platform.h`, Task 2). `cave_ops.cc` must not contain a single Win32 call — no `VirtualAllocEx`, no `SuspendThread`, no `ReadProcessMemory`. Windows works; Linux is a stub that refuses cleanly. Existing modules keep calling Win32 directly; porting them is a separate sub-project.
 - **Safety (non-negotiable):**
   - Never install an injection whose displaced run contains a RIP-relative instruction **or a relative branch** (`jmp`/`jcc`/`call rel32`). Both compute their target from where they sit; moving them to a cave silently changes where they go.
   - Never install when the located bytes don't match the capture, or when relocation is ambiguous (0 or >1 signature matches).
@@ -33,10 +34,15 @@
 ```
 native/
   src/
+    platform/
+      platform.h                # the OS operations injection needs
+      platform_win32.cc         # the backend that works
+      platform_linux.cc         # stub: compiles, loads, refuses honestly
     cave_ops.h / cave_ops.cc    # allocateCave, decodeRun, encodeStore,
                                 # encodeCapture, encodeJump, suspend/resume
+                                # — all via platform::, no Win32 calls
     addon.cc                    # + wire the new exports
-  binding.gyp                   # + src/cave_ops.cc
+  binding.gyp                   # + src/cave_ops.cc, per-OS platform source
 test-harness/
   harness.c                     # + forceloop/stopforce/getforce/setforce
 src/
@@ -50,6 +56,7 @@ src/
     screens/Scanner.tsx         # + mode choice, value box, anchor creation
     screens/CheatList.tsx       # + anchor-backed target display
 tests/
+  native/platform.test.ts       # the seam reports its backend
   native/cave_ops.test.ts       # primitives + end-to-end force/capture
   main/patchEngine.test.ts      # + install/restore/refusal paths
   main/store.test.ts            # + mode + anchor round-trips
@@ -140,7 +147,335 @@ git commit -m "Add forceloop harness commands for injection tests"
 
 ---
 
-### Task 2: allocateCave and decodeRun
+### Task 2: The platform seam
+
+**Files:**
+- Create: `native/src/platform/platform.h`, `native/src/platform/platform_win32.cc`, `native/src/platform/platform_linux.cc`
+- Modify: `native/binding.gyp`, `native/src/addon.cc`
+- Test: `tests/native/platform.test.ts`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: the `platform::` namespace below, and an export `platformName(): { name: string, supported: boolean }` so the seam is observable from tests and, later, from the UI.
+
+Every OS call the rest of this plan needs goes through here. Tasks 3-5 must
+call `platform::` functions rather than Win32 directly — that is the whole
+point, and a reviewer should reject a `VirtualAllocEx` appearing in
+`cave_ops.cc`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/native/platform.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import addon from '../../native/build/Release/memory_addon.node'
+
+describe('platform seam', () => {
+  it('reports which backend was compiled in', () => {
+    const platform = (addon as any).platformName()
+    expect(['windows', 'linux']).toContain(platform.name)
+  })
+
+  it('reports Windows as supported', () => {
+    // The suite runs on Windows. A Linux build compiles and loads, but every
+    // operation refuses — the point of the stub is that it fails honestly
+    // rather than appearing to work.
+    const platform = (addon as any).platformName()
+    if (process.platform === 'win32') {
+      expect(platform.name).toBe('windows')
+      expect(platform.supported).toBe(true)
+    } else {
+      expect(platform.supported).toBe(false)
+    }
+  })
+})
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+```bash
+npx vitest run tests/native/platform.test.ts
+```
+
+Expected: FAIL — `addon.platformName is not a function`.
+
+- [ ] **Step 3: Write the interface**
+
+Create `native/src/platform/platform.h`:
+
+```cpp
+#pragma once
+#include <cstdint>
+#include <cstddef>
+
+// The OS operations code injection needs, and nothing else. Windows is the
+// platform that works today; the Linux backend is a stub that refuses
+// cleanly, so a Linux build compiles and loads rather than pretending.
+//
+// Only NEW code goes through here. The existing scanner, pointer walker,
+// memory ops, write-watch and patch ops still call Win32 directly; porting
+// those is a separate sub-project.
+namespace platform {
+
+// A HANDLE on Windows, a pid on Linux. Opaque to callers.
+using ProcessHandle = uintptr_t;
+
+struct Region {
+  uintptr_t base = 0;
+  size_t size = 0;
+  bool free = false;
+  bool readable = false;
+  bool executable = false;
+};
+
+bool IsSupported();
+const char* Name();
+
+bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size);
+// Must succeed against read-execute pages: implementations handle whatever
+// protection dance their OS requires and leave protection as they found it.
+bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size_t size);
+bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out);
+// Returns 0 on failure. `near` matters: a 5-byte relative jump reaches ±2GB,
+// so an allocation outside that range is useless to the caller.
+uintptr_t AllocateNear(ProcessHandle handle, uintptr_t near, size_t size);
+// All-or-nothing: on failure nothing stays suspended.
+bool SuspendAll(ProcessHandle handle, uint32_t pid);
+void ResumeAll();
+
+} // namespace platform
+```
+
+- [ ] **Step 4: Implement the Windows backend**
+
+Create `native/src/platform/platform_win32.cc`. `WriteMemory` is the
+protect/write/restore/flush sequence already proven in `patch_ops.cc`,
+including its refusal to straddle a page boundary; `AllocateNear` and
+`SuspendAll`/`ResumeAll` are the implementations given in Tasks 3 and 5 of
+this plan, moved here rather than written twice. Read
+`native/src/patch_ops.cc`'s `WriteBytes` and reuse its exact structure.
+
+```cpp
+#include "platform.h"
+#include <windows.h>
+#include <tlhelp32.h>
+#include <vector>
+
+namespace platform {
+namespace {
+std::vector<HANDLE> g_suspended;
+constexpr uintptr_t kJumpReach = 0x7FFF0000;
+} // namespace
+
+bool IsSupported() { return true; }
+const char* Name() { return "windows"; }
+
+bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size) {
+  SIZE_T read = 0;
+  return ReadProcessMemory((HANDLE)handle, (LPCVOID)address, out, size, &read) &&
+         read == size;
+}
+
+bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size_t size) {
+  // Same contract as patch_ops.cc's WriteBytes: refuse a range that straddles
+  // a page boundary, because VirtualProtectEx reports only the FIRST page's
+  // old protection and restoring it would stamp the wrong value on the next
+  // page. Copy that implementation here verbatim, including the comment.
+  // ... (protect -> WriteProcessMemory -> restore -> FlushInstructionCache)
+}
+
+bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
+  MEMORY_BASIC_INFORMATION mbi;
+  if (VirtualQueryEx((HANDLE)handle, (LPCVOID)address, &mbi, sizeof(mbi)) != sizeof(mbi))
+    return false;
+  out.base = (uintptr_t)mbi.BaseAddress;
+  out.size = mbi.RegionSize;
+  out.free = mbi.State == MEM_FREE;
+  out.readable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                 (mbi.Protect & (PAGE_READWRITE | PAGE_READONLY | PAGE_WRITECOPY |
+                                 PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                                 PAGE_EXECUTE_WRITECOPY));
+  out.executable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                   (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                                   PAGE_EXECUTE_WRITECOPY));
+  return true;
+}
+
+// Walks free regions outward from `near` and commits the first page within
+// jump reach. Windows allocates on 64KB granularity, so candidates align to
+// that rather than to the page size.
+uintptr_t AllocateNear(ProcessHandle handle, uintptr_t near, size_t size) {
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  const uintptr_t granularity = si.dwAllocationGranularity;
+
+  uintptr_t low = (near > kJumpReach) ? near - kJumpReach : 0;
+  uintptr_t high = near + kJumpReach;
+
+  // Upward first, then downward: either direction is equally valid, and most
+  // processes have free space above their modules.
+  for (int direction = 0; direction < 2; direction++) {
+    uintptr_t addr = near;
+    while (addr >= low && addr <= high) {
+      MEMORY_BASIC_INFORMATION mbi;
+      if (VirtualQueryEx((HANDLE)handle, (LPCVOID)addr, &mbi, sizeof(mbi)) != sizeof(mbi))
+        break;
+
+      if (mbi.State == MEM_FREE && mbi.RegionSize >= size) {
+        uintptr_t candidate =
+            ((uintptr_t)mbi.BaseAddress + granularity - 1) & ~(granularity - 1);
+        if (candidate >= low && candidate <= high &&
+            candidate + size <= (uintptr_t)mbi.BaseAddress + mbi.RegionSize) {
+          LPVOID got = VirtualAllocEx((HANDLE)handle, (LPVOID)candidate, size,
+                                      MEM_RESERVE | MEM_COMMIT,
+                                      PAGE_EXECUTE_READWRITE);
+          if (got) return (uintptr_t)got;
+        }
+      }
+
+      if (direction == 0) {
+        uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+        if (next <= addr) break;
+        addr = next;
+      } else {
+        if ((uintptr_t)mbi.BaseAddress < granularity) break;
+        addr = (uintptr_t)mbi.BaseAddress - granularity;
+      }
+    }
+  }
+  return 0;
+}
+
+bool SuspendAll(ProcessHandle handle, uint32_t pid) {
+  (void)handle;
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+  if (snap == INVALID_HANDLE_VALUE) return false;
+
+  THREADENTRY32 te{};
+  te.dwSize = sizeof(te);
+  bool failed = false;
+  if (Thread32First(snap, &te)) {
+    do {
+      if (te.th32OwnerProcessID != pid) continue;
+      HANDLE th = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+      if (!th) { failed = true; break; }
+      if (SuspendThread(th) == (DWORD)-1) {
+        CloseHandle(th);
+        failed = true;
+        break;
+      }
+      g_suspended.push_back(th);
+    } while (Thread32Next(snap, &te));
+  }
+  CloseHandle(snap);
+
+  // All or nothing: a half-suspended target must never be written to, so undo
+  // a partial suspension before reporting failure.
+  if (failed) {
+    ResumeAll();
+    return false;
+  }
+  return true;
+}
+
+void ResumeAll() {
+  for (HANDLE th : g_suspended) { ResumeThread(th); CloseHandle(th); }
+  g_suspended.clear();
+}
+
+} // namespace platform
+```
+
+- [ ] **Step 5: Implement the Linux stub**
+
+Create `native/src/platform/platform_linux.cc`. Every function refuses. The
+comment matters more than the code — it tells the next person exactly what
+they are signing up for:
+
+```cpp
+#include "platform.h"
+
+// Linux backend: declared, not implemented. A Linux build of the addon
+// compiles and loads, and every injection operation refuses with
+// IsSupported() == false, so the app can say "not on this platform yet"
+// instead of appearing to work.
+//
+// Implementing this needs a Linux machine to test on; writing it blind
+// would produce code indistinguishable from working code until someone ran
+// it. Rough shape when someone does:
+//   ReadMemory/WriteMemory  process_vm_readv/writev, or /proc/<pid>/mem,
+//                           which can write pages that are not writable
+//   QueryRegion             parse /proc/<pid>/maps
+//   SuspendAll/ResumeAll    ptrace(PTRACE_ATTACH) per thread in
+//                           /proc/<pid>/task, or SIGSTOP the group
+//   AllocateNear            the hard one. Linux has no VirtualAllocEx:
+//                           hijack a thread, save its registers, point them
+//                           at mmap with MAP_FIXED_NOREPLACE near the
+//                           target, single-step it, restore the registers.
+namespace platform {
+
+bool IsSupported() { return false; }
+const char* Name() { return "linux"; }
+
+bool ReadMemory(ProcessHandle, uintptr_t, void*, size_t) { return false; }
+bool WriteMemory(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
+bool QueryRegion(ProcessHandle, uintptr_t, Region&) { return false; }
+uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }
+bool SuspendAll(ProcessHandle, uint32_t) { return false; }
+void ResumeAll() {}
+
+} // namespace platform
+```
+
+- [ ] **Step 6: Select the backend per OS**
+
+In `native/binding.gyp`, keep the shared sources in `sources` and add:
+
+```python
+      "conditions": [
+        ["OS=='win'", { "sources": [ "src/platform/platform_win32.cc" ] }],
+        ["OS=='linux'", { "sources": [ "src/platform/platform_linux.cc" ] }]
+      ],
+```
+
+Also add `"src/platform"` to `include_dirs`. The Windows-only `libraries`
+entry (`-lpsapi.lib`) must move inside the `OS=='win'` condition, or a Linux
+build fails at link time.
+
+- [ ] **Step 7: Export the seam and build**
+
+In `addon.cc`, add `#include "platform/platform.h"` and:
+
+```cpp
+Napi::Value PlatformName(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("name", Napi::String::New(env, platform::Name()));
+  result.Set("supported", Napi::Boolean::New(env, platform::IsSupported()));
+  return result;
+}
+```
+
+wired as `exports.Set("platformName", Napi::Function::New(env, PlatformName));`
+
+```bash
+cd native && npx node-gyp configure && npx node-gyp build && cd ..
+npx vitest run tests/native/platform.test.ts
+```
+
+Expected: PASS, reporting `windows` / `supported: true`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add native tests/native/platform.test.ts
+git commit -m "Add a platform seam with a Windows backend and a Linux stub"
+```
+
+---
+
+### Task 3: allocateCave and decodeRun
 
 **Files:**
 - Create: `native/src/cave_ops.h`, `native/src/cave_ops.cc`
@@ -289,11 +624,12 @@ Create `native/src/cave_ops.cc`:
 
 ```cpp
 #include "cave_ops.h"
-#include <windows.h>
+#include "platform/platform.h"
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include "Zydis.h"
 
 namespace {
@@ -308,54 +644,7 @@ std::string ToHex(uintptr_t v) {
   return buf;
 }
 
-constexpr SIZE_T kCaveSize = 4096;
-// A 5-byte `jmp rel32` reaches ±2GB. Staying inside that is why the cave has
-// to be allocated near the site rather than wherever Windows feels like.
-constexpr uintptr_t kJumpReach = 0x7FFF0000;
-
-// Walks free regions outward from `near` and commits the first page that is
-// within jump reach. Windows allocates on 64KB granularity, so candidates
-// are aligned to that rather than to the page size.
-uintptr_t AllocateNear(HANDLE h, uintptr_t near) {
-  SYSTEM_INFO si;
-  GetSystemInfo(&si);
-  const uintptr_t granularity = si.dwAllocationGranularity;
-
-  uintptr_t low = (near > kJumpReach) ? near - kJumpReach : 0;
-  uintptr_t high = near + kJumpReach;
-
-  // Search upward first, then downward: either direction is equally valid,
-  // and most processes have free space above their modules.
-  for (int direction = 0; direction < 2; direction++) {
-    uintptr_t addr = near;
-    while (addr >= low && addr <= high) {
-      MEMORY_BASIC_INFORMATION mbi;
-      if (VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) != sizeof(mbi)) break;
-
-      if (mbi.State == MEM_FREE && mbi.RegionSize >= kCaveSize) {
-        uintptr_t candidate =
-            ((uintptr_t)mbi.BaseAddress + granularity - 1) & ~(granularity - 1);
-        if (candidate >= low && candidate <= high &&
-            candidate + kCaveSize <= (uintptr_t)mbi.BaseAddress + mbi.RegionSize) {
-          LPVOID got = VirtualAllocEx(h, (LPVOID)candidate, kCaveSize,
-                                      MEM_RESERVE | MEM_COMMIT,
-                                      PAGE_EXECUTE_READWRITE);
-          if (got) return (uintptr_t)got;
-        }
-      }
-
-      if (direction == 0) {
-        uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
-        if (next <= addr) break;
-        addr = next;
-      } else {
-        if ((uintptr_t)mbi.BaseAddress < granularity) break;
-        addr = (uintptr_t)mbi.BaseAddress - granularity;
-      }
-    }
-  }
-  return 0;
-}
+constexpr size_t kCaveSize = 4096;
 
 // True if this instruction computes anything from where it sits, and would
 // therefore mean something different after being moved into a cave.
@@ -376,25 +665,32 @@ bool IsPositionDependent(const ZydisDecodedInstruction& insn,
 
 Napi::Value AllocateCave(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  platform::ProcessHandle h = static_cast<platform::ProcessHandle>(
+      info[0].As<Napi::Number>().Int64Value());
   uintptr_t near = ParseHex(info[1].As<Napi::String>().Utf8Value());
 
-  uintptr_t cave = AllocateNear(h, near);
+  uintptr_t cave = platform::AllocateNear(h, near, kCaveSize);
   if (!cave) return env.Null();
   return Napi::String::New(env, ToHex(cave));
 }
 
 Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  platform::ProcessHandle h = static_cast<platform::ProcessHandle>(
+      info[0].As<Napi::Number>().Int64Value());
   uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
   size_t minBytes = (size_t)info[2].As<Napi::Number>().Uint32Value();
 
+  // A short read is normal near the end of a mapping — decode whatever came
+  // back rather than refusing, and let the decode loop stop when it runs out.
   uint8_t window[64] = {0};
-  SIZE_T got = 0;
-  ReadProcessMemory(h, (LPCVOID)address, window, sizeof(window), &got);
+  size_t got = sizeof(window);
+  if (!platform::ReadMemory(h, address, window, sizeof(window))) {
+    got = 0;
+    for (size_t probe = sizeof(window) / 2; probe >= 1; probe /= 2) {
+      if (platform::ReadMemory(h, address, window, probe)) { got = probe; break; }
+    }
+  }
 
   ZydisDecoder decoder;
   ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
@@ -450,14 +746,14 @@ git commit -m "Add cave allocation and displaceable-run decoding"
 
 ---
 
-### Task 3: Instruction encoders
+### Task 4: Instruction encoders
 
 **Files:**
 - Modify: `native/src/cave_ops.h`, `native/src/cave_ops.cc`, `native/src/addon.cc`
 - Test: `tests/native/cave_ops.test.ts`
 
 **Interfaces:**
-- Consumes: Task 2's file and build wiring.
+- Consumes: Task 3's file and build wiring.
 - Produces:
   - `encodeStore(baseRegister: string, offset: number, imm32: number): string` — `mov dword ptr [reg+offset], imm32`, unspaced lowercase hex.
   - `encodeJump(from: string, to: string): string` — the 5-byte `jmp rel32`.
@@ -643,7 +939,7 @@ git commit -m "Encode the forcing store and the trampoline jump"
 
 ---
 
-### Task 4: Thread suspension
+### Task 5: Thread suspension
 
 **Files:**
 - Modify: `native/src/cave_ops.h`, `native/src/cave_ops.cc`, `native/src/addon.cc`
@@ -662,8 +958,7 @@ describe('suspendThreads / resumeThreads', () => {
     await send('forceloop')
     await sleep(100)
 
-    const count: number = (addon as any).suspendThreads(harness.pid)
-    expect(count).toBeGreaterThan(0)
+    expect((addon as any).suspendThreads(handle, harness.pid)).toBe(true)
 
     // Frozen: the writer thread cannot advance the value.
     const before = (addon as any).readBytes(handle, forceAddress, 4)
@@ -715,70 +1010,36 @@ Napi::Value SuspendThreads(const Napi::CallbackInfo& info);
 Napi::Value ResumeThreads(const Napi::CallbackInfo& info);
 ```
 
-In `cave_ops.cc`, add to the anonymous namespace:
-
-```cpp
-// Handles of threads suspended by the last SuspendThreads call. A process
-// global, matching the addon's existing one-target-at-a-time model: Tamper
-// is attached to a single game, and an injection is installed under one
-// suspension at a time.
-std::vector<HANDLE> g_suspended;
-```
-
-and the exports:
+The work lives in the platform backend (Task 2); these exports are the N-API
+wrapper over it, and contain no OS calls of their own:
 
 ```cpp
 Napi::Value SuspendThreads(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  DWORD pid = info[0].As<Napi::Number>().Uint32Value();
+  platform::ProcessHandle h = static_cast<platform::ProcessHandle>(
+      info[0].As<Napi::Number>().Int64Value());
+  uint32_t pid = info[1].As<Napi::Number>().Uint32Value();
 
-  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-  if (snap == INVALID_HANDLE_VALUE) {
-    Napi::Error::New(env, "CreateToolhelp32Snapshot failed")
-        .ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  THREADENTRY32 te{};
-  te.dwSize = sizeof(te);
-  bool failed = false;
-  if (Thread32First(snap, &te)) {
-    do {
-      if (te.th32OwnerProcessID != pid) continue;
-      HANDLE th = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
-      if (!th) { failed = true; break; }
-      if (SuspendThread(th) == (DWORD)-1) {
-        CloseHandle(th);
-        failed = true;
-        break;
-      }
-      g_suspended.push_back(th);
-    } while (Thread32Next(snap, &te));
-  }
-  CloseHandle(snap);
-
-  // All or nothing: a half-suspended target must never be written to, so
-  // undo the partial suspension before reporting failure.
-  if (failed) {
-    for (HANDLE th : g_suspended) { ResumeThread(th); CloseHandle(th); }
-    g_suspended.clear();
+  if (!platform::SuspendAll(h, pid)) {
     Napi::Error::New(env, "failed to suspend every thread")
         .ThrowAsJavaScriptException();
     return env.Null();
   }
-
-  return Napi::Number::New(env, (double)g_suspended.size());
+  return Napi::Boolean::New(env, true);
 }
 
 Napi::Value ResumeThreads(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  for (HANDLE th : g_suspended) { ResumeThread(th); CloseHandle(th); }
-  g_suspended.clear();
-  return env.Undefined();
+  platform::ResumeAll();
+  return info.Env().Undefined();
 }
 ```
 
-`<tlhelp32.h>` must be included at the top of `cave_ops.cc`.
+Note the signature change from the test above: `suspendThreads` now takes
+`(handle, pid)` because the platform interface needs both — Windows uses the
+pid to enumerate threads, and a Linux backend will use the handle. Update
+the test's call to `(addon as any).suspendThreads(handle, harness.pid)` and
+assert `toBe(true)` rather than a count, since the count is a Windows detail
+the interface deliberately does not expose.
 
 - [ ] **Step 4: Wire, build, test**
 
@@ -803,7 +1064,7 @@ git commit -m "Add all-or-nothing thread suspension for injection sites"
 
 ---
 
-### Task 5: Storage modes and typed wrappers
+### Task 6: Storage modes and typed wrappers
 
 **Files:**
 - Modify: `src/main/store.ts`, `src/main/nativeAddon.ts`
@@ -912,7 +1173,12 @@ In `src/main/nativeAddon.ts`, after the existing patch wrappers:
   encodeStore: (baseRegister: string, offset: number, imm32: number): string =>
     addon.encodeStore(baseRegister, offset, imm32),
   encodeJump: (from: string, to: string): string => addon.encodeJump(from, to),
-  suspendThreads: (pid: number): number => addon.suspendThreads(pid),
+  // Which backend the addon was built with, and whether injection works on
+  // it. The Linux stub loads and reports false rather than failing at some
+  // later, more confusing point.
+  platformName: (): { name: string; supported: boolean } => addon.platformName(),
+  suspendThreads: (handle: number, pid: number): boolean =>
+    addon.suspendThreads(handle, pid),
   resumeThreads: (): void => addon.resumeThreads(),
 ```
 
@@ -933,14 +1199,14 @@ git commit -m "Add patch modes and cave primitives to the TypeScript layer"
 
 ---
 
-### Task 6: Install and restore an injection
+### Task 7: Install and restore an injection
 
 **Files:**
 - Modify: `src/main/patchEngine.ts`
 - Test: `tests/main/patchEngine.test.ts`
 
 **Interfaces:**
-- Consumes: Task 5's storage and wrappers.
+- Consumes: Task 6's storage and wrappers.
 - Produces: `PatchOps` gains `allocateCave`, `decodeRun`, `encodeStore`, `encodeJump`, `suspendThreads`, `resumeThreads`. `PatchEngine.apply` installs per mode; `restore` reverses it. `AppliedPatch` gains `caveAddress`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -976,9 +1242,9 @@ class FakeOps implements PatchOps {
   encodeJump(): string {
     return 'e900000000'
   }
-  suspendThreads(): number {
+  suspendThreads(): boolean {
     this.suspended++
-    return 4
+    return true
   }
   resumeThreads(): void {
     this.resumed++
@@ -1106,7 +1372,7 @@ export interface PatchOps {
   ): { length: number; decodable: boolean; relocatable: boolean }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
   encodeJump(from: string, to: string): string
-  suspendThreads(): number
+  suspendThreads(): boolean
   resumeThreads(): void
 }
 
@@ -1285,13 +1551,13 @@ git commit -m "Install and restore code-cave injections under thread suspension"
 
 ---
 
-### Task 7: Wire injection through IPC and the capture panel
+### Task 8: Wire injection through IPC and the capture panel
 
 **Files:**
 - Modify: `src/main/ipc.ts`, `src/renderer/src/tamper.d.ts`, `src/renderer/src/screens/Scanner.tsx`
 
 **Interfaces:**
-- Consumes: Task 6's engine.
+- Consumes: Task 7's engine.
 - Produces: `patchOps` supplies the six new operations; the capture panel writes `mode`, `baseRegister`, `fieldOffset`, `value`, `dataType` into saved patches.
 
 - [ ] **Step 1: Supply the new ops**
@@ -1308,13 +1574,32 @@ In `src/main/ipc.ts`, extend the `patchOps` object. Each reads the current `atta
   encodeStore: (baseRegister, offset, imm32) =>
     nativeAddon.encodeStore(baseRegister, offset, imm32),
   encodeJump: (from, to) => nativeAddon.encodeJump(from, to),
-  suspendThreads: () => (attachedPid === null ? 0 : nativeAddon.suspendThreads(attachedPid)),
+  suspendThreads: () =>
+    attachedHandle === null || attachedPid === null
+      ? false
+      : nativeAddon.suspendThreads(attachedHandle, attachedPid),
   resumeThreads: () => nativeAddon.resumeThreads()
 ```
 
 - [ ] **Step 2: Extend the renderer types**
 
 In `src/renderer/src/tamper.d.ts`, nothing new is needed for IPC — patches travel as `PatchCheat`, which already carries the new optional fields through the type re-export from `../../main/store`. Confirm with `npx tsc --noEmit` after Step 3 rather than adding declarations speculatively.
+
+- [ ] **Step 2b: Refuse injection on an unsupported platform**
+
+In `src/main/ipc.ts`, before the `patch:apply` handler installs anything,
+check the backend once and refuse injection modes when it can't do them:
+
+```ts
+// A Linux build loads and runs — scanning and value cheats work through the
+// existing Win32-free paths — but injection has no backend there yet. Say so
+// plainly at the point of use rather than letting a cave allocation return
+// null and surfacing as "no memory available near the instruction".
+const platformSupportsInjection = nativeAddon.platformName().supported
+```
+
+and in the apply path, when `patchMode(patch) !== 'nop' && !platformSupportsInjection`,
+return `{ ok: false, error: 'Code injection is not supported on this platform yet.' }`.
 
 - [ ] **Step 3: Add the mode choice to the capture panel**
 
@@ -1401,13 +1686,13 @@ git commit -m "Offer force mode when creating a patch from a caught instruction"
 
 ---
 
-### Task 8: Prove a forced value in a live process
+### Task 9: Prove a forced value in a live process
 
 **Files:**
 - Test: `tests/native/cave_ops.test.ts`
 
 **Interfaces:**
-- Consumes: every primitive from Tasks 2-4 and the harness from Task 1.
+- Consumes: every primitive from Tasks 3-5 and the harness from Task 1.
 - Produces: the end-to-end proof that an injection makes a value hold.
 
 This is the task the whole stage exists for: not "a write was disabled" but "the value became what I asked and stayed there while the game ran".
@@ -1460,7 +1745,7 @@ describe('force injection — end to end', () => {
 
     const jump = (addon as any).encodeJump(site, codeAddress)
     const padded = jump + '90'.repeat(run.length - 5)
-    ;(addon as any).suspendThreads(harness.pid)
+    ;(addon as any).suspendThreads(handle, harness.pid)
     expect((addon as any).writeBytes(handle, site, padded)).toBe(true)
     ;(addon as any).resumeThreads()
 
@@ -1474,7 +1759,7 @@ describe('force injection — end to end', () => {
     }
 
     // Restore: the field must start moving again.
-    ;(addon as any).suspendThreads(harness.pid)
+    ;(addon as any).suspendThreads(handle, harness.pid)
     expect((addon as any).writeBytes(handle, site, displaced)).toBe(true)
     ;(addon as any).resumeThreads()
     await sleep(300)
@@ -1509,7 +1794,7 @@ git commit -m "Prove a force injection pins a live value and releases it"
 
 # STAGE 2 — `capture` and anchored value cheats
 
-### Task 9: encodeCapture
+### Task 10: encodeCapture
 
 **Files:**
 - Modify: `native/src/cave_ops.h`, `native/src/cave_ops.cc`, `native/src/addon.cc`
@@ -1610,7 +1895,7 @@ git commit -m "Encode a RIP-relative capture store for the cave slot"
 
 ---
 
-### Task 10: Capture mode in the engine
+### Task 11: Capture mode in the engine
 
 **Files:**
 - Modify: `src/main/patchEngine.ts`, `src/main/nativeAddon.ts`, `src/main/ipc.ts`
@@ -1702,7 +1987,7 @@ git commit -m "Install capture injections and expose the pointer slot"
 
 ---
 
-### Task 11: Anchored value-cheat targets
+### Task 12: Anchored value-cheat targets
 
 **Files:**
 - Modify: `src/main/store.ts`, `src/main/ipc.ts`
@@ -1796,7 +2081,7 @@ git commit -m "Resolve value-cheat targets through captured pointers"
 
 ---
 
-### Task 12: Create anchored cheats, and prove capture end to end
+### Task 13: Create anchored cheats, and prove capture end to end
 
 **Files:**
 - Modify: `src/renderer/src/screens/Scanner.tsx`
@@ -1841,7 +2126,7 @@ describe('capture injection — end to end', () => {
 
     const padded =
       (addon as any).encodeJump(site, codeAddress) + '90'.repeat(run.length - 5)
-    ;(addon as any).suspendThreads(harness.pid)
+    ;(addon as any).suspendThreads(handle, harness.pid)
     ;(addon as any).writeBytes(handle, site, padded)
     ;(addon as any).resumeThreads()
 
@@ -1856,7 +2141,7 @@ describe('capture injection — end to end', () => {
     // The captured pointer must actually address the field the harness writes.
     expect('0x' + pointer.toString(16)).toBe(forceAddress)
 
-    ;(addon as any).suspendThreads(harness.pid)
+    ;(addon as any).suspendThreads(handle, harness.pid)
     ;(addon as any).writeBytes(handle, site, displaced)
     ;(addon as any).resumeThreads()
     await send('stopforce')

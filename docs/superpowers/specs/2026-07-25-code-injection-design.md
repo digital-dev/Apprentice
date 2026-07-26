@@ -52,7 +52,18 @@ The two modes together mean nothing in Tamper is session-only:
 
 ## Global constraints
 
-- Windows only, x86-64. No network calls anywhere in the stack.
+- x86-64. No network calls anywhere in the stack.
+- **Windows first, Linux-capable by construction.** Every OS call this
+  sub-project needs goes through a platform interface with a Windows
+  implementation and a Linux stub that fails with "not supported on this
+  platform yet". Windows is the platform that works; Linux is a backend
+  waiting to be filled in on a machine that can run it. Nothing here is
+  written blind: unverifiable `ptrace` code would be indistinguishable from
+  working code until someone ran it.
+- The seam covers **new** code. The existing scanner, pointer walker,
+  memory ops, write-watch and patch ops still call Win32 directly; porting
+  them is its own sub-project and is recorded as a follow-up. This keeps
+  #7 from becoming a refactor of everything that already works.
 - **Safety (non-negotiable):**
   - Never install an injection whose displaced run contains a RIP-relative
     instruction. Relocating one silently changes what it addresses.
@@ -71,6 +82,41 @@ The two modes together mean nothing in Tamper is session-only:
   rather than parallel implementations.
 
 ## Architecture
+
+### Platform layer
+
+One narrow interface, `native/src/platform/platform.h`, holding only what
+injection needs:
+
+```cpp
+namespace platform {
+// Opaque per-OS process token: a HANDLE on Windows, a pid on Linux.
+using ProcessHandle = uintptr_t;
+
+struct Region { uintptr_t base; size_t size; bool free; bool readable; bool executable; };
+
+bool IsSupported();                 // false on the Linux stub
+const char* Name();                 // "windows" | "linux"
+bool ReadMemory(ProcessHandle, uintptr_t, void*, size_t);
+bool WriteMemory(ProcessHandle, uintptr_t, const void*, size_t); // handles page protection
+bool QueryRegion(ProcessHandle, uintptr_t, Region&);
+uintptr_t AllocateNear(ProcessHandle, uintptr_t near, size_t);   // 0 on failure
+bool SuspendAll(ProcessHandle, uint32_t pid);
+void ResumeAll();
+}
+```
+
+`platform_win32.cc` implements it over the Win32 calls #6 already uses.
+`platform_linux.cc` returns `false`/`0` from everything and reports
+`IsSupported() == false`, so a Linux build compiles, loads, and refuses
+cleanly rather than crashing or silently doing nothing. `binding.gyp`
+selects the backend by OS.
+
+Note for whoever implements the Linux backend: `AllocateNear` is the hard
+one. Linux has no `VirtualAllocEx`; allocating inside another process means
+hijacking a thread, pointing its registers at `mmap`, running it, and
+restoring state. The other five are straightforward over
+`process_vm_readv`/`writev`, `/proc/<pid>/maps` and `ptrace`.
 
 ### Native primitives
 
