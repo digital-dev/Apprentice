@@ -7,10 +7,10 @@ type ResolveStatus = 'resolving' | 'resolved' | 'no-chain'
 
 export default function Scanner({
   exeName,
-  onSaved
+  onDone
 }: {
   exeName: string
-  onSaved: () => void
+  onDone: () => void
 }) {
   const [dataType, setDataType] = useState<DataType>('float')
   const [value, setValue] = useState('')
@@ -39,6 +39,12 @@ export default function Scanner({
   const [caught, setCaught] = useState<CaughtInstruction[]>([])
   const [captureName, setCaptureName] = useState('')
   const [captureError, setCaptureError] = useState<string | null>(null)
+  // Saving used to navigate straight back to the cheat list, which unmounted
+  // this screen and threw away the scan and the caught instructions with it.
+  // Finding a working cheat normally means trying several of the caught
+  // writers in turn, so saving now leaves everything in place and just says
+  // so — the user decides when to leave or clear.
+  const [savedNotice, setSavedNotice] = useState<string | null>(null)
 
   async function firstScan() {
     setScanning(true)
@@ -114,7 +120,24 @@ export default function Scanner({
       value: Number(value)
     }
     await window.tamper.saveCheat(exeName, cheat)
-    onSaved()
+    setSavedNotice(`Saved "${name}" to your cheat list.`)
+  }
+
+  // Throwing away a scan is now an explicit act rather than a side effect of
+  // saving. Stops an in-flight capture first, so clearing can't strand the
+  // debugger attached to the game.
+  async function clearScan() {
+    if (watching) await stopWatch()
+    setCandidates([])
+    setSelectedAddresses(new Set())
+    setTargets(new Map())
+    setResolveStatus(new Map())
+    setWatchAddress(null)
+    setCaught([])
+    setCaptureName('')
+    setCaptureError(null)
+    setSavedNotice(null)
+    setName('')
   }
 
   async function startWatch(address: string) {
@@ -177,7 +200,7 @@ export default function Scanner({
       value: Number(value)
     }
     await window.tamper.saveCheat(exeName, cheat)
-    onSaved()
+    setSavedNotice(`Saved pointer cheat "${captureName}" to your cheat list.`)
   }
 
   // Turn a caught instruction into a code patch. Unlike the pointer-cheat
@@ -202,12 +225,27 @@ export default function Scanner({
       moduleOffset: insn.moduleOffset
     }
     await window.tamper.saveCheat(exeName, patch)
-    onSaved()
+    setSavedNotice(
+      `Saved patch "${captureName}". Test it in the cheat list, then come back — these instructions are still here.`
+    )
   }
 
   return (
     <div>
       <h2>Scan for a new cheat — {exeName}</h2>
+
+      <div style={{ marginBottom: 12 }}>
+        <button onClick={onDone}>← Cheat list</button>
+        <button onClick={clearScan} disabled={candidates.length === 0 && caught.length === 0}>
+          Clear scan
+        </button>
+      </div>
+
+      {savedNotice && (
+        <p style={{ color: 'var(--active)' }}>
+          {savedNotice} <button onClick={onDone}>Go to cheat list</button>
+        </p>
+      )}
 
       <select
         value={dataType}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { PatchEngine, PatchOps, nopHex } from '../../src/main/patchEngine'
+import { PatchEngine, PatchOps, nopHex, relocationError } from '../../src/main/patchEngine'
 import type { PatchCheat } from '../../src/main/store'
 
 const ORIGINAL = 'f30f114110' // 5 bytes
@@ -66,13 +66,25 @@ describe('nopHex', () => {
 describe('PatchEngine.locate', () => {
   it('resolves a module-anchored patch to base + offset with original bytes', async () => {
     const status = await engine.locate(modulePatch)
-    expect(status).toEqual({ address: '0x400100', state: 'original', applicable: true })
+    expect(status).toEqual({
+      address: '0x400100',
+      state: 'original',
+      applicable: true,
+      matchCount: null
+    })
   })
 
-  it('reports not-found when the module is not loaded', async () => {
+  it('reports not-found with no match count when the module is not loaded', async () => {
     ops.modules.clear()
     const status = await engine.locate(modulePatch)
-    expect(status).toEqual({ address: null, state: 'not-found', applicable: false })
+    // matchCount stays null: the module path never scans, so "0 matches"
+    // would be a lie that reads as "the code is gone".
+    expect(status).toEqual({
+      address: null,
+      state: 'not-found',
+      applicable: false,
+      matchCount: null
+    })
   })
 
   it('reports applied when the bytes there are already NOPs', async () => {
@@ -93,31 +105,81 @@ describe('PatchEngine.locate', () => {
     ops.aobMatches = ['0x7ff000001000']
     ops.memory.set('0x7ff000001000', ORIGINAL)
     const status = await engine.locate(jitPatch)
-    expect(status).toEqual({ address: '0x7ff000001000', state: 'original', applicable: true })
+    expect(status).toEqual({
+      address: '0x7ff000001000',
+      state: 'original',
+      applicable: true,
+      matchCount: 1
+    })
   })
 
-  it('refuses to guess when the signature scan finds several matches', async () => {
-    ops.aobMatches = ['0x7ff000001000', '0x7ff000002000']
+  it('refuses to guess when the signature scan finds several matches, and says how many', async () => {
+    ops.aobMatches = ['0x7ff000001000', '0x7ff000002000', '0x7ff000003000']
     const status = await engine.locate(jitPatch)
-    expect(status).toEqual({ address: null, state: 'not-found', applicable: false })
+    expect(status).toEqual({
+      address: null,
+      state: 'not-found',
+      applicable: false,
+      matchCount: 3
+    })
   })
 
-  it('refuses when the signature scan finds nothing', async () => {
+  it('reports zero matches distinctly from an ambiguous scan', async () => {
     ops.aobMatches = []
     const status = await engine.locate(jitPatch)
     expect(status.applicable).toBe(false)
+    // 0 and >1 are opposite problems — the count is what tells them apart.
+    expect(status.matchCount).toBe(0)
   })
 
-  it('reports not-found when the address resolves but memory cannot be read', async () => {
+  it('reports unreadable, keeping the address, when it resolves but memory cannot be read', async () => {
     ops.memory.delete('0x400100')
     const status = await engine.locate(modulePatch)
-    expect(status).toEqual({ address: null, state: 'not-found', applicable: false })
+    expect(status).toEqual({
+      address: '0x400100',
+      state: 'unreadable',
+      applicable: false,
+      matchCount: null
+    })
   })
 
   it('reports not-found rather than throwing on a malformed moduleOffset', async () => {
     const junkPatch: PatchCheat = { ...modulePatch, moduleOffset: 'not-hex' }
     const status = await engine.locate(junkPatch)
-    expect(status).toEqual({ address: null, state: 'not-found', applicable: false })
+    expect(status).toEqual({
+      address: null,
+      state: 'not-found',
+      applicable: false,
+      matchCount: null
+    })
+  })
+})
+
+describe('relocationError', () => {
+  it('names the module when the module-anchored path failed', () => {
+    expect(relocationError({ address: null, state: 'not-found', applicable: false, matchCount: null }))
+      .toContain('module')
+  })
+
+  it('tells the user to re-capture when nothing matched', () => {
+    const message = relocationError({
+      address: null,
+      state: 'not-found',
+      applicable: false,
+      matchCount: 0
+    })
+    expect(message).toContain('no longer appears')
+    expect(message).toContain('Re-capture')
+  })
+
+  it('reports the ambiguous match count so the user knows why it refused', () => {
+    const message = relocationError({
+      address: null,
+      state: 'not-found',
+      applicable: false,
+      matchCount: 4
+    })
+    expect(message).toContain('4 places')
   })
 })
 
@@ -145,12 +207,31 @@ describe('PatchEngine.apply / restore', () => {
     expect(engine.isApplied('no-drain')).toBe(false)
   })
 
-  it('refuses to patch when it cannot be located', async () => {
+  it('refuses to patch when it cannot be located, and says why', async () => {
     ops.modules.clear()
     const result = await engine.apply(modulePatch)
     expect(result.ok).toBe(false)
-    expect(result.error).toContain('relocate')
+    // The message has to name the actual cause — a bare "can't relocate"
+    // is what sent a real debugging session chasing the wrong theory.
+    expect(result.error).toContain('module')
     expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses an ambiguous JIT patch with the match count in the message', async () => {
+    ops.aobMatches = ['0x7ff000001000', '0x7ff000002000']
+    const result = await engine.apply(jitPatch)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('2 places')
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses, without writing, when the resolved address is unreadable', async () => {
+    ops.memory.delete('0x400100')
+    const result = await engine.apply(modulePatch)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('no longer readable')
+    expect(ops.writes).toHaveLength(0)
+    expect(engine.isApplied('no-drain')).toBe(false)
   })
 
   it('does not mark a patch applied when the write fails', async () => {

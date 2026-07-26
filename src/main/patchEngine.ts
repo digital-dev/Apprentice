@@ -11,17 +11,45 @@ export interface PatchOps {
   scanAob(signature: string): Promise<string[]>
 }
 
-export type PatchState = 'original' | 'applied' | 'not-found' | 'mismatch'
+export type PatchState = 'original' | 'applied' | 'not-found' | 'mismatch' | 'unreadable'
 
 export interface PatchStatus {
   address: string | null
   state: PatchState
   // Safe to toggle on: we found it AND its bytes are what we expect.
   applicable: boolean
+  // How many places the AOB signature matched, or null for a module-anchored
+  // patch (which resolves by arithmetic and never scans). The engine refuses
+  // anything other than exactly one match, but "the code is gone" (0) and
+  // "this signature isn't unique" (>1) are opposite problems with opposite
+  // fixes — re-capture vs. a longer signature — so the count has to survive
+  // as far as the UI rather than collapsing into one 'not-found'.
+  matchCount: number | null
+}
+
+// What resolveAddress worked out: where the patch currently lives, and how
+// many candidates the signature scan saw getting there.
+interface Resolution {
+  address: string | null
+  matchCount: number | null
 }
 
 export function nopHex(length: number): string {
   return '90'.repeat(length)
+}
+
+// "Can't relocate" covers three different situations with three different
+// remedies, so say which one happened. A user who is told the signature
+// matched four places knows to re-capture a longer instruction; a user told
+// it matched none knows the code is gone.
+export function relocationError(status: PatchStatus): string {
+  if (status.matchCount === null) {
+    return "The module this patch lives in isn't loaded, so it can't be located."
+  }
+  if (status.matchCount === 0) {
+    return "This instruction's signature no longer appears in the game's code — it may have been re-compiled since capture. Re-capture it."
+  }
+  return `This instruction's signature matches ${status.matchCount} places in the game's code, so there's no way to tell which one to patch. Not guessing. Re-capture a longer instruction if you can.`
 }
 
 interface AppliedPatch {
@@ -46,19 +74,23 @@ export class PatchEngine {
   }
 
   async locate(patch: PatchCheat): Promise<PatchStatus> {
-    const address = await this.resolveAddress(patch)
-    if (address === null) return { address: null, state: 'not-found', applicable: false }
+    const { address, matchCount } = await this.resolveAddress(patch)
+    if (address === null) return { address: null, state: 'not-found', applicable: false, matchCount }
 
     const current = this.ops.readBytes(address, patch.length)
-    if (current === null) return { address: null, state: 'not-found', applicable: false }
+    // Resolved but unreadable: the address is still worth reporting — it
+    // distinguishes "the code page went away" from "we never found it",
+    // which look identical to a user staring at one error message.
+    if (current === null) return { address, state: 'unreadable', applicable: false, matchCount }
 
     const original = patch.originalBytes.toLowerCase()
-    if (current.toLowerCase() === original) return { address, state: 'original', applicable: true }
+    if (current.toLowerCase() === original)
+      return { address, state: 'original', applicable: true, matchCount }
     if (current.toLowerCase() === nopHex(patch.length))
-      return { address, state: 'applied', applicable: true }
+      return { address, state: 'applied', applicable: true, matchCount }
     // Something else lives there now — another trainer, an update, or a
     // wrong relocation. Never overwrite it.
-    return { address, state: 'mismatch', applicable: false }
+    return { address, state: 'mismatch', applicable: false, matchCount }
   }
 
   async apply(patch: PatchCheat): Promise<{ ok: boolean; error: string | null }> {
@@ -70,7 +102,13 @@ export class PatchEngine {
 
     const status = await this.locate(patch)
     if (status.address === null || status.state === 'not-found') {
-      return { ok: false, error: "Can't relocate this instruction in the running game." }
+      return { ok: false, error: relocationError(status) }
+    }
+    if (status.state === 'unreadable') {
+      return {
+        ok: false,
+        error: `Found it at ${status.address} but that memory is no longer readable — the code was probably freed.`
+      }
     }
     if (status.state === 'mismatch') {
       return {
@@ -115,24 +153,27 @@ export class PatchEngine {
     this.applied.clear()
   }
 
-  private async resolveAddress(patch: PatchCheat): Promise<string | null> {
+  private async resolveAddress(patch: PatchCheat): Promise<Resolution> {
     if (patch.moduleName !== null && patch.moduleOffset !== null) {
       const base = this.ops.getModuleBase(patch.moduleName)
-      if (base === null) return null
+      if (base === null) return { address: null, matchCount: null }
       // PatchCheat isn't runtime-validated — a hand-edited games/*.json can
       // carry a malformed offset. BigInt() throws SyntaxError on that
       // rather than failing gracefully, so treat it as unresolvable.
       try {
-        return '0x' + (BigInt(base) + BigInt(patch.moduleOffset)).toString(16)
+        return {
+          address: '0x' + (BigInt(base) + BigInt(patch.moduleOffset)).toString(16),
+          matchCount: null
+        }
       } catch {
-        return null
+        return { address: null, matchCount: null }
       }
     }
     // JIT / anonymous code: only a signature can find it again. Anything
     // other than exactly one match is ambiguous, and a guess here means
     // NOPping an unknown instruction.
     const matches = await this.ops.scanAob(patch.signature)
-    if (matches.length !== 1) return null
-    return matches[0]
+    if (matches.length !== 1) return { address: null, matchCount: matches.length }
+    return { address: matches[0], matchCount: 1 }
   }
 }

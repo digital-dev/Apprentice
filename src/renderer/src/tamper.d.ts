@@ -2,13 +2,11 @@ import type { CheatDefinition, StoredCheat, PatchCheat } from '../../main/store'
 
 export {}
 
-export type PatchState = 'original' | 'applied' | 'not-found' | 'mismatch'
-
-export interface PatchStatus {
-  address: string | null
-  state: PatchState
-  applicable: boolean
-}
+// Re-exported from the engine rather than re-declared: these travel over IPC
+// unchanged, and a second copy of the shape drifts from the one the engine
+// actually produces. This is a type-only import, so nothing from the main
+// process ends up in the renderer bundle.
+export type { PatchState, PatchStatus } from '../../main/patchEngine'
 
 export interface Candidate {
   address: string

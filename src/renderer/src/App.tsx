@@ -27,7 +27,7 @@ export default function App() {
           <CheatList exeName={exeName} onOpenScanner={() => setScreen('scanner')} />
         )}
         {screen === 'scanner' && exeName && (
-          <Scanner exeName={exeName} onSaved={() => setScreen('cheats')} />
+          <Scanner exeName={exeName} onDone={() => setScreen('cheats')} />
         )}
       </div>
     </div>

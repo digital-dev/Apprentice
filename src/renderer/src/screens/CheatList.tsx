@@ -13,6 +13,28 @@ function isPatch(cheat: StoredCheat): cheat is PatchCheat {
   return cheat.kind === 'patch'
 }
 
+// A patch can fail to locate for opposite reasons that need opposite
+// responses, so the chip names which one rather than saying "can't relocate"
+// for all of them: 0 matches means the code is gone and needs re-capturing,
+// while several matches means the signature isn't unique and the engine is
+// refusing to guess. Collapsing these cost a real debugging session.
+function patchStatusLabel(status: PatchStatus): string {
+  switch (status.state) {
+    case 'original':
+      return `located ${status.address}`
+    case 'applied':
+      return `patched ${status.address}`
+    case 'unreadable':
+      return `found ${status.address}, unreadable`
+    case 'mismatch':
+      return `bytes changed at ${status.address}`
+    default:
+      if (status.matchCount === null) return 'module not loaded'
+      if (status.matchCount === 0) return 'no signature match'
+      return `${status.matchCount} signature matches — ambiguous`
+  }
+}
+
 export default function CheatList({
   exeName,
   onOpenScanner
@@ -355,7 +377,7 @@ export default function CheatList({
                     className="address-chip"
                     style={{ color: status.applicable ? 'var(--muted)' : 'var(--error)' }}
                   >
-                    {status.applicable ? `located ${status.address}` : "can't relocate"}
+                    {patchStatusLabel(status)}
                   </span>
                 )}
                 <Toggle
