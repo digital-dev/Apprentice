@@ -71,6 +71,9 @@ class FakeOps implements PatchOps {
   encodeStore(): string {
     return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f
   }
+  encodeCapture(): string {
+    return '488905' + '00000000'
+  }
   encodeJump(from: string, to: string): string {
     this.encodeJumpCalls.push({ from, to })
     return 'e900000000'
@@ -238,6 +241,33 @@ describe('PatchEngine — force injection', () => {
     const result = await engine.apply(legacy)
     expect(result.ok).toBe(true)
     expect(ops.memory.get('0x400100')).toBe(NOPS)
+  })
+})
+
+describe('PatchEngine — capture injection', () => {
+  const capturePatch: PatchCheat = {
+    ...forcePatch,
+    id: 'patch-player',
+    mode: 'capture',
+    value: undefined,
+    dataType: undefined,
+    fieldOffset: undefined
+  }
+
+  it('installs a capture and exposes its slot', async () => {
+    const result = await engine.apply(capturePatch)
+    expect(result.ok).toBe(true)
+    // The slot is the start of the cave; code follows it.
+    expect(engine.slotAddress('patch-player')).toBe(ops.caves[0])
+  })
+
+  it('reports no slot for a patch that is not installed', () => {
+    expect(engine.slotAddress('patch-player')).toBeNull()
+  })
+
+  it('reports no slot for a force patch', async () => {
+    await engine.apply(forcePatch)
+    expect(engine.slotAddress('patch-stamina')).toBeNull()
   })
 })
 

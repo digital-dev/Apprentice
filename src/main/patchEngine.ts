@@ -16,6 +16,7 @@ export interface PatchOps {
     minBytes: number
   ): { length: number; decodable: boolean; relocatable: boolean }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
+  encodeCapture(baseRegister: string, atAddress: string, slotAddress: string): string
   encodeJump(from: string, to: string): string
   suspendThreads(): boolean
   resumeThreads(): void
@@ -67,6 +68,9 @@ interface AppliedPatch {
   originalBytes: string
   // Kept for diagnostics and for capture-mode readers; never freed.
   caveAddress: string | null
+  // Only a capture patch has a readable slot; recorded so slotAddress can
+  // tell a capture cave from a force cave without re-deriving the mode.
+  mode: 'nop' | 'force' | 'capture'
 }
 
 // A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
@@ -174,9 +178,19 @@ export class PatchEngine {
       // Normalize once here so restore() can never write a differently
       // cased blob than the one locate() compared against.
       originalBytes: patch.originalBytes.toLowerCase(),
-      caveAddress
+      caveAddress,
+      mode: patchMode(patch)
     })
     return { ok: true, error: null }
+  }
+
+  // The captured pointer lives in the first 8 bytes of the cave. Only a
+  // capture patch has one, and only while it is installed — an uninstalled
+  // patch has no memory in the game to read from.
+  slotAddress(id: string): string | null {
+    const entry = this.applied.get(id)
+    if (!entry || entry.mode !== 'capture') return null
+    return entry.caveAddress
   }
 
   restore(patch: PatchCheat): boolean {
@@ -253,17 +267,21 @@ export class PatchEngine {
     // dataType, or a fieldOffset that isn't valid hex. BigInt() throws on
     // that rather than failing gracefully, same hazard resolveAddress
     // guards against for moduleOffset. Checked before allocateCave so a bad
-    // patch never leaks an allocated cave.
-    let fieldOffset: number
+    // patch never leaks an allocated cave. A capture patch needs only
+    // baseRegister — it has no fieldOffset/value/dataType to validate, and
+    // must not be rejected for lacking fields it does not use.
+    const mode = patchMode(patch)
+    let fieldOffset = 0
     try {
-      if (
-        typeof patch.baseRegister !== 'string' ||
-        typeof patch.value !== 'number' ||
-        !patch.dataType
-      ) {
-        throw new Error('missing force-mode fields')
+      if (typeof patch.baseRegister !== 'string') {
+        throw new Error('missing base register')
       }
-      fieldOffset = Number(BigInt(patch.fieldOffset as string))
+      if (mode !== 'capture') {
+        if (typeof patch.value !== 'number' || !patch.dataType) {
+          throw new Error('missing force-mode fields')
+        }
+        fieldOffset = Number(BigInt(patch.fieldOffset as string))
+      }
     } catch {
       return {
         ok: false,
@@ -286,11 +304,25 @@ export class PatchEngine {
     // fixed offset; code starts after it in both modes, so the layout is
     // the same whichever mode installed the cave.
     const codeAddress = addHex(cave, 8)
-    const effect = this.ops.encodeStore(
-      patch.baseRegister as string,
-      fieldOffset,
-      valueBits(patch.value, patch.dataType)
-    )
+    // The capture store is RIP-relative, so it must be encoded for the
+    // address it actually executes at. The cave body is
+    // displaced + effect + jumpBack, so the capture instruction does not
+    // execute at codeAddress — it executes after the displaced bytes, at
+    // codeAddress + displaced.length / 2. Encoding it for codeAddress
+    // instead would silently corrupt whatever the wrong RIP-relative target
+    // happens to be.
+    const effect =
+      mode === 'capture'
+        ? this.ops.encodeCapture(
+            patch.baseRegister as string,
+            addHex(codeAddress, displaced.length / 2),
+            cave
+          )
+        : this.ops.encodeStore(
+            patch.baseRegister as string,
+            fieldOffset,
+            valueBits(patch.value as number, patch.dataType as DataType)
+          )
     const returnTo = addHex(address, run.length)
     const jumpBackFrom = addHex(codeAddress, displaced.length / 2 + effect.length / 2)
     const body = displaced + effect + this.ops.encodeJump(jumpBackFrom, returnTo)

@@ -120,6 +120,8 @@ const patchOps: PatchOps = {
     return nativeAddon.decodeRun(attachedHandle, address, minBytes)
   },
   encodeStore: (baseRegister, offset, imm32) => nativeAddon.encodeStore(baseRegister, offset, imm32),
+  encodeCapture: (baseRegister, atAddress, slotAddress) =>
+    nativeAddon.encodeCapture(baseRegister, atAddress, slotAddress),
   encodeJump: (from, to) => nativeAddon.encodeJump(from, to),
   // The native call throws on failure (after resuming whatever it already
   // suspended) rather than returning false — PatchOps promises a plain
@@ -277,4 +279,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (attachedHandle === null) return true // process gone; its code went with it
     return patchEngine.restore(patch)
   })
+
+  ipcMain.handle('patch:slot', (_e, patchId: string) => patchEngine.slotAddress(patchId))
 }
