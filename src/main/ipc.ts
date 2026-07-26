@@ -1,6 +1,15 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { nativeAddon, Candidate } from './nativeAddon'
-import { loadCheats, saveCheat, deleteCheat, CheatDefinition, ChainTarget, StoredCheat, PatchCheat } from './store'
+import {
+  loadCheats,
+  saveCheat,
+  deleteCheat,
+  CheatDefinition,
+  ChainTarget,
+  StoredCheat,
+  PatchCheat,
+  patchMode
+} from './store'
 import { PatchEngine, PatchOps } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
 
@@ -129,6 +138,12 @@ const patchOps: PatchOps = {
 
 const patchEngine = new PatchEngine(patchOps)
 
+// A Linux build loads and runs — scanning and value cheats work through the
+// existing Win32-free paths — but injection has no backend there yet. Say so
+// plainly at the point of use rather than letting a cave allocation return
+// null and surfacing as "no memory available near the instruction".
+const platformSupportsInjection = nativeAddon.platformName().supported
+
 // Called on app quit (from index.ts) so Tamper never leaves a game's code
 // modified after it closes.
 export function restoreAllPatches(): void {
@@ -252,6 +267,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle('patch:apply', (_e, patch: PatchCheat) => {
     if (attachedHandle === null) throw new Error('not attached')
+    if (patchMode(patch) !== 'nop' && !platformSupportsInjection) {
+      return { ok: false, error: 'Code injection is not supported on this platform yet.' }
+    }
     return patchEngine.apply(patch)
   })
 

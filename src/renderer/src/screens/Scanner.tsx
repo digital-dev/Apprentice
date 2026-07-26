@@ -38,6 +38,8 @@ export default function Scanner({
   const [watching, setWatching] = useState(false)
   const [caught, setCaught] = useState<CaughtInstruction[]>([])
   const [captureName, setCaptureName] = useState('')
+  const [patchModeChoice, setPatchModeChoice] = useState<'nop' | 'force'>('nop')
+  const [forceValue, setForceValue] = useState('')
   const [captureError, setCaptureError] = useState<string | null>(null)
   // Saving used to navigate straight back to the cheat list, which unmounted
   // this screen and threw away the scan and the caught instructions with it.
@@ -247,6 +249,7 @@ export default function Scanner({
     setCaptureError(null)
     const patch: PatchCheat = {
       kind: 'patch',
+      mode: patchModeChoice,
       // Prefixed so a patch and a pointer cheat named the same thing never
       // collide on id — saveCheat/deleteCheat key purely off id, so an
       // unprefixed slug shared with createCheatFromInstruction would let one
@@ -257,7 +260,15 @@ export default function Scanner({
       length: insn.length,
       signature: insn.signature,
       moduleName: insn.moduleName,
-      moduleOffset: insn.moduleOffset
+      moduleOffset: insn.moduleOffset,
+      ...(patchModeChoice === 'force'
+        ? {
+            baseRegister: insn.baseRegister,
+            fieldOffset: insn.displacement,
+            value: Number(forceValue),
+            dataType
+          }
+        : {})
     }
     await window.tamper.saveCheat(exeName, patch)
     setSavedNotice(
@@ -363,6 +374,24 @@ export default function Scanner({
             <button onClick={() => startWatch(watchAddress)}>Re-arm</button>
           )}
           <p>{caught.length} instruction(s) caught</p>
+          {caught.length > 0 && (
+            <div>
+              <select
+                value={patchModeChoice}
+                onChange={(e) => setPatchModeChoice(e.target.value as 'nop' | 'force')}
+              >
+                <option value="nop">Disable this write</option>
+                <option value="force">Force a value</option>
+              </select>
+              {patchModeChoice === 'force' && (
+                <input
+                  placeholder={`Value to force (${dataType})`}
+                  value={forceValue}
+                  onChange={(e) => setForceValue(e.target.value)}
+                />
+              )}
+            </div>
+          )}
           <ul>
             {caught.map((insn) => (
               <li key={insn.instructionAddress}>
@@ -395,7 +424,13 @@ export default function Scanner({
                   <span className="muted"> (can't chain this instruction)</span>
                 )}
                 <button
-                  disabled={!captureName || insn.length === 0 || !writesWatchedAddress(insn)}
+                  disabled={
+                    !captureName ||
+                    insn.length === 0 ||
+                    !writesWatchedAddress(insn) ||
+                    (patchModeChoice === 'force' &&
+                      (forceValue.trim() === '' || !insn.baseRegister))
+                  }
                   title="Replace this instruction with no-ops so the write never happens"
                   onClick={() => createPatchFromInstruction(insn)}
                 >
