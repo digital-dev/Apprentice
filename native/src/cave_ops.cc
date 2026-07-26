@@ -42,14 +42,18 @@ bool IsPositionDependent(const ZydisDecodedInstruction& insn,
 // nothing placed after it in a displaced run would ever execute. A cave's
 // whole point is `displaced + effect + jumpBack`, replayed in that order so
 // the game's own instructions run, then the forced effect runs, then
-// control returns; a RET/unconditional-JMP/INT3/UD2/HLT anywhere in that
-// run ends execution right there, silently turning the effect and
-// jump-back into dead code — an installed cheat that reports success and
-// does nothing. Direct (relative) CALL/JMP are not listed here: their
-// relative-immediate operand already makes IsPositionDependent refuse them,
-// and a CALL — direct or indirect — returns control to the very next byte
-// regardless, so only an INDIRECT call (through a register or memory
-// operand, whose target isn't a relative immediate) is refused here.
+// control returns; a RET/unconditional-JMP/INT3/INT1/UD0/UD1/UD2/HLT
+// anywhere in that run ends execution right there, silently turning the
+// effect and jump-back into dead code — an installed cheat that reports
+// success and does nothing. Direct (relative) CALL/JMP are not listed here:
+// their relative-immediate operand already makes IsPositionDependent refuse
+// them. An INDIRECT call IS refused here even though it does return control
+// to the very next byte — the hazard for it is different: that return
+// address now points inside our allocation, which carries no unwind data,
+// so any SEH unwind or stack walk that has to cross this frame (an
+// exception thrown by the callee, a crash reporter, an anti-cheat/profiler
+// walking the stack) fails there; the callee's own behavior is also
+// unverifiable at install time. Fail-closed rather than risk either.
 bool IsFlowTerminating(const ZydisDecodedInstruction& insn,
                        const ZydisDecodedOperand* ops) {
   switch (insn.mnemonic) {
@@ -57,7 +61,10 @@ bool IsFlowTerminating(const ZydisDecodedInstruction& insn,
     case ZYDIS_MNEMONIC_IRET:
     case ZYDIS_MNEMONIC_IRETD:
     case ZYDIS_MNEMONIC_IRETQ:
+    case ZYDIS_MNEMONIC_INT1:
     case ZYDIS_MNEMONIC_INT3:
+    case ZYDIS_MNEMONIC_UD0:
+    case ZYDIS_MNEMONIC_UD1:
     case ZYDIS_MNEMONIC_UD2:
     case ZYDIS_MNEMONIC_HLT:
     case ZYDIS_MNEMONIC_JMP:

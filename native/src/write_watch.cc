@@ -193,6 +193,55 @@ bool ModuleOf(DWORD pid, uintptr_t addr, std::string& nameOut, uintptr_t& offset
 // to exactly rip and (b) has a memory-write operand whose computed
 // effective address equals the watched address we know we're hunting for.
 // That address match is what makes the candidate unambiguous.
+// True if two decoded operands mean the same thing — same kind, same
+// register/memory-parts/immediate value — not merely the same C struct
+// layout. Used to tell a genuine longer instruction apart from a shorter
+// one wearing an inert prefix: a bare `0x40` REX byte is NOT content-free
+// in general (it is exactly what selects `sil`/`dil`/`spl`/`bpl` over
+// `ah`/`ch`/`dh`/`bh` for an 8-bit register operand), so a byte-value
+// heuristic that ignores it can misjudge two genuinely different
+// instructions as "the same, just prefixed" and pick the wrong one.
+// Comparing the actual decoded operands avoids that: `mov [rax], sil` and
+// `mov [rax], dh` have the same memory destination but different operands
+// overall, so they are correctly judged NOT the same instruction.
+bool SameOperand(const ZydisDecodedOperand& a, const ZydisDecodedOperand& b) {
+  if (a.type != b.type || a.size != b.size) return false;
+  switch (a.type) {
+    case ZYDIS_OPERAND_TYPE_REGISTER:
+      return a.reg.value == b.reg.value;
+    case ZYDIS_OPERAND_TYPE_MEMORY:
+      return a.mem.type == b.mem.type && a.mem.segment == b.mem.segment &&
+             a.mem.base == b.mem.base && a.mem.index == b.mem.index &&
+             a.mem.scale == b.mem.scale &&
+             a.mem.disp.has_displacement == b.mem.disp.has_displacement &&
+             (!a.mem.disp.has_displacement || a.mem.disp.value == b.mem.disp.value);
+    case ZYDIS_OPERAND_TYPE_IMMEDIATE:
+      return a.imm.is_signed == b.imm.is_signed && a.imm.is_relative == b.imm.is_relative &&
+             a.imm.value.u == b.imm.value.u;
+    case ZYDIS_OPERAND_TYPE_POINTER:
+      return a.ptr.segment == b.ptr.segment && a.ptr.offset == b.ptr.offset;
+    default:
+      return true; // ZYDIS_OPERAND_TYPE_UNUSED and anything else with no payload to compare
+  }
+}
+
+// True if `longer` is nothing more than `shorter` wearing extra leading
+// prefix bytes that changed nothing about what the instruction does — same
+// mnemonic, same operand count, every operand identical. This is the only
+// condition under which a longer candidate's extra bytes should NOT count
+// toward ranking: they are just decoration.
+bool IsInertPrefixExtensionOf(const ZydisDecodedInstruction& longer,
+                              const ZydisDecodedOperand* longerOps,
+                              const ZydisDecodedInstruction& shorter,
+                              const ZydisDecodedOperand* shorterOps) {
+  if (longer.mnemonic != shorter.mnemonic) return false;
+  if (longer.operand_count != shorter.operand_count) return false;
+  for (int i = 0; i < longer.operand_count; i++) {
+    if (!SameOperand(longerOps[i], shorterOps[i])) return false;
+  }
+  return true;
+}
+
 bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
                            uintptr_t rip, uintptr_t watchedAddress,
                            ZydisDecoder& decoder, uintptr_t& insnAddrOut,
@@ -221,29 +270,32 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
   //
   // The reverse mistake is just as real, though: naively preferring the
   // LONGEST match instead is not safe either. Any byte immediately before
-  // the genuine instruction that happens to be a legal-but-inert prefix for
-  // it — a CS/SS/DS/ES segment override (architecturally ignored for
-  // ordinary memory addressing in 64-bit mode; only FS/GS have any effect)
-  // or a REX byte with every bit clear (0x40, which changes nothing for an
-  // operand that doesn't need REX at all) — makes `[that byte] + genuine`
-  // decode as one instruction, ending at the same rip, with the identical
-  // memory-write operand and therefore the same effective address. Such a
-  // byte is completely ordinary as the tail of whatever instruction
-  // precedes the real one (an 8-bit displacement, an immediate, part of
-  // another opcode), and it would then outrank — and silently replace —
-  // the genuine decode purely because it happens to be one byte longer.
+  // the genuine instruction that happens to be a legal prefix for it — a
+  // CS/SS/DS/ES segment override (architecturally ignored for ordinary
+  // memory addressing in 64-bit mode; only FS/GS have any effect), for
+  // instance — makes `[that byte] + genuine` decode as one instruction,
+  // ending at the same rip, with the identical operands, and it would then
+  // outrank — and silently replace — the genuine decode purely because it
+  // happens to be one byte longer. A byte-value heuristic ("REX 0x40 is
+  // always content-free") is NOT safe here, though: a bare 0x40 REX is
+  // exactly what selects `sil`/`dil`/`spl`/`bpl` over `ah`/`ch`/`dh`/`bh`
+  // for an 8-bit register operand, so `40 88 30` (`mov [rax], sil`) and
+  // `88 30` (`mov [rax], dh`) are genuinely DIFFERENT instructions that
+  // happen to share the same memory destination — treating the REX byte as
+  // always-inert would silently keep the wrong one.
   //
-  // So every candidate in range is tried, and ranking uses each decode's
-  // CORE length — its raw length minus any consumed prefix bytes that
-  // contribute nothing to this specific decode — rather than raw length.
-  // A coincidental SHORTER sub-decode (case one) is, by construction, a
-  // fragment of the real instruction's tail plus whatever follows it, so
-  // its core length is never larger than the genuine instruction's. A
-  // coincidental LONGER over-decode (case two) has a core length equal to
-  // the genuine instruction found nearer to rip, so it ties rather than
-  // wins, and the nearer (already-recorded) genuine decode is kept. This is
-  // not a general proof for every conceivable byte pattern — it resolves
-  // both directions observed and reasoned about here, not more.
+  // So every candidate in range is tried, and a longer candidate only ties
+  // with (rather than outranks) an already-found shorter one when it is
+  // proven to be nothing but that shorter instruction wearing extra leading
+  // bytes: same mnemonic, same operand count, every decoded operand
+  // identical (see IsInertPrefixExtensionOf). A coincidental SHORTER
+  // sub-decode is, by construction, a fragment of the real instruction's
+  // tail plus whatever follows it — a different mnemonic/operands — so it
+  // never ties and the genuine longer decode found later replaces it
+  // normally on raw length. This is not a general proof for every
+  // conceivable byte pattern — it resolves the directions reasoned about
+  // here (coincidental shorter sub-decodes, and longer decodes that are
+  // truly just a prefixed version of a shorter match), not more.
   bool haveMatch = false;
   size_t bestRankLength = 0;
   uintptr_t bestAddr = 0;
@@ -301,24 +353,16 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
       // the results. op.size is the access width in bits.
       uintptr_t accessBytes = op.size ? (uintptr_t)(op.size / 8) : 1;
       if (effective <= watchedAddress && watchedAddress < effective + accessBytes) {
-        // A prefix byte is "inert" for ranking if Zydis itself says this
-        // decode didn't actually use it (ZYDIS_PREFIX_TYPE_IGNORED covers
-        // "not accepted by the instruction" generally), or if it's one of
-        // the segment overrides that 64-bit mode always ignores for memory
-        // addressing regardless of how Zydis classifies it, or if it's a
-        // REX byte encoding no bits at all (0x40 exactly — W=R=X=B=0).
-        size_t inertPrefixBytes = 0;
-        for (ZyanU8 pfx = 0; pfx < tryInsn.raw.prefix_count; pfx++) {
-          const auto& p = tryInsn.raw.prefixes[pfx];
-          bool segOverrideIgnoredIn64Bit =
-              p.value == 0x2e || p.value == 0x36 || p.value == 0x3e || p.value == 0x26;
-          bool contentFreeRex = p.value == 0x40;
-          if (p.type == ZYDIS_PREFIX_TYPE_IGNORED || segOverrideIgnoredIn64Bit ||
-              contentFreeRex) {
-            inertPrefixBytes++;
-          }
+        // A longer candidate only ranks as a tie with the current best (so
+        // it does NOT replace it) when it is proven to be that same
+        // instruction wearing inert leading bytes — same mnemonic, same
+        // operands. Otherwise it ranks on its own raw length, same as any
+        // other candidate.
+        size_t rankLength = (size_t)tryInsn.length;
+        if (haveMatch && (size_t)tryInsn.length > bestRankLength &&
+            IsInertPrefixExtensionOf(tryInsn, tryOps, bestInsn, bestOps)) {
+          rankLength = bestRankLength;
         }
-        size_t rankLength = (size_t)tryInsn.length - inertPrefixBytes;
 
         if (!haveMatch || rankLength > bestRankLength) {
           haveMatch = true;

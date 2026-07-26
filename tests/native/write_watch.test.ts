@@ -294,10 +294,6 @@ describe('write watch — decode-ranking regressions', () => {
   // cave's own allocated page.
   const CODE_PAD = 16
 
-  async function stopWriteWatchSettled(): Promise<any[]> {
-    return (addon as any).stopWriteWatch()
-  }
-
   // DebugActiveProcessStop (inside stopWriteWatch) returns before the OS has
   // necessarily finished tearing down the debugger's injected thread in the
   // target — a suspendThreads soon afterward can catch that thread mid-
@@ -341,7 +337,7 @@ describe('write watch — decode-ranking regressions', () => {
       await sleep(50)
       caught = (addon as any).pollWriteWatch()
     }
-    const insn = (await stopWriteWatchSettled())[0]
+    const insn = (addon as any).stopWriteWatch()[0]
     await send('stopprobe')
     expect(insn.length).toBeGreaterThan(0)
 
@@ -393,7 +389,7 @@ describe('write watch — decode-ranking regressions', () => {
       await sleep(50)
       caught = (addon as any).pollWriteWatch()
     }
-    const insn = (await stopWriteWatchSettled())[0]
+    const insn = (addon as any).stopWriteWatch()[0]
     await send('stopprobe')
     return insn
   }
@@ -425,5 +421,25 @@ describe('write watch — decode-ranking regressions', () => {
 
     expect(insn.length).toBe(4)
     expect(insn.bytes).toBe('f30f1100')
+  }, 15000)
+
+  it('does not treat a bare REX as inert when it changes the OTHER operand', async () => {
+    // ModRM 0x30 = mod00,reg=110,rm=000 — [rax] destination, reg field
+    // selects the SOURCE 8-bit register. Without a REX prefix, reg=110 is
+    // `dh`; WITH one (even a REX encoding no bits at all, 0x40), the 8-bit
+    // register set switches from ah/ch/dh/bh to spl/bpl/sil/dil, so the
+    // SAME reg field instead selects `sil`. `88 30` (`mov [rax], dh`, 2
+    // bytes) and `40 88 30` (`mov [rax], sil`, 3 bytes) are genuinely
+    // DIFFERENT instructions that happen to share the same memory
+    // destination and the same rip — a byte-value rule that calls 0x40
+    // always "content-free" would misjudge them as the same instruction
+    // wearing a prefix and keep the shorter (wrong) one; comparing the
+    // actual decoded operands (see IsInertPrefixExtensionOf) tells them
+    // apart and keeps the genuine, longer `mov [rax], sil`.
+    const watchedAddress = await redirectProbeSiteTo('408830c3')
+    const insn = await captureOnce(watchedAddress)
+
+    expect(insn.length).toBe(3)
+    expect(insn.bytes).toBe('408830')
   }, 15000)
 })

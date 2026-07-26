@@ -146,7 +146,21 @@ bool SuspendAll(ProcessHandle handle, uint32_t pid) {
     do {
       if (te.th32OwnerProcessID != pid) continue;
       HANDLE th = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
-      if (!th) { failed = true; break; }
+      if (!th) {
+        // The snapshot is a point-in-time copy, not a live view — a real
+        // game creates and destroys threads continuously, so a thread ID
+        // it listed can legitimately have exited by the time we get here.
+        // A dead thread ID makes OpenThread fail with
+        // ERROR_INVALID_PARAMETER specifically; that thread simply isn't
+        // there to suspend anymore, which is not a reason to refuse
+        // installing on every OTHER thread that still is. Any other error
+        // (e.g. access denied) is a genuine failure and must still fail
+        // the whole call — the all-or-nothing guarantee only needs to hold
+        // for threads that actually exist.
+        if (GetLastError() == ERROR_INVALID_PARAMETER) continue;
+        failed = true;
+        break;
+      }
       if (SuspendThread(th) == (DWORD)-1) {
         CloseHandle(th);
         failed = true;
