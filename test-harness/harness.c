@@ -31,6 +31,9 @@ typedef struct {
 PlayerComponent g_player = { 0.0f, 55.0f, { 0, 0 }, 77.0f }; // distinct values, avoid colliding with other scan targets
 PlayerComponent* g_player_ptr = &g_player;
 
+float g_force_value = 10.0f; // cave_ops.test.ts forces a constant into this
+static volatile int g_force_running = 0;
+
 static volatile int g_watch_running = 0;
 
 static volatile int g_drain_running = 0;
@@ -119,6 +122,26 @@ static unsigned __stdcall shield_thread(void* arg) {
 }
 #pragma optimize("", on)
 
+// Writes through a runtime pointer argument so the store is
+// `movss [reg+disp], xmm` — the shape a real game object write has, and
+// the shape an injection displaces. A RIP-relative store to a known
+// global would be refused by decodeRun and could never be injected.
+#pragma optimize("", off)
+static void force_write(float* p, float v) {
+  *p = v;
+}
+static unsigned __stdcall force_thread(void* arg) {
+  (void)arg;
+  float v = 0.0f;
+  while (g_force_running) {
+    force_write(&g_force_value, v);
+    v += 1.0f;
+    Sleep(10);
+  }
+  return 0;
+}
+#pragma optimize("", on)
+
 #pragma optimize("", off)
 static unsigned __stdcall drain_thread(void* arg) {
   (void)arg;
@@ -183,6 +206,20 @@ int main(void) {
       printf("OK\n");
     } else if (strncmp(line, "stopdrain", 9) == 0) {
       g_drain_running = 0;
+      printf("OK\n");
+    } else if (sscanf(line, "setforce %f", &fval) == 1) {
+      g_force_value = fval;
+      printf("OK\n");
+    } else if (strncmp(line, "getforce", 8) == 0) {
+      printf("OK %f\n", g_force_value);
+    } else if (strncmp(line, "forceloop", 9) == 0) {
+      if (!g_force_running) {
+        g_force_running = 1;
+        _beginthreadex(NULL, 0, force_thread, NULL, 0, NULL);
+      }
+      printf("OK\n");
+    } else if (strncmp(line, "stopforce", 9) == 0) {
+      g_force_running = 0;
       printf("OK\n");
     } else if (strncmp(line, "get", 3) == 0) {
       printf("OK %d\n", *g_health_ptr);
