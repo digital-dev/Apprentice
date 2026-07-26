@@ -145,9 +145,14 @@ describe('scanAob', () => {
     const original = (addon as any).readBytes(handle, insn.instructionAddress, insn.length)
 
     const matches: string[] = await (addon as any).scanAob(handle, insn.signature)
-    // The signature may legitimately match more than once (short
-    // instruction encodings recur), but it must find the real one.
+    // Uniqueness is the whole contract, not a nicety: PatchEngine refuses to
+    // patch anything that doesn't resolve to exactly one address, so a
+    // signature matching twice is as useless as one matching zero times.
+    // This assertion used to be a bare toContain, which passed happily while
+    // the generator emitted 2-byte signatures matching 992 places — the bug
+    // only surfaced against a real game.
     expect(matches).toContain(insn.instructionAddress)
+    expect(matches).toHaveLength(1)
 
     // Patching at the SCANNED address (not the captured one) must have the
     // same effect — this is the path a patch takes after a game restart.

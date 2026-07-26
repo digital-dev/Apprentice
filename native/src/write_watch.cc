@@ -286,24 +286,68 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
     break;
   }
 
-  // Build an AOB signature: literal bytes, but wildcard the RIP-relative
-  // displacement (the bytes that shift when the module loads at a
-  // different base), so the pattern still matches after a restart. Zydis
-  // reports the displacement's offset+size within the instruction.
+  // Build an AOB signature spanning the caught instruction AND the
+  // instructions that follow it, wildcarding each one's RIP-relative
+  // displacement (the bytes that shift when code loads at a different
+  // base) so the pattern survives a restart.
+  //
+  // The window is the whole point. A single store is 2-8 bytes — the
+  // harness's own drain instruction is `mov [rcx], eax`, just `89 01` —
+  // and a 2-byte pattern matched 992 places in the harness binary alone,
+  // 575 in a real game. Since the engine refuses to patch anything it
+  // can't pin to exactly one address, a bare-instruction signature made
+  // every JIT-code patch permanently unrelocatable. Decoding forward until
+  // there are enough bytes buys uniqueness; going forward rather than
+  // backward keeps the caught instruction at offset 0, so a match address
+  // IS the instruction address and nothing downstream has to adjust.
   {
+    constexpr size_t kMinSigBytes = 24; // enough to be unique in practice
+    constexpr size_t kWindowBytes = 64; // decode room beyond the minimum
+
+    uint8_t win[kWindowBytes] = {0};
+    SIZE_T winGot = 0;
+    ReadProcessMemory(proc, (LPCVOID)insnAddr, win, sizeof(win), &winGot);
+
     out.signature.clear();
     char hb[4];
-    size_t dispStart = insn.raw.disp.offset;
-    size_t dispSize = insn.raw.disp.size / 8; // bits -> bytes
-    bool ripRel = (out.baseRegister == "rip");
-    for (size_t i = 0; i < out.bytes.size() && i < out.length; i++) {
-      if (i) out.signature += " ";
-      if (ripRel && dispSize && i >= dispStart && i < dispStart + dispSize) {
-        out.signature += "??";
-      } else {
-        snprintf(hb, sizeof(hb), "%02x", out.bytes[i]);
-        out.signature += hb;
+    size_t offset = 0;
+
+    while (offset < winGot) {
+      ZydisDecodedInstruction cur;
+      ZydisDecodedOperand curOps[ZYDIS_MAX_OPERAND_COUNT];
+      bool decoded = ZYAN_SUCCESS(ZydisDecoderDecodeFull(
+          &decoder, win + offset, winGot - offset, &cur, curOps));
+
+      // Undecodable bytes end the signature rather than being guessed at:
+      // a wrong length here would silently shift every later wildcard.
+      if (!decoded) break;
+
+      size_t dispStart = cur.raw.disp.offset;
+      size_t dispSize = cur.raw.disp.size / 8; // bits -> bytes
+      // Only RIP-relative displacements move with the load address;
+      // a [reg+disp] field offset is stable and must stay literal, or the
+      // signature loses the very bytes that make it distinctive.
+      bool ripRel = false;
+      for (int i = 0; i < cur.operand_count; i++) {
+        if (curOps[i].type == ZYDIS_OPERAND_TYPE_MEMORY &&
+            curOps[i].mem.base == ZYDIS_REGISTER_RIP) {
+          ripRel = true;
+          break;
+        }
       }
+
+      for (size_t i = 0; i < cur.length && offset + i < winGot; i++) {
+        if (!out.signature.empty()) out.signature += " ";
+        if (ripRel && dispSize && i >= dispStart && i < dispStart + dispSize) {
+          out.signature += "??";
+        } else {
+          snprintf(hb, sizeof(hb), "%02x", win[offset + i]);
+          out.signature += hb;
+        }
+      }
+
+      offset += cur.length;
+      if (offset >= kMinSigBytes) break;
     }
   }
 
