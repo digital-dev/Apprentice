@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <process.h>
+#include <xmmintrin.h>
 
 int g_health = 100;
 int* g_health_ptr = &g_health; // pointer.test.ts resolves through this
@@ -13,18 +14,28 @@ volatile int g_drain_count = 1000000; // patch_ops.test.ts drains and NOPs this
 // offset inside a struct, and only the struct's base address is pointed
 // to. pointer.test.ts uses this to verify the field-offset-tolerant chain
 // search, since exact-value pointer matching would never find this case.
+// `shieldPad`/`shield` occupy the same 16 bytes the original `padding[4]`
+// did (offsets 0-15); `stamina` is unchanged at offset 16, so pointer.test.ts's
+// offset-16 assumption and every other consumer of this layout still holds.
+// `shield` sits at offset 4 — inside the 16-byte block a wide SSE store
+// below writes, but not at that store's start — so a watch on it exercises
+// the covering-write match (effectiveAddress < watched) rather than the
+// exact-match case stamina already covers.
 typedef struct {
-  int padding[4]; // pushes stamina to a nonzero byte offset
-  float stamina;
+  float shieldPad;  // offset 0 - unused, just fills the rest of the wide store
+  float shield;     // offset 4 - watched by write_watch.test.ts's covering-write case
+  int padding[2];   // offset 8..15 - unused, keeps the struct's size/layout unchanged
+  float stamina;    // offset 16
 } PlayerComponent;
 
-PlayerComponent g_player = { { 0, 0, 0, 0 }, 77.0f }; // distinct value, avoids colliding with g_stamina's scan target
+PlayerComponent g_player = { 0.0f, 55.0f, { 0, 0 }, 77.0f }; // distinct values, avoid colliding with other scan targets
 PlayerComponent* g_player_ptr = &g_player;
 
 static volatile int g_watch_running = 0;
 
 static volatile int g_drain_running = 0;
 static volatile int g_wide_running = 0;
+static volatile int g_shield_running = 0;
 
 // The instruction under test for code patching. Non-inlined and taking the
 // counter as a runtime pointer argument, so the compiler emits a real
@@ -71,8 +82,36 @@ static unsigned __stdcall wide_thread(void* arg) {
   (void)arg;
   float f = 0.0f;
   while (g_wide_running) {
-    PlayerComponent v = { { 1, 2, 3, 4 }, f };
+    PlayerComponent v = { 1.0f, 2.0f, { 3, 4 }, f };
     wide_write(g_player_ptr, v);
+    f += 1.0f;
+    Sleep(10);
+  }
+  return 0;
+}
+#pragma optimize("", on)
+
+// Writes all 4 leading floats of PlayerComponent (shieldPad, shield, and the
+// two padding ints reinterpreted as float bit patterns) in a single 16-byte
+// SSE store: `movups [reg], xmm`. Unlike wide_write's struct-copy block move,
+// this is a single non-string instruction with a static effective address
+// (the struct base) — the shape the covering-write relaxation in
+// FindWriteInstruction was actually written for: `shield` at offset 4 falls
+// inside the store's [base, base+16) range without being at its start, so
+// this covers-but-doesn't-start-at-the-watched-address, and (unlike
+// wide_write) the instruction's own destination register never advances, so
+// it stays attributable at the trap.
+#pragma optimize("", off)
+static void shield_write(PlayerComponent* p, float a, float b, float c, float d) {
+  float vals[4] = { a, b, c, d };
+  __m128 v = _mm_loadu_ps(vals);
+  _mm_storeu_ps((float*)p, v);
+}
+static unsigned __stdcall shield_thread(void* arg) {
+  (void)arg;
+  float f = 0.0f;
+  while (g_shield_running) {
+    shield_write(g_player_ptr, 0.0f, f, 0.0f, 0.0f);
     f += 1.0f;
     Sleep(10);
   }
@@ -110,6 +149,9 @@ int main(void) {
     } else if (sscanf(line, "setp %f", &fval) == 1) {
       g_player_ptr->stamina = fval; // lets pointer.test.ts narrow to this exact field
       printf("OK\n");
+    } else if (sscanf(line, "setshield %f", &fval) == 1) {
+      g_player_ptr->shield = fval; // lets write_watch.test.ts narrow the scan to this exact field
+      printf("OK\n");
     } else if (sscanf(line, "setcount %d", &val) == 1) {
       g_drain_count = val; // lets the test narrow the scan to this exact global
       printf("OK\n");
@@ -129,6 +171,15 @@ int main(void) {
       printf("OK\n");
     } else if (strncmp(line, "stopwide", 8) == 0) {
       g_wide_running = 0;
+      printf("OK\n");
+    } else if (strncmp(line, "shieldloop", 10) == 0) {
+      if (!g_shield_running) {
+        g_shield_running = 1;
+        _beginthreadex(NULL, 0, shield_thread, NULL, 0, NULL);
+      }
+      printf("OK\n");
+    } else if (strncmp(line, "stopshield", 10) == 0) {
+      g_shield_running = 0;
       printf("OK\n");
     } else if (strncmp(line, "stopdrain", 9) == 0) {
       g_drain_running = 0;
