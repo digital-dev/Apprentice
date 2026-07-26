@@ -211,3 +211,71 @@ describe('suspendThreads / resumeThreads', () => {
     await send('stopforce')
   }, 15000)
 })
+
+describe('force injection — end to end', () => {
+  it('pins the value to a constant and releases it on restore', async () => {
+    // Catch the instruction that writes the forced field, exactly as the
+    // app does — this is the same provenance a real cheat has.
+    ;(addon as any).startWriteWatch(harness.pid, forceAddress)
+    await send('forceloop')
+    let caught: any[] = []
+    for (let i = 0; i < 40 && caught.length === 0; i++) {
+      await sleep(50)
+      caught = (addon as any).pollWriteWatch()
+    }
+    const insn = (addon as any).stopWriteWatch()[0]
+    expect(insn.length).toBeGreaterThan(0)
+    expect(insn.baseRegister.length).toBeGreaterThan(0)
+
+    const site = insn.instructionAddress
+    const run = (addon as any).decodeRun(handle, site, 5)
+    expect(run.decodable).toBe(true)
+    expect(run.relocatable).toBe(true)
+
+    const displaced = (addon as any).readBytes(handle, site, run.length)
+    const cave = (addon as any).allocateCave(handle, site)
+    expect(cave).not.toBeNull()
+
+    // 777.0f as raw bits — the same conversion valueBits does in the engine.
+    const bits = new DataView(new ArrayBuffer(4))
+    bits.setFloat32(0, 777, true)
+    const imm = bits.getUint32(0, true)
+
+    const codeAddress = '0x' + (BigInt(cave) + 8n).toString(16)
+    const effect = (addon as any).encodeStore(
+      insn.baseRegister,
+      Number(BigInt(insn.displacement)),
+      imm
+    )
+    const returnTo = '0x' + (BigInt(site) + BigInt(run.length)).toString(16)
+    const jumpBackFrom =
+      '0x' + (BigInt(codeAddress) + BigInt(displaced.length / 2 + effect.length / 2)).toString(16)
+    const body = displaced + effect + (addon as any).encodeJump(jumpBackFrom, returnTo)
+    expect((addon as any).writeBytes(handle, codeAddress, body)).toBe(true)
+
+    const jump = (addon as any).encodeJump(site, codeAddress)
+    const padded = jump + '90'.repeat(run.length - 5)
+    ;(addon as any).suspendThreads(handle, harness.pid)
+    expect((addon as any).writeBytes(handle, site, padded)).toBe(true)
+    ;(addon as any).resumeThreads()
+
+    // The harness keeps writing an increasing value; the injection must win
+    // every time, so every sample reads exactly 777.
+    await sleep(200)
+    for (let i = 0; i < 3; i++) {
+      const reply = await send('getforce')
+      expect(parseFloat(reply.split(' ')[1])).toBeCloseTo(777, 3)
+      await sleep(100)
+    }
+
+    // Restore: the field must start moving again.
+    ;(addon as any).suspendThreads(handle, harness.pid)
+    expect((addon as any).writeBytes(handle, site, displaced)).toBe(true)
+    ;(addon as any).resumeThreads()
+    await sleep(300)
+    const after = parseFloat((await send('getforce')).split(' ')[1])
+    expect(after).not.toBeCloseTo(777, 3)
+
+    await send('stopforce')
+  }, 30000)
+})

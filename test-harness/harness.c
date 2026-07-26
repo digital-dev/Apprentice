@@ -126,9 +126,25 @@ static unsigned __stdcall shield_thread(void* arg) {
 // `movss [reg+disp], xmm` — the shape a real game object write has, and
 // the shape an injection displaces. A RIP-relative store to a known
 // global would be refused by decodeRun and could never be injected.
+//
+// `sink` exists purely to give the displaceable run somewhere safe to
+// extend into. A bare `*p = v;` compiles (under /Od) to a 4-byte
+// `movss [reg], xmm` sitting immediately against this function's `ret`,
+// with zero trailing slack. A 5-byte `jmp rel32` redirect needs 5 whole
+// bytes at the site, so with nothing else there `decodeRun` has no choice
+// but to fold the `ret` itself into the displaced run — and a `ret` inside
+// a run ends the function the instant the cave replays it, before the
+// injected effect or jump-back ever runs. `sink` is a different stack
+// address than `*p`, so writing it never re-triggers the watched-address
+// breakpoint and never re-clobbers the forced value; it only gives the run
+// a second whole, harmless, position-independent instruction to extend
+// into instead of the `ret` — matching how real target functions almost
+// always have more code after the interesting write.
 #pragma optimize("", off)
 static void force_write(float* p, float v) {
   *p = v;
+  volatile float sink = v;
+  (void)sink;
 }
 static unsigned __stdcall force_thread(void* arg) {
   (void)arg;

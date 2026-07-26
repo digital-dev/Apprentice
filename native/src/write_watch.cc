@@ -207,6 +207,27 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
     return false;
   }
 
+  // Candidate start addresses are tried nearest-to-rip first, but a nearer
+  // candidate is not necessarily the real instruction: the tail bytes of a
+  // genuine, longer store can coincidentally also decode as a short, valid
+  // instruction landing on the same rip (observed in practice — a 4-byte
+  // `movss [rax], xmm0` whose last two bytes `11 00` also parse standalone
+  // as a 2-byte `adc [rax], eax`, which happens to share the same write-to-
+  // rax operand and so passes the effective-address check too). Returning
+  // on the first match would silently prefer that shorter, coincidental
+  // decode — which then includes the bytes AFTER the real store (here, the
+  // function's own `ret`) in what gets displaced into a cave, corrupting
+  // the target the moment the site is patched. So every candidate in range
+  // is tried, and the LONGEST matching one wins: a coincidental sub-decode
+  // is, by construction, a fragment of the real instruction's tail plus
+  // whatever follows it, so it is never longer than the genuine instruction
+  // it overlaps.
+  bool haveMatch = false;
+  uintptr_t bestAddr = 0;
+  ZydisDecodedInstruction bestInsn{};
+  ZydisDecodedOperand bestOps[ZYDIS_MAX_OPERAND_COUNT];
+  uint8_t bestBytes[kMaxLen] = {0};
+
   for (int64_t candI = (int64_t)rip - 1; candI >= (int64_t)winStart; candI--) {
     uintptr_t cand = (uintptr_t)candI;
     size_t offset = (size_t)(cand - winStart);
@@ -257,13 +278,24 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
       // the results. op.size is the access width in bits.
       uintptr_t accessBytes = op.size ? (uintptr_t)(op.size / 8) : 1;
       if (effective <= watchedAddress && watchedAddress < effective + accessBytes) {
-        insnAddrOut = cand;
-        insnOut = tryInsn;
-        memcpy(opsOut, tryOps, sizeof(ZydisDecodedOperand) * ZYDIS_MAX_OPERAND_COUNT);
-        memcpy(bytesOut, window + offset, tryInsn.length);
-        return true;
+        if (!haveMatch || tryInsn.length > bestInsn.length) {
+          haveMatch = true;
+          bestAddr = cand;
+          bestInsn = tryInsn;
+          memcpy(bestOps, tryOps, sizeof(ZydisDecodedOperand) * ZYDIS_MAX_OPERAND_COUNT);
+          memcpy(bestBytes, window + offset, tryInsn.length);
+        }
+        break; // this candidate start matched; move to the next start address
       }
     }
+  }
+
+  if (haveMatch) {
+    insnAddrOut = bestAddr;
+    insnOut = bestInsn;
+    memcpy(opsOut, bestOps, sizeof(ZydisDecodedOperand) * ZYDIS_MAX_OPERAND_COUNT);
+    memcpy(bytesOut, bestBytes, bestInsn.length);
+    return true;
   }
   return false;
 }
