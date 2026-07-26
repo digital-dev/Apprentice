@@ -220,6 +220,52 @@ Napi::Value EncodeStore(const Napi::CallbackInfo& info) {
   return Napi::String::New(env, BytesToHex(buf, (size_t)len));
 }
 
+// `mov [rip+disp], reg` — the displacement is relative to the END of the
+// instruction, whose length depends on the displacement's own encoding, so
+// encode once with a placeholder to learn the length, then again with the
+// real value. Assembling for a known cave address is what makes a
+// RIP-relative instruction safe here: unlike a displaced one, it is built
+// for exactly where it will execute and never moves afterwards.
+Napi::Value EncodeCapture(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string regName = info[0].As<Napi::String>().Utf8Value();
+  uintptr_t at = ParseHex(info[1].As<Napi::String>().Utf8Value());
+  uintptr_t slot = ParseHex(info[2].As<Napi::String>().Utf8Value());
+
+  ZydisRegister reg = RegisterByName(regName);
+  if (reg == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown base register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
+  ZyanUSize len = 0;
+  int64_t disp = 0;
+
+  for (int pass = 0; pass < 2; pass++) {
+    ZydisEncoderRequest req;
+    memset(&req, 0, sizeof(req));
+    req.mnemonic = ZYDIS_MNEMONIC_MOV;
+    req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+    req.operand_count = 2;
+    req.operands[0].type = ZYDIS_OPERAND_TYPE_MEMORY;
+    req.operands[0].mem.base = ZYDIS_REGISTER_RIP;
+    req.operands[0].mem.displacement = disp;
+    req.operands[0].mem.size = 8;
+    req.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
+    req.operands[1].reg.value = reg;
+
+    len = sizeof(buf);
+    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
+      Napi::Error::New(env, "failed to encode capture").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    disp = (int64_t)slot - (int64_t)(at + len);
+  }
+
+  return Napi::String::New(env, BytesToHex(buf, (size_t)len));
+}
+
 // Thin N-API wrapper over platform::SuspendAll/ResumeAll (Task 2). No OS
 // calls of their own: everything goes through platform::.
 Napi::Value SuspendThreads(const Napi::CallbackInfo& info) {

@@ -202,6 +202,27 @@ describe('encodeStore', () => {
   })
 })
 
+describe('encodeCapture', () => {
+  it('writes the register into the slot when executed', async () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave: string = (addon as any).allocateCave(handle, near)
+    const slot = cave
+    const code = '0x' + (BigInt(cave) + 8n).toString(16)
+    const hex: string = (addon as any).encodeCapture('rcx', code, slot)
+
+    // It must decode as one instruction of exactly the length produced —
+    // proof the RIP displacement was folded into a real encoding.
+    ;(addon as any).writeBytes(handle, code, hex)
+    const run = (addon as any).decodeRun(handle, code, 1)
+    expect(run.decodable).toBe(true)
+    expect(run.length).toBe(hex.length / 2)
+  })
+
+  it('rejects an unknown register', () => {
+    expect(() => (addon as any).encodeCapture('nope', '0x1000', '0x2000')).toThrow()
+  })
+})
+
 describe('suspendThreads / resumeThreads', () => {
   it('freezes the target and lets it run again', async () => {
     await send('forceloop')
