@@ -50,9 +50,11 @@ class FakeOps implements PatchOps {
   nextCave = 0x50000000
   suspended = 0
   resumed = 0
+  suspendShouldFail = false
   runLength = 5
   runDecodable = true
   runRelocatable = true
+  encodeJumpCalls: { from: string; to: string }[] = []
 
   allocateCave(): string | null {
     const address = '0x' + (this.nextCave += 0x1000).toString(16)
@@ -69,12 +71,13 @@ class FakeOps implements PatchOps {
   encodeStore(): string {
     return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f
   }
-  encodeJump(): string {
+  encodeJump(from: string, to: string): string {
+    this.encodeJumpCalls.push({ from, to })
     return 'e900000000'
   }
   suspendThreads(): boolean {
     this.suspended++
-    return true
+    return !this.suspendShouldFail
   }
   resumeThreads(): void {
     this.resumed++
@@ -98,7 +101,7 @@ const forcePatch: PatchCheat = {
 }
 
 describe('PatchEngine — force injection', () => {
-  it('writes a jump at the site and leaves the cave holding the original bytes', async () => {
+  it('writes a jump at the site and leaves the cave holding the original bytes in the right order', async () => {
     const result = await engine.apply(forcePatch)
     expect(result.ok).toBe(true)
 
@@ -107,12 +110,62 @@ describe('PatchEngine — force injection', () => {
     expect(site.startsWith('e9')).toBe(true)
     expect(site.length / 2).toBe(5)
 
-    // The cave carries the displaced original so the game's own write still
-    // happens before ours. The first 8 bytes of the cave are reserved as
-    // the capture-mode slot, so the body starts after that offset.
+    // The cave carries the displaced original, then the effect, then the
+    // jump back — in that order, not merely containing the original
+    // somewhere. The first 8 bytes of the cave are reserved as the
+    // capture-mode slot, so the body starts after that offset.
     const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const effect = 'c787180800000000af43' // FakeOps.encodeStore's fixed output
+    const backJump = 'e900000000' // FakeOps.encodeJump's fixed output
     const cave = ops.memory.get(codeAddress) as string
-    expect(cave.includes(ORIGINAL)).toBe(true)
+    expect(cave).toBe(ORIGINAL + effect + backJump)
+
+    // The byte arithmetic the brief calls out as the hazard: the back-jump
+    // must start exactly after the displaced bytes and the effect, and must
+    // return to exactly the end of the displaced run at the site — not to
+    // the site's start, and not short by the effect's length.
+    const jumpBackFrom =
+      '0x' + (BigInt(codeAddress) + BigInt(ORIGINAL.length / 2 + effect.length / 2)).toString(16)
+    const returnTo = '0x' + (BigInt('0x400100') + 5n).toString(16)
+    expect(ops.encodeJumpCalls).toEqual([
+      { from: jumpBackFrom, to: returnTo }, // the back-jump written into the cave
+      { from: '0x400100', to: codeAddress } // the site's redirect into the cave
+    ])
+  })
+
+  it('pads the site with NOPs when the displaced run is longer than the jump', async () => {
+    ops.runLength = 8
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(true)
+    const site = ops.memory.get('0x400100') as string
+    expect(site).toBe('e900000000' + '909090')
+  })
+
+  it('refuses, before allocating a cave, when the patch is missing a required force-mode field', async () => {
+    const incomplete = { ...forcePatch, id: 'patch-incomplete', fieldOffset: undefined } as PatchCheat
+    const result = await engine.apply(incomplete)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it("refuses, before allocating a cave, when the patch's fieldOffset isn't valid hex", async () => {
+    const junk = { ...forcePatch, id: 'patch-junk', fieldOffset: 'not-hex' }
+    const result = await engine.apply(junk)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses the site write, without leaving threads suspended, when suspension fails', async () => {
+    ops.suspendShouldFail = true
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    // The cave write still went through (it needs no suspension); only the
+    // site redirect is refused.
+    expect(ops.writes).toHaveLength(1)
+    expect(ops.resumed).toBe(1)
+    expect(engine.isApplied('patch-stamina')).toBe(false)
   })
 
   it('suspends threads around the site write and resumes them', async () => {
@@ -167,6 +220,16 @@ describe('PatchEngine — force injection', () => {
     // Caves are never freed: a thread suspended inside one must still have
     // valid code to return through.
     expect(ops.caves).toHaveLength(1)
+  })
+
+  it('restore still writes the original bytes back even when suspension fails', async () => {
+    // Unlike install, restore does not refuse on a failed suspend: writing
+    // the original bytes back live is the lesser evil next to leaving the
+    // game permanently patched.
+    await engine.apply(forcePatch)
+    ops.suspendShouldFail = true
+    expect(engine.restore(forcePatch)).toBe(true)
+    expect(ops.memory.get('0x400100')).toBe(ORIGINAL)
   })
 
   it('still NOPs when the patch has no mode', async () => {

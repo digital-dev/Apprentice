@@ -163,7 +163,7 @@ export class PatchEngine {
         mode === 'nop'
           ? this.installNop(patch, status.address)
           : this.installInjection(patch, status.address)
-      if (!installed.ok) return installed
+      if (!installed.ok) return { ok: false, error: installed.error }
       caveAddress = installed.caveAddress
     }
     // 'applied' falls through: the NOPs are already there (e.g. we
@@ -182,6 +182,10 @@ export class PatchEngine {
   restore(patch: PatchCheat): boolean {
     const entry = this.applied.get(patch.id)
     if (!entry) return true
+    // Unlike install, a failed suspend does not make restore refuse: writing
+    // the original bytes back on a live thread is the lesser evil — a game
+    // left permanently patched because we wouldn't risk the restore is
+    // exactly the failure mode this whole sub-project exists to avoid.
     this.ops.suspendThreads()
     let ok: boolean
     try {
@@ -197,7 +201,8 @@ export class PatchEngine {
   // here is ignored — it means the process is already gone, and its code
   // went with it. The set is cleared either way so a later attach starts
   // from a clean slate. Suspended once around the whole loop rather than
-  // per patch.
+  // per patch. As in restore(), a failed suspend does not stop the loop —
+  // restoring live is still better than leaving the game patched forever.
   restoreAll(): void {
     this.ops.suspendThreads()
     try {
@@ -243,6 +248,31 @@ export class PatchEngine {
       return { ok: false, error: 'That memory became unreadable.', caveAddress: null }
     }
 
+    // PatchCheat isn't runtime-validated — a hand-edited games/*.json can
+    // carry a force-mode patch missing baseRegister/fieldOffset/value/
+    // dataType, or a fieldOffset that isn't valid hex. BigInt() throws on
+    // that rather than failing gracefully, same hazard resolveAddress
+    // guards against for moduleOffset. Checked before allocateCave so a bad
+    // patch never leaks an allocated cave.
+    let fieldOffset: number
+    try {
+      if (
+        typeof patch.baseRegister !== 'string' ||
+        typeof patch.value !== 'number' ||
+        !patch.dataType
+      ) {
+        throw new Error('missing force-mode fields')
+      }
+      fieldOffset = Number(BigInt(patch.fieldOffset as string))
+    } catch {
+      return {
+        ok: false,
+        error:
+          "This patch is missing the register, offset, value, or data type a force injection needs, or its offset isn't valid hex — can't compute what to write.",
+        caveAddress: null
+      }
+    }
+
     const cave = this.ops.allocateCave(address)
     if (cave === null) {
       return {
@@ -258,8 +288,8 @@ export class PatchEngine {
     const codeAddress = addHex(cave, 8)
     const effect = this.ops.encodeStore(
       patch.baseRegister as string,
-      Number(BigInt(patch.fieldOffset as string)),
-      valueBits(patch.value as number, patch.dataType as DataType)
+      fieldOffset,
+      valueBits(patch.value, patch.dataType)
     )
     const returnTo = addHex(address, run.length)
     const jumpBackFrom = addHex(codeAddress, displaced.length / 2 + effect.length / 2)
@@ -272,8 +302,19 @@ export class PatchEngine {
     const jump = this.ops.encodeJump(address, codeAddress)
     const padded = jump + nopHex(run.length - JUMP_LENGTH)
 
-    this.ops.suspendThreads()
+    // Suspension must actually hold before rewriting live code — a failed
+    // suspend still runs resumeThreads() (harmless: the platform layer
+    // clears an empty list) so the path stays uniform, but the write itself
+    // is refused rather than proceeding against running threads.
+    const suspended = this.ops.suspendThreads()
     try {
+      if (!suspended) {
+        return {
+          ok: false,
+          error: "Couldn't pause the game safely enough to redirect the instruction — not writing to running code.",
+          caveAddress: null
+        }
+      }
       if (!this.ops.writeBytes(address, padded)) {
         return { ok: false, error: 'Failed to redirect the instruction.', caveAddress: null }
       }
