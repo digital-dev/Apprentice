@@ -252,10 +252,10 @@ export class PatchEngine {
       }
     }
 
-    // The injected code starts at the cave's own address; there is no
-    // reserved header in force mode (capture mode, not built yet, will
-    // define its own layout when it lands).
-    const codeAddress = cave
+    // The slot occupies the first 8 bytes so capture mode can find it at a
+    // fixed offset; code starts after it in both modes, so the layout is
+    // the same whichever mode installed the cave.
+    const codeAddress = addHex(cave, 8)
     const effect = this.ops.encodeStore(
       patch.baseRegister as string,
       Number(BigInt(patch.fieldOffset as string)),

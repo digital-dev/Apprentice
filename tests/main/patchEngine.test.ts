@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { PatchEngine, PatchOps, nopHex, relocationError } from '../../src/main/patchEngine'
+import { PatchEngine, PatchOps, nopHex, relocationError, valueBits } from '../../src/main/patchEngine'
 import type { PatchCheat } from '../../src/main/store'
 
 const ORIGINAL = 'f30f114110' // 5 bytes
@@ -108,8 +108,10 @@ describe('PatchEngine — force injection', () => {
     expect(site.length / 2).toBe(5)
 
     // The cave carries the displaced original so the game's own write still
-    // happens before ours.
-    const cave = ops.memory.get(ops.caves[0]) as string
+    // happens before ours. The first 8 bytes of the cave are reserved as
+    // the capture-mode slot, so the body starts after that offset.
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const cave = ops.memory.get(codeAddress) as string
     expect(cave.includes(ORIGINAL)).toBe(true)
   })
 
@@ -281,6 +283,18 @@ describe('PatchEngine.locate', () => {
       applicable: false,
       matchCount: null
     })
+  })
+})
+
+describe('valueBits', () => {
+  it('converts a float through its IEEE-754 bit pattern', () => {
+    // 350.0 as a little-endian IEEE-754 single is 0x43af0000 — writing the
+    // integer 350 instead would land as a denormal fraction in the game.
+    expect(valueBits(350, 'float')).toBe(0x43af0000)
+  })
+
+  it('passes an int32 value through unchanged rather than reinterpreting it', () => {
+    expect(valueBits(42, 'int32')).toBe(42)
   })
 })
 
