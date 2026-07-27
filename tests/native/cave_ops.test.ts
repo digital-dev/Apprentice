@@ -351,3 +351,59 @@ describe('force injection — end to end', () => {
     await send('stopforce')
   }, 30000)
 })
+
+describe('capture injection — end to end', () => {
+  it('records the object pointer where a value cheat can read it', async () => {
+    ;(addon as any).startWriteWatch(harness.pid, forceAddress)
+    await send('forceloop')
+    let caught: any[] = []
+    for (let i = 0; i < 40 && caught.length === 0; i++) {
+      await sleep(50)
+      caught = (addon as any).pollWriteWatch()
+    }
+    const insn = (addon as any).stopWriteWatch()[0]
+    const site = insn.instructionAddress
+    const run = (addon as any).decodeRun(handle, site, 5)
+    const displaced = (addon as any).readBytes(handle, site, run.length)
+    const cave: string = (addon as any).allocateCave(handle, site)
+
+    const codeAddress = '0x' + (BigInt(cave) + 8n).toString(16)
+    const captureAt = '0x' + (BigInt(codeAddress) + BigInt(displaced.length / 2)).toString(16)
+    const effect = (addon as any).encodeCapture(insn.baseRegister, captureAt, cave)
+    const returnTo = '0x' + (BigInt(site) + BigInt(run.length)).toString(16)
+    const jumpBackFrom =
+      '0x' + (BigInt(captureAt) + BigInt(effect.length / 2)).toString(16)
+    const body = displaced + effect + (addon as any).encodeJump(jumpBackFrom, returnTo)
+    ;(addon as any).writeBytes(handle, codeAddress, body)
+
+    const padded =
+      (addon as any).encodeJump(site, codeAddress) + '90'.repeat(run.length - 5)
+    ;(addon as any).suspendThreads(handle, harness.pid)
+    try {
+      ;(addon as any).writeBytes(handle, site, padded)
+    } finally {
+      (addon as any).resumeThreads()
+    }
+
+    try {
+      await sleep(300)
+      const slotHex: string = (addon as any).readBytes(handle, cave, 8)
+      // Little-endian: reverse the byte pairs to read the pointer.
+      const pointer = BigInt(
+        '0x' + (slotHex.match(/../g) as string[]).reverse().join('')
+      )
+      expect(pointer).not.toBe(0n)
+
+      // The captured pointer must actually address the field the harness writes.
+      expect('0x' + pointer.toString(16)).toBe(forceAddress)
+    } finally {
+      ;(addon as any).suspendThreads(handle, harness.pid)
+      try {
+        ;(addon as any).writeBytes(handle, site, displaced)
+      } finally {
+        (addon as any).resumeThreads()
+      }
+      await send('stopforce')
+    }
+  }, 30000)
+})

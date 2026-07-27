@@ -38,7 +38,7 @@ export default function Scanner({
   const [watching, setWatching] = useState(false)
   const [caught, setCaught] = useState<CaughtInstruction[]>([])
   const [captureName, setCaptureName] = useState('')
-  const [patchModeChoice, setPatchModeChoice] = useState<'nop' | 'force'>('nop')
+  const [patchModeChoice, setPatchModeChoice] = useState<'nop' | 'force' | 'capture'>('nop')
   const [forceValue, setForceValue] = useState('')
   const [captureError, setCaptureError] = useState<string | null>(null)
   // Saving used to navigate straight back to the cheat list, which unmounted
@@ -269,7 +269,8 @@ export default function Scanner({
             value: Number(forceValue),
             dataType
           }
-        : {})
+        : {}),
+      ...(patchModeChoice === 'capture' ? { baseRegister: insn.baseRegister } : {})
     }
     await window.tamper.saveCheat(exeName, patch)
     setSavedNotice(
@@ -379,10 +380,13 @@ export default function Scanner({
             <div>
               <select
                 value={patchModeChoice}
-                onChange={(e) => setPatchModeChoice(e.target.value as 'nop' | 'force')}
+                onChange={(e) =>
+                  setPatchModeChoice(e.target.value as 'nop' | 'force' | 'capture')
+                }
               >
                 <option value="nop">Disable this write</option>
                 <option value="force">Force a value</option>
+                <option value="capture">Capture this object (for a persistent value cheat)</option>
               </select>
               {patchModeChoice === 'force' && (
                 <input
@@ -432,12 +436,15 @@ export default function Scanner({
                     (patchModeChoice === 'force' &&
                       (forceValue.trim() === '' ||
                         !Number.isFinite(Number(forceValue)) ||
-                        !insn.baseRegister))
+                        !insn.baseRegister)) ||
+                    (patchModeChoice === 'capture' && !insn.baseRegister)
                   }
                   title={
                     patchModeChoice === 'force'
                       ? 'Redirect this instruction to force the field to the given value instead'
-                      : 'Replace this instruction with no-ops so the write never happens'
+                      : patchModeChoice === 'capture'
+                        ? 'Redirect this instruction to also record the object pointer for a persistent value cheat'
+                        : 'Replace this instruction with no-ops so the write never happens'
                   }
                   onClick={() => createPatchFromInstruction(insn)}
                 >
