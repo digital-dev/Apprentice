@@ -177,6 +177,10 @@ bool SuspendAll(ProcessHandle handle, uint32_t pid) {
     ResumeAll();
     return false;
   }
+  // Every snapshot thread had already exited by the time we got here: we
+  // suspended nothing, so this must not report success as if the target
+  // were actually frozen.
+  if (g_suspended.empty()) return false;
   return true;
 }
 

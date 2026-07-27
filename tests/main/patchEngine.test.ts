@@ -227,6 +227,26 @@ describe('PatchEngine — force injection', () => {
     expect(ops.caves).toHaveLength(1)
   })
 
+  it('restores the FULL displaced run, not just the captured instruction, when decodeRun folded in extra bytes (Finding 1 regression)', async () => {
+    // The captured instruction is only ORIGINAL (5 bytes), but decodeRun
+    // rounds up to whole instructions — here it folds in 3 more bytes of a
+    // following instruction to reach the 8-byte run it reports. Those extra
+    // bytes are real, unrelated game code and must come back exactly as
+    // they were, not be left as leftover 0x90 NOPs.
+    const fullSite = ORIGINAL + 'aabbcc' // 8 bytes actually sitting at the address
+    ops.memory.set('0x400100', fullSite)
+    ops.runLength = 8
+
+    const applyResult = await engine.apply(forcePatch)
+    expect(applyResult.ok).toBe(true)
+    // Sanity: the site was actually redirected (padded jump over 8 bytes).
+    expect((ops.memory.get('0x400100') as string).startsWith('e9')).toBe(true)
+    expect((ops.memory.get('0x400100') as string).length / 2).toBe(8)
+
+    expect(engine.restore(forcePatch)).toBe(true)
+    expect(ops.memory.get('0x400100')).toBe(fullSite)
+  })
+
   it('restore still writes the original bytes back even when suspension fails', async () => {
     // Unlike install, restore does not refuse on a failed suspend: writing
     // the original bytes back live is the lesser evil next to leaving the
@@ -303,6 +323,38 @@ describe('PatchEngine — capture injection', () => {
     expect(result.error).not.toContain('data type')
     expect(ops.caves).toHaveLength(0)
     expect(ops.writes).toHaveLength(0)
+  })
+})
+
+describe('PatchEngine — foreign injection (untracked trampoline at the site)', () => {
+  it('reports a distinct state, refusing to apply, when a jmp trampoline this engine did not install sits at the site', async () => {
+    // Install for real, then simulate Tamper losing its in-memory `applied`
+    // map — a crash or relaunch — while the game keeps running with the
+    // trampoline still live in its code.
+    await engine.apply(forcePatch)
+    const revived = new PatchEngine(ops)
+
+    const status = await revived.locate(forcePatch)
+    expect(status.state).toBe('foreign-injection')
+    expect(status.applicable).toBe(false)
+
+    const writesBeforeRevivedApply = ops.writes.length
+    const result = await revived.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(result.error?.toLowerCase()).toContain('restart')
+    // The revived engine must not have written anything of its own —
+    // refusing to guess at a trampoline it can't safely restore or adopt.
+    expect(ops.writes.length).toBe(writesBeforeRevivedApply)
+  })
+
+  it('does not misreport a NOP-mode patch as a foreign injection even if its bytes happened to start with e9', async () => {
+    // The foreign-injection check must be scoped to injection modes only —
+    // a NOP-mode patch reaching a byte sequence starting with e9 (an
+    // ordinary jmp instruction the game itself compiled) is just a mismatch,
+    // not evidence of an untracked trampoline.
+    ops.memory.set('0x400100', 'e900000000')
+    const status = await engine.locate(modulePatch) // modulePatch has no mode -> nop
+    expect(status.state).toBe('mismatch')
   })
 })
 

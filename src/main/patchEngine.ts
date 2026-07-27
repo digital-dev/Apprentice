@@ -22,7 +22,20 @@ export interface PatchOps {
   resumeThreads(): void
 }
 
-export type PatchState = 'original' | 'applied' | 'not-found' | 'mismatch' | 'unreadable'
+export type PatchState =
+  | 'original'
+  | 'applied'
+  | 'not-found'
+  | 'mismatch'
+  | 'unreadable'
+  // A jmp trampoline sits at the site but this engine instance has no record
+  // of installing it — e.g. Tamper crashed or was relaunched while the game
+  // kept running. We have `originalBytes` (the captured instruction) but not
+  // the full displaced run the trampoline actually covers, and we don't have
+  // `caveAddress` either, so there is no safe way to restore or adopt it.
+  // The only correct move is to refuse and say so; the game must be
+  // restarted to clear it.
+  | 'foreign-injection'
 
 export interface PatchStatus {
   address: string | null
@@ -65,6 +78,13 @@ export function relocationError(status: PatchStatus): string {
 
 interface AppliedPatch {
   address: string
+  // The bytes to write back on restore. For a NOP patch this is exactly the
+  // captured instruction (patch.length bytes). For an injection it is the
+  // FULL displaced run installInjection read before overwriting the site —
+  // which is frequently longer than patch.length, because decodeRun rounds
+  // up to whole instructions and folds in whatever follows the captured one.
+  // Restoring only patch.length bytes here would leave the remainder as
+  // leftover NOPs in the game's code — see Finding 1.
   originalBytes: string
   // Kept for diagnostics and for capture-mode readers; never freed.
   caveAddress: string | null
@@ -94,6 +114,11 @@ interface InstallResult {
   ok: boolean
   error: string | null
   caveAddress: string | null
+  // The bytes actually displaced at the site, unspaced lowercase hex — the
+  // full run installInjection/installNop overwrote, which restore() must
+  // write back. Null on failure, where nothing was written and there is
+  // nothing to restore.
+  displaced: string | null
 }
 
 function addHex(address: string, delta: number): string {
@@ -131,6 +156,15 @@ export class PatchEngine {
       return { address, state: 'original', applicable: true, matchCount }
     if (current.toLowerCase() === nopHex(patch.length))
       return { address, state: 'applied', applicable: true, matchCount }
+    // A jmp trampoline this engine instance isn't tracking: an injection
+    // installed by a previous Tamper session (crash, or relaunch) is still
+    // live in the game. We cannot restore it correctly (Finding 1's missing
+    // run length) or adopt it (no recovered caveAddress either), so this
+    // must fail closed and say why, rather than falling into 'mismatch's
+    // generic message.
+    if (patchMode(patch) !== 'nop' && !this.applied.has(patch.id) && current.toLowerCase().startsWith('e9')) {
+      return { address, state: 'foreign-injection', applicable: false, matchCount }
+    }
     // Something else lives there now — another trainer, an update, or a
     // wrong relocation. Never overwrite it.
     return { address, state: 'mismatch', applicable: false, matchCount }
@@ -153,6 +187,13 @@ export class PatchEngine {
         error: `Found it at ${status.address} but that memory is no longer readable — the code was probably freed.`
       }
     }
+    if (status.state === 'foreign-injection') {
+      return {
+        ok: false,
+        error:
+          "An injection from a previous Tamper session is still active at this address. Restart the game to clear it before patching again."
+      }
+    }
     if (status.state === 'mismatch') {
       return {
         ok: false,
@@ -161,6 +202,12 @@ export class PatchEngine {
     }
 
     let caveAddress: string | null = null
+    // What restore() must write back. Defaults to the captured instruction —
+    // correct for the 'applied' fallthrough below and for NOP installs,
+    // where the displaced run is always exactly patch.length bytes.
+    // Normalized once here so restore() can never write a differently cased
+    // blob than the one locate() compared against.
+    let displacedBytes = patch.originalBytes.toLowerCase()
     if (status.state === 'original') {
       const mode = patchMode(patch)
       const installed =
@@ -169,15 +216,18 @@ export class PatchEngine {
           : this.installInjection(patch, status.address)
       if (!installed.ok) return { ok: false, error: installed.error }
       caveAddress = installed.caveAddress
+      // An injection's displaced run is frequently longer than patch.length
+      // (decodeRun rounds up to whole instructions) — installInjection
+      // already read those exact bytes before overwriting the site, so use
+      // them verbatim rather than re-deriving from patch.length.
+      if (installed.displaced !== null) displacedBytes = installed.displaced
     }
     // 'applied' falls through: the NOPs are already there (e.g. we
     // re-attached to a process we had patched), so nothing needs writing —
     // but we must still record it so it gets restored.
     this.applied.set(patch.id, {
       address: status.address,
-      // Normalize once here so restore() can never write a differently
-      // cased blob than the one locate() compared against.
-      originalBytes: patch.originalBytes.toLowerCase(),
+      originalBytes: displacedBytes,
       caveAddress,
       mode: patchMode(patch)
     })
@@ -193,13 +243,19 @@ export class PatchEngine {
     return entry.caveAddress
   }
 
+  // Policy for this whole restore path (restore() and restoreAll() below),
+  // stated once here rather than left to live only in a task report:
+  // install refuses when suspendThreads() fails, but restore does not. That
+  // is deliberate, not an oversight — the two operations face opposite
+  // risks. Refusing to write NEW code into a live process is the safe
+  // default; a torn write there could execute garbage. But refusing to
+  // RESTORE would leave the game permanently patched, which is the exact
+  // failure this whole sub-project exists to prevent — a torn restore write
+  // is the lesser evil. Do not make restore/restoreAll refuse on a failed
+  // suspend without revisiting this call.
   restore(patch: PatchCheat): boolean {
     const entry = this.applied.get(patch.id)
     if (!entry) return true
-    // Unlike install, a failed suspend does not make restore refuse: writing
-    // the original bytes back on a live thread is the lesser evil — a game
-    // left permanently patched because we wouldn't risk the restore is
-    // exactly the failure mode this whole sub-project exists to avoid.
     this.ops.suspendThreads()
     let ok: boolean
     try {
@@ -231,9 +287,16 @@ export class PatchEngine {
 
   private installNop(patch: PatchCheat, address: string): InstallResult {
     if (!this.ops.writeBytes(address, nopHex(patch.length))) {
-      return { ok: false, error: 'Write failed — the patch was not applied.', caveAddress: null }
+      return {
+        ok: false,
+        error: 'Write failed — the patch was not applied.',
+        caveAddress: null,
+        displaced: null
+      }
     }
-    return { ok: true, error: null, caveAddress: null }
+    // The NOP path always displaces exactly patch.length bytes — the
+    // captured instruction locate() already verified is sitting there.
+    return { ok: true, error: null, caveAddress: null, displaced: patch.originalBytes.toLowerCase() }
   }
 
   // Build the cave first, while nothing is redirected into it, then swap the
@@ -245,7 +308,8 @@ export class PatchEngine {
       return {
         ok: false,
         error: "Couldn't read enough whole instructions at that address to redirect it.",
-        caveAddress: null
+        caveAddress: null,
+        displaced: null
       }
     }
     if (!run.relocatable) {
@@ -253,13 +317,14 @@ export class PatchEngine {
         ok: false,
         error:
           "This instruction sits with code that refers to its own address, so moving it would change what it does. Try a different caught instruction.",
-        caveAddress: null
+        caveAddress: null,
+        displaced: null
       }
     }
 
     const displaced = this.ops.readBytes(address, run.length)
     if (displaced === null) {
-      return { ok: false, error: 'That memory became unreadable.', caveAddress: null }
+      return { ok: false, error: 'That memory became unreadable.', caveAddress: null, displaced: null }
     }
 
     // PatchCheat isn't runtime-validated — a hand-edited games/*.json can
@@ -292,7 +357,8 @@ export class PatchEngine {
           mode === 'capture'
             ? "This patch is missing the register a capture injection needs — can't install it."
             : "This patch is missing the register, offset, value, or data type a force injection needs, or its offset isn't valid hex — can't compute what to write.",
-        caveAddress: null
+        caveAddress: null,
+        displaced: null
       }
     }
 
@@ -301,7 +367,8 @@ export class PatchEngine {
       return {
         ok: false,
         error: "No memory available near the instruction to hold the injected code.",
-        caveAddress: null
+        caveAddress: null,
+        displaced: null
       }
     }
 
@@ -333,7 +400,7 @@ export class PatchEngine {
     const body = displaced + effect + this.ops.encodeJump(jumpBackFrom, returnTo)
 
     if (!this.ops.writeBytes(codeAddress, body)) {
-      return { ok: false, error: 'Failed to write the injected code.', caveAddress: null }
+      return { ok: false, error: 'Failed to write the injected code.', caveAddress: null, displaced: null }
     }
 
     const jump = this.ops.encodeJump(address, codeAddress)
@@ -349,18 +416,26 @@ export class PatchEngine {
         return {
           ok: false,
           error: "Couldn't pause the game safely enough to redirect the instruction — not writing to running code.",
-          caveAddress: null
+          caveAddress: null,
+          displaced: null
         }
       }
       if (!this.ops.writeBytes(address, padded)) {
-        return { ok: false, error: 'Failed to redirect the instruction.', caveAddress: null }
+        return {
+          ok: false,
+          error: 'Failed to redirect the instruction.',
+          caveAddress: null,
+          displaced: null
+        }
       }
     } finally {
       // Always resume: a target left suspended is a hung game, which is
       // worse than a failed patch.
       this.ops.resumeThreads()
     }
-    return { ok: true, error: null, caveAddress: cave }
+    // The full displaced run — may be longer than patch.length — is what
+    // restore() must write back; see the AppliedPatch.originalBytes comment.
+    return { ok: true, error: null, caveAddress: cave, displaced: displaced.toLowerCase() }
   }
 
   private async resolveAddress(patch: PatchCheat): Promise<Resolution> {

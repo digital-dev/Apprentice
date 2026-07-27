@@ -46,6 +46,13 @@ function patchStatusLabel(status: PatchStatus): string {
       return `found ${status.address}, unreadable`
     case 'mismatch':
       return `bytes changed at ${status.address}`
+    case 'foreign-injection':
+      // A jmp trampoline from a previous Tamper session is still live in the
+      // game and this engine instance has no record of it — it can neither
+      // be restored nor adopted safely. Distinct wording so this doesn't
+      // read as an ordinary mismatch: the fix is "restart the game", not
+      // "re-capture".
+      return `previous injection still active at ${status.address} — restart the game to clear it`
     default:
       if (status.matchCount === null) return 'module not loaded'
       if (status.matchCount === 0) return 'no signature match'
