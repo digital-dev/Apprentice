@@ -14,7 +14,15 @@ export interface PatchOps {
   decodeRun(
     address: string,
     minBytes: number
-  ): { length: number; decodable: boolean; relocatable: boolean }
+  ): {
+    length: number
+    decodable: boolean
+    relocatable: boolean
+    // Every 64-bit GPR the displaced run writes, by its widest name (a
+    // `mov eax, 1` reports 'rax'). An effect cannot address the field
+    // through a register that appears here.
+    clobbers: string[]
+  }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
   encodeCapture(baseRegister: string, atAddress: string, slotAddress: string): string
   encodeJump(from: string, to: string): string
@@ -357,6 +365,32 @@ export class PatchEngine {
           mode === 'capture'
             ? "This patch is missing the register a capture injection needs — can't install it."
             : "This patch is missing the register, offset, value, or data type a force injection needs, or its offset isn't valid hex — can't compute what to write.",
+        caveAddress: null,
+        displaced: null
+      }
+    }
+
+    // The displaced run is not the captured instruction alone: decodeRun
+    // rounds up to whole instructions to reach the 5 a jmp rel32 needs, so a
+    // short captured store drags in whatever follows it. The cave replays
+    // `displaced + effect`, and the effect addresses the field through
+    // baseRegister — so if any swallowed instruction WRITES that register,
+    // the effect dereferences a value the game has already repurposed.
+    //
+    // This crashed Valheim: `movss [rax], xmm5` (4 bytes) followed by
+    // `mov eax, 1`. Writing eax zero-extends across all of rax, so the
+    // injected `mov dword [rax], imm32` faulted on address 0x1 every time.
+    //
+    // Refuse rather than work around it. Putting the effect BEFORE the
+    // displaced bytes would let the game's own write overwrite ours, which
+    // defeats force mode; restoring baseRegister after the run would undo a
+    // value the game expects to have changed (`mov eax, 1` is a return
+    // value). Another caught instruction is the honest answer.
+    // Checked before allocateCave so a refusal never leaks a cave.
+    if (run.clobbers.includes(patch.baseRegister as string)) {
+      return {
+        ok: false,
+        error: `Patching here would need ${patch.baseRegister} to survive, but the instruction right after this one overwrites it — the patch would crash the game. Try a different caught instruction.`,
         caveAddress: null,
         displaced: null
       }

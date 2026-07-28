@@ -62,11 +62,18 @@ class FakeOps implements PatchOps {
     this.caves.push(address)
     return address
   }
-  decodeRun(): { length: number; decodable: boolean; relocatable: boolean } {
+  runClobbers: string[] = []
+  decodeRun(): {
+    length: number
+    decodable: boolean
+    relocatable: boolean
+    clobbers: string[]
+  } {
     return {
       length: this.runLength,
       decodable: this.runDecodable,
-      relocatable: this.runRelocatable
+      relocatable: this.runRelocatable,
+      clobbers: this.runClobbers
     }
   }
   encodeStore(): string {
@@ -186,6 +193,32 @@ describe('PatchEngine — force injection', () => {
     expect(result.error).toContain('own address')
     expect(ops.writes).toHaveLength(0)
     expect(engine.isApplied('patch-stamina')).toBe(false)
+  })
+
+  // Reproduces the Valheim crash. forcePatch addresses the field through
+  // rdi; if an instruction swallowed into the displaced run writes rdi, the
+  // effect that runs after the displaced bytes dereferences whatever the
+  // game left there. In the real case that was `mov eax, 1` after a 4-byte
+  // `movss [rax], xmm5`, and the injected store faulted on address 0x1.
+  // Nothing may be written and no cave may be allocated: a refusal that has
+  // already touched the game is not a refusal.
+  it('refuses when the displaced run overwrites the register the effect addresses through', async () => {
+    ops.runClobbers = ['rdi']
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('rdi')
+    expect(ops.writes).toHaveLength(0)
+    expect(ops.caves).toHaveLength(0)
+    expect(engine.isApplied('patch-stamina')).toBe(false)
+  })
+
+  it('installs normally when the displaced run clobbers some other register', async () => {
+    // Only the effect's own base register matters — refusing on any clobber
+    // at all would reject most real captures, since the instructions after a
+    // store routinely write unrelated registers.
+    ops.runClobbers = ['rax', 'rcx']
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(true)
   })
 
   it('refuses when the run cannot be decoded', async () => {

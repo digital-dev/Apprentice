@@ -2,6 +2,7 @@
 #include "platform/platform.h"
 #include <string>
 #include <vector>
+#include <set>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -81,6 +82,43 @@ bool IsFlowTerminating(const ZydisDecodedInstruction& insn,
   }
 }
 
+// Records every 64-bit general-purpose register this instruction WRITES, by
+// its largest enclosing name, into `out`.
+//
+// This exists because of a crash in a real game. A cave replays
+// `displaced + effect + jumpBack` in that order, and the effect addresses
+// the field through the base register the capture recorded. But `displaced`
+// is not the captured instruction alone — decodeRun rounds up to whole
+// instructions to reach the 5 bytes a jmp rel32 needs, so a short captured
+// store drags in whatever follows it. If one of those swallowed
+// instructions writes the base register, the effect dereferences a register
+// the game has already repurposed.
+//
+// Observed in Valheim: `movss [rax], xmm5` (4 bytes) followed by
+// `mov eax, 1`. Writing eax zero-extends across all of rax, so by the time
+// the injected `mov dword [rax], imm32` ran, rax held 1 and the store
+// faulted on address 0x1. Deterministic crash, every time.
+//
+// Note the 32-bit-write subtlety this must not miss: `mov eax, 1` names
+// EAX, not RAX, yet it clobbers the whole register. GetLargestEnclosing is
+// what collapses that back to RAX; comparing operand register names
+// directly would let exactly the crashing case through.
+void CollectWrittenRegisters(const ZydisDecodedInstruction& insn,
+                             const ZydisDecodedOperand* ops,
+                             std::set<std::string>& out) {
+  for (int i = 0; i < insn.operand_count; i++) {
+    const ZydisDecodedOperand& op = ops[i];
+    if (op.type != ZYDIS_OPERAND_TYPE_REGISTER) continue;
+    if (!(op.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE)) continue;
+
+    ZydisRegister widest =
+        ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, op.reg.value);
+    if (widest == ZYDIS_REGISTER_NONE) continue;
+    const char* name = ZydisRegisterGetString(widest);
+    if (name) out.insert(name);
+  }
+}
+
 std::string BytesToHex(const uint8_t* data, size_t len) {
   std::string out;
   char hb[4];
@@ -145,6 +183,7 @@ Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
   size_t offset = 0;
   bool relocatable = true;
   bool decodable = true;
+  std::set<std::string> clobbered;
   while (offset < minBytes) {
     ZydisDecodedInstruction insn;
     ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT];
@@ -156,6 +195,7 @@ Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
     }
     if (IsPositionDependent(insn, ops)) relocatable = false;
     if (IsFlowTerminating(insn, ops)) relocatable = false;
+    CollectWrittenRegisters(insn, ops, clobbered);
     offset += insn.length;
   }
 
@@ -163,6 +203,15 @@ Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
   result.Set("length", Napi::Number::New(env, (double)offset));
   result.Set("decodable", Napi::Boolean::New(env, decodable));
   result.Set("relocatable", Napi::Boolean::New(env, decodable && relocatable));
+
+  // Every 64-bit GPR the displaced run writes. The engine refuses to install
+  // when the effect's base register is in here — see CollectWrittenRegisters.
+  Napi::Array clobbers = Napi::Array::New(env, clobbered.size());
+  uint32_t idx = 0;
+  for (const std::string& reg : clobbered) {
+    clobbers.Set(idx++, Napi::String::New(env, reg));
+  }
+  result.Set("clobbers", clobbers);
   return result;
 }
 

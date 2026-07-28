@@ -115,6 +115,38 @@ describe('decodeRun', () => {
     expect(result.length).toBe(5)
   })
 
+  // These pin the real Valheim crash: a captured `movss [rax], xmm5` is only
+  // 4 bytes, so reaching the 5 a jmp rel32 needs drags in the following
+  // `mov eax, 1`. Writing eax zero-extends across all of rax, so the
+  // injected `mov dword [rax], imm32` that runs after the displaced bytes
+  // dereferenced 0x1 and faulted. decodeRun has to report that the run
+  // clobbers rax so the engine can refuse before writing anything.
+  it('reports the 64-bit register a 32-bit write clobbers', () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const scratch: string = (addon as any).allocateCave(handle, near)
+    // f3 0f 11 28 = movss [rax], xmm5 ; b8 01 00 00 00 = mov eax, 1
+    ;(addon as any).writeBytes(handle, scratch, 'f30f1128' + 'b801000000')
+    const result = (addon as any).decodeRun(handle, scratch, 5)
+    expect(result.decodable).toBe(true)
+    expect(result.relocatable).toBe(true)
+    expect(result.length).toBe(9)
+    // Named as rax, not eax — the whole point. An `eax` here would let the
+    // crashing case through any base-register comparison the engine makes.
+    expect(result.clobbers).toContain('rax')
+  })
+
+  it('reports no clobbered register for a store that only writes memory', () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const scratch: string = (addon as any).allocateCave(handle, near)
+    // f3 0f 11 ae 18 08 00 00 = movss [rsi+0x818], xmm5 — 8 bytes, so
+    // nothing extra is displaced. This is the shape that worked in Valheim.
+    ;(addon as any).writeBytes(handle, scratch, 'f30f11ae18080000')
+    const result = (addon as any).decodeRun(handle, scratch, 5)
+    expect(result.decodable).toBe(true)
+    expect(result.length).toBe(8)
+    expect(result.clobbers).not.toContain('rsi')
+  })
+
   it('reports RIP-relative code as not relocatable', () => {
     const near = (addon as any).attach(harness.pid).baseAddress
     const scratch: string = (addon as any).allocateCave(handle, near)

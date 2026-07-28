@@ -174,7 +174,8 @@ const patchOps: PatchOps = {
   allocateCave: (nearAddress) =>
     attachedHandle === null ? null : nativeAddon.allocateCave(attachedHandle, nearAddress),
   decodeRun: (address, minBytes) => {
-    if (attachedHandle === null) return { length: 0, decodable: false, relocatable: false }
+    if (attachedHandle === null)
+      return { length: 0, decodable: false, relocatable: false, clobbers: [] }
     return nativeAddon.decodeRun(attachedHandle, address, minBytes)
   },
   encodeStore: (baseRegister, offset, imm32) => nativeAddon.encodeStore(baseRegister, offset, imm32),

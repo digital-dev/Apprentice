@@ -109,8 +109,12 @@ export const nativeAddon = {
     handle: number,
     address: string,
     minBytes: number
-  ): { length: number; decodable: boolean; relocatable: boolean } =>
-    addon.decodeRun(handle, address, minBytes),
+  ): {
+    length: number
+    decodable: boolean
+    relocatable: boolean
+    clobbers: string[]
+  } => addon.decodeRun(handle, address, minBytes),
   encodeStore: (baseRegister: string, offset: number, imm32: number): string =>
     addon.encodeStore(baseRegister, offset, imm32),
   encodeCapture: (baseRegister: string, atAddress: string, slotAddress: string): string =>
