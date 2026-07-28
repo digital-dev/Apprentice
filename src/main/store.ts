@@ -103,7 +103,27 @@ export function loadCheats(exeName: string): StoredCheat[] {
   const file = filePathFor(exeName)
   if (!fs.existsSync(file)) return []
   const raw = fs.readFileSync(file, 'utf-8')
-  return JSON.parse(raw) as StoredCheat[]
+  // An empty file is the same as no file — a truncated write or a
+  // half-finished hand-edit leaves one behind, and there is nothing in it
+  // to lose by treating it as no cheats.
+  if (raw.trim() === '') return []
+  try {
+    return JSON.parse(raw) as StoredCheat[]
+  } catch (err) {
+    // Deliberately NOT recovering by returning []. saveCheat loads, appends
+    // and rewrites, so swallowing a parse failure here would replace a file
+    // full of cheats with whichever single one was being saved — silent
+    // data loss, and the user's own edit is the likeliest cause of the
+    // parse failure in the first place.
+    //
+    // Throwing is what makes the failure visible. When this file was left
+    // empty by an editor, the bare JSON.parse threw here, saveCheat threw
+    // with it, and "Create patch" did nothing at all with no message — the
+    // symptom looked like a broken button rather than a broken file.
+    throw new Error(
+      `${file} isn't valid JSON (${(err as Error).message}). Fix or delete the file — refusing to overwrite it and lose the cheats it holds.`
+    )
+  }
 }
 
 export function saveCheat(exeName: string, cheat: StoredCheat): void {

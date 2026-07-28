@@ -197,3 +197,44 @@ describe('store — anchored targets', () => {
     }
   })
 })
+
+describe('store — a damaged cheat file', () => {
+  // An empty file is what an editor leaves behind on a truncated write or a
+  // half-finished hand-edit. It cost a real session's saved patches: the
+  // bare JSON.parse threw, saveCheat threw with it, and "Create patch" did
+  // nothing at all with no message.
+  it('treats an empty file as no cheats rather than throwing', () => {
+    fs.writeFileSync(path.join(dir, 'empty.json'), '')
+    expect(loadCheats('empty.exe')).toEqual([])
+  })
+
+  it('treats a whitespace-only file as no cheats', () => {
+    fs.writeFileSync(path.join(dir, 'blank.json'), '\n  \n')
+    expect(loadCheats('blank.exe')).toEqual([])
+  })
+
+  it('refuses to load malformed JSON instead of silently reporting no cheats', () => {
+    // Returning [] here would be far worse than throwing: saveCheat loads,
+    // appends and rewrites, so a swallowed parse error replaces a file full
+    // of cheats with whichever single one is being saved.
+    fs.writeFileSync(path.join(dir, 'broken.json'), '[{"id":"a"')
+    expect(() => loadCheats('broken.exe')).toThrow(/isn't valid JSON/)
+  })
+
+  it('does not overwrite a malformed file when saving', () => {
+    const file = path.join(dir, 'keep.json')
+    const damaged = '[{"id":"precious"'
+    fs.writeFileSync(file, damaged)
+    expect(() =>
+      saveCheat('keep.exe', {
+        id: 'new',
+        name: 'New',
+        dataType: 'float',
+        mode: 'freeze',
+        targets: [],
+        value: 1
+      })
+    ).toThrow()
+    expect(fs.readFileSync(file, 'utf-8')).toBe(damaged)
+  })
+})

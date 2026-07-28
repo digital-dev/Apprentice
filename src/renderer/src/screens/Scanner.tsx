@@ -273,7 +273,17 @@ export default function Scanner({
         : {}),
       ...(patchModeChoice === 'capture' ? { baseRegister: insn.baseRegister } : {})
     }
-    await window.tamper.saveCheat(exeName, patch)
+    // Saving reads the game's cheat file before rewriting it, so it fails
+    // whenever that file is unreadable — a hand-edit that left invalid JSON
+    // behind, most often. Without this, the failure is completely silent:
+    // the click appears to do nothing and the patch never reaches the list,
+    // which reads as a broken button rather than a broken file.
+    try {
+      await window.tamper.saveCheat(exeName, patch)
+    } catch (err) {
+      setCaptureError(`Couldn't save the patch: ${(err as Error).message}`)
+      return
+    }
     setSavedNotice(
       `Saved patch "${captureName}". Test it in the cheat list, then come back — these instructions are still here.`
     )
