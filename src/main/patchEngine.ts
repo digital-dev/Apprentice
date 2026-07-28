@@ -24,7 +24,7 @@ export interface PatchOps {
     clobbers: string[]
   }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
-  encodeCapture(baseRegister: string, atAddress: string, slotAddress: string): string
+  encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string
   encodeJump(from: string, to: string): string
   suspendThreads(): boolean
   resumeThreads(): void
@@ -417,7 +417,7 @@ export class PatchEngine {
     // wrong RIP-relative target happens to be.
     const effect =
       mode === 'capture'
-        ? this.ops.encodeCapture(patch.baseRegister as string, codeAddress, cave)
+        ? this.ops.encodeCaptureOnce(patch.baseRegister as string, codeAddress, cave)
         : this.ops.encodeStore(
             patch.baseRegister as string,
             Number(BigInt(patch.fieldOffset as string)),

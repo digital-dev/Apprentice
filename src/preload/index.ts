@@ -28,5 +28,8 @@ contextBridge.exposeInMainWorld('tamper', {
   stopWriteWatch: () => ipcRenderer.invoke('writeWatch:stop'),
   locatePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:locate', patch),
   applyPatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:apply', patch),
-  restorePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:restore', patch)
+  restorePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:restore', patch),
+  // What a capture patch has recorded so far: its slot, and the pointer in
+  // it (null until the game runs the captured instruction).
+  patchSlot: (patchId: string) => ipcRenderer.invoke('patch:slot', patchId)
 })

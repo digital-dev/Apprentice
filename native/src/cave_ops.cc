@@ -275,44 +275,80 @@ Napi::Value EncodeStore(const Napi::CallbackInfo& info) {
 // real value. Assembling for a known cave address is what makes a
 // RIP-relative instruction safe here: unlike a displaced one, it is built
 // for exactly where it will execute and never moves afterwards.
-Napi::Value EncodeCapture(const Napi::CallbackInfo& info) {
+// Emits the whole capture-once blob, hand-encoded so the jump-over
+// distance and both RIP displacements are computed in one place against
+// one agreed layout — split across separate encoders they drift apart
+// silently and the cave jumps into the middle of an instruction.
+//
+// Why once rather than every execution: the instruction a capture rides on
+// is usually shared. Valheim's health setter runs for the player, every
+// enemy and every destructible, so a slot rewritten on each execution holds
+// whatever was hit last, and a cheat reading it follows that instead of the
+// player. Writing only into an empty slot pins the first object seen after
+// arming — stand somewhere safe, enable, and it is yours for the session.
+// Re-arming is toggling the patch off and on, which builds a fresh cave
+// with a zeroed slot.
+//
+//   pushfq                      the game's flags must survive the compare
+//   cmp qword [rip+d1], 0
+//   jne skip                    already captured; leave it alone
+//   mov [rip+d2], reg           first one wins
+//   skip:
+//   popfq
+Napi::Value EncodeCaptureOnce(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::string regName = info[0].As<Napi::String>().Utf8Value();
   uintptr_t at = ParseHex(info[1].As<Napi::String>().Utf8Value());
   uintptr_t slot = ParseHex(info[2].As<Napi::String>().Utf8Value());
 
-  ZydisRegister reg = RegisterByName(regName);
-  if (reg == ZYDIS_REGISTER_NONE) {
+  // Only the 16 GPRs can hold an object pointer; RegisterByName rejects
+  // anything else, and the encoding below needs its number and REX bit.
+  if (RegisterByName(regName) == ZYDIS_REGISTER_NONE) {
     Napi::Error::New(env, "unknown base register").ThrowAsJavaScriptException();
     return env.Null();
   }
-
-  uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
-  ZyanUSize len = 0;
-  int64_t disp = 0;
-
-  for (int pass = 0; pass < 2; pass++) {
-    ZydisEncoderRequest req;
-    memset(&req, 0, sizeof(req));
-    req.mnemonic = ZYDIS_MNEMONIC_MOV;
-    req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
-    req.operand_count = 2;
-    req.operands[0].type = ZYDIS_OPERAND_TYPE_MEMORY;
-    req.operands[0].mem.base = ZYDIS_REGISTER_RIP;
-    req.operands[0].mem.displacement = disp;
-    req.operands[0].mem.size = 8;
-    req.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
-    req.operands[1].reg.value = reg;
-
-    len = sizeof(buf);
-    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
-      Napi::Error::New(env, "failed to encode capture").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    disp = (int64_t)slot - (int64_t)(at + len);
+  static const char* kOrder[16] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+                                   "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15"};
+  int regNum = 0;
+  for (int i = 0; i < 16; i++) {
+    if (regName == kOrder[i]) { regNum = i; break; }
   }
+  const bool extended = regNum >= 8;      // r8-r15 need REX.R
+  const uint8_t rex = extended ? 0x4C : 0x48;
+  const uint8_t modrm = (uint8_t)(0x05 | ((regNum & 0x7) << 3)); // mod=00, rm=101 (RIP)
 
-  return Napi::String::New(env, BytesToHex(buf, (size_t)len));
+  // Fixed layout, offsets from `at`:
+  //   0  pushfq                    1 byte
+  //   1  cmp qword [rip+d1], 0     8 bytes  (48 83 3d <d1> 00)
+  //   9  jne +7                    2 bytes
+  //   11 mov [rip+d2], reg         7 bytes  (REX 89 modrm <d2>)
+  //   18 popfq                     1 byte
+  // A RIP displacement is relative to the END of its own instruction.
+  constexpr size_t kCmpEnd = 9;
+  constexpr size_t kMovEnd = 18;
+  constexpr size_t kTotal = 19;
+
+  const int64_t d1 = (int64_t)slot - (int64_t)(at + kCmpEnd);
+  const int64_t d2 = (int64_t)slot - (int64_t)(at + kMovEnd);
+  if (d1 > INT32_MAX || d1 < INT32_MIN || d2 > INT32_MAX || d2 < INT32_MIN) {
+    Napi::Error::New(env, "slot out of RIP-relative range").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  const int32_t d1_32 = (int32_t)d1;
+  const int32_t d2_32 = (int32_t)d2;
+
+  uint8_t buf[kTotal];
+  size_t i = 0;
+  buf[i++] = 0x9C;                       // pushfq
+  buf[i++] = 0x48; buf[i++] = 0x83; buf[i++] = 0x3D;
+  memcpy(buf + i, &d1_32, 4); i += 4;
+  buf[i++] = 0x00;                       // cmp ..., 0
+  buf[i++] = 0x75; buf[i++] = 0x07;      // jne over the 7-byte mov
+  buf[i++] = rex;  buf[i++] = 0x89; buf[i++] = modrm;
+  memcpy(buf + i, &d2_32, 4); i += 4;
+  buf[i++] = 0x9D;                       // popfq
+
+  return Napi::String::New(env, BytesToHex(buf, kTotal));
 }
 
 // Thin N-API wrapper over platform::SuspendAll/ResumeAll (Task 2). No OS

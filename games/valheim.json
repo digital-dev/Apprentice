@@ -1,0 +1,18 @@
+[
+  {
+    "kind": "patch",
+    "mode": "force",
+    "id": "patch-health",
+    "name": "Health",
+    "originalBytes": "f30f116e3c",
+    "length": 5,
+    "signature": "0f 10 45 e8 f3 0f 5a c0 f3 0f 10 4e 3c f3 0f 5a c9 66 0f 2f c8 7a 1c 73 1a 0f b6 46 31 85 c0 74 12 f3 0f 10 46 38 f3 0f 5a c0 f2 0f 5a e8 f3 0f 11 6e 4c f3 0f 10 45 e8 f3 0f 5a c0 f2 0f 5a e8 f3 0f 11 6e 3c",
+    "signatureOffset": 64,
+    "moduleName": null,
+    "moduleOffset": null,
+    "baseRegister": "rsi",
+    "fieldOffset": "0x3c",
+    "value": 999,
+    "dataType": "float"
+  }
+]

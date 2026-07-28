@@ -117,8 +117,8 @@ export const nativeAddon = {
   } => addon.decodeRun(handle, address, minBytes),
   encodeStore: (baseRegister: string, offset: number, imm32: number): string =>
     addon.encodeStore(baseRegister, offset, imm32),
-  encodeCapture: (baseRegister: string, atAddress: string, slotAddress: string): string =>
-    addon.encodeCapture(baseRegister, atAddress, slotAddress),
+  encodeCaptureOnce: (baseRegister: string, atAddress: string, slotAddress: string): string =>
+    addon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   encodeJump: (from: string, to: string): string => addon.encodeJump(from, to),
   // Which backend the addon was built with, and whether injection works on
   // it. The Linux stub loads and reports false rather than failing at some

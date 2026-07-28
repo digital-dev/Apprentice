@@ -179,8 +179,8 @@ const patchOps: PatchOps = {
     return nativeAddon.decodeRun(attachedHandle, address, minBytes)
   },
   encodeStore: (baseRegister, offset, imm32) => nativeAddon.encodeStore(baseRegister, offset, imm32),
-  encodeCapture: (baseRegister, atAddress, slotAddress) =>
-    nativeAddon.encodeCapture(baseRegister, atAddress, slotAddress),
+  encodeCaptureOnce: (baseRegister, atAddress, slotAddress) =>
+    nativeAddon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   encodeJump: (from, to) => nativeAddon.encodeJump(from, to),
   // The native call throws on failure (after resuming whatever it already
   // suspended) rather than returning false — PatchOps promises a plain
@@ -337,5 +337,29 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   ipcMain.handle('patch:restore', (_e, patch: PatchCheat) => {
     if (attachedHandle === null) return true // process gone; its code went with it
     return patchEngine.restore(patch)
+  })
+
+  // What a capture patch has recorded, so the user can see whether it has
+  // caught anything and read the address an anchored cheat resolves through.
+  // Without this, authoring an anchor means inferring the object's address
+  // from two value scans and some subtraction — which is how the last
+  // session had to do it.
+  //
+  // null covers every not-live case alike: not a capture patch, not
+  // installed, or installed but the game has not run the instruction yet.
+  // A slot reading all zeroes is the last of those and is reported as such
+  // rather than as an address, because 0x0 is not somewhere to point a
+  // cheat.
+  ipcMain.handle('patch:slot', (_e, patchId: string) => {
+    if (attachedHandle === null) return null
+    const slot = patchEngine.slotAddress(patchId)
+    if (slot === null) return null
+    const raw = nativeAddon.tryReadBytes(attachedHandle, slot, 8)
+    if (raw === null) return null
+    const pointer = littleEndianToBigInt(raw)
+    return {
+      slot,
+      pointer: pointer === 0n ? null : '0x' + pointer.toString(16)
+    }
   })
 }

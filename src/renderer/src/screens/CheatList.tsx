@@ -74,6 +74,13 @@ export default function CheatList({
   const [patchStatuses, setPatchStatuses] = useState<Map<string, PatchStatus>>(new Map())
   const [patchEnabled, setPatchEnabled] = useState<Set<string>>(new Set())
   const [patchError, setPatchError] = useState<Map<string, string>>(new Map())
+  // What each enabled capture patch has recorded. Polled rather than read
+  // once, because the slot stays empty until the game actually runs the
+  // captured instruction — which can be a long while after the patch
+  // installs, and is the difference between "not working" and "not yet".
+  const [patchSlots, setPatchSlots] = useState<Map<string, { slot: string; pointer: string | null }>>(
+    new Map()
+  )
   // Ids with an apply/restore round-trip in flight, so the Toggle can be
   // disabled and a fast double-click can't interleave apply and restore.
   const [patchBusy, setPatchBusy] = useState<Set<string>>(new Set())
@@ -161,6 +168,42 @@ export default function CheatList({
       })
     })
   }, [exeName])
+
+  // Poll what the enabled capture patches have recorded. A capture fires
+  // when the game next runs the instruction it rides on, which may be
+  // seconds or minutes after install — so this has to keep looking rather
+  // than read once, or an armed patch looks broken until something happens
+  // to touch it.
+  useEffect(() => {
+    const captures = patches.filter((p) => p.mode === 'capture' && patchEnabled.has(p.id))
+    if (captures.length === 0) return
+    let cancelled = false
+
+    async function refresh(): Promise<void> {
+      for (const patch of captures) {
+        try {
+          const info = await window.tamper.patchSlot(patch.id)
+          if (cancelled) return
+          setPatchSlots((prev) => {
+            const next = new Map(prev)
+            if (info) next.set(patch.id, info)
+            else next.delete(patch.id)
+            return next
+          })
+        } catch {
+          // not attached, or the patch went away mid-poll — the next tick
+          // picks it up if it comes back
+        }
+      }
+    }
+
+    refresh()
+    const timer = setInterval(refresh, 1000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [patches, patchEnabled])
 
   async function toggle(cheat: CheatDefinition) {
     const next = !enabled.has(cheat.id)
@@ -383,6 +426,7 @@ export default function CheatList({
           {patches.map((patch) => {
             const status = patchStatuses.get(patch.id)
             const error = patchError.get(patch.id)
+            const slotInfo = patchSlots.get(patch.id)
             return (
               <li key={patch.id} style={{ flexWrap: 'wrap' }}>
                 <span>{patch.name}</span>
@@ -394,7 +438,23 @@ export default function CheatList({
                   }
                   pulsing={patchEnabled.has(patch.id)}
                 />
-                <span className="address-chip">code patch</span>
+                <span className="address-chip">
+                  {patch.mode === 'capture'
+                    ? 'capture'
+                    : patch.mode === 'force'
+                      ? 'force'
+                      : 'code patch'}
+                </span>
+                {patch.mode === 'capture' && patchEnabled.has(patch.id) && (
+                  // The address an anchored cheat resolves through. Shown so
+                  // authoring one doesn't mean inferring the object's address
+                  // from a pair of value scans and some subtraction.
+                  <span className="address-chip" title="Use this patch's id as an anchor patchId">
+                    {slotInfo?.pointer
+                      ? `captured ${slotInfo.pointer}`
+                      : 'waiting for the game to run this code'}
+                  </span>
+                )}
                 {status && (
                   <span
                     className="address-chip"

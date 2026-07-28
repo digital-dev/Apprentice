@@ -73,6 +73,11 @@ declare global {
       locatePatch: (patch: PatchCheat) => Promise<PatchStatus>
       applyPatch: (patch: PatchCheat) => Promise<{ ok: boolean; error: string | null }>
       restorePatch: (patch: PatchCheat) => Promise<boolean>
+      // What a capture patch has recorded. null when it isn't a capture
+      // patch, isn't installed, or the game hasn't run the instruction yet.
+      patchSlot: (
+        patchId: string
+      ) => Promise<{ slot: string; pointer: string | null } | null>
     }
   }
 }

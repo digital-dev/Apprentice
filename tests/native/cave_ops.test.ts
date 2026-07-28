@@ -234,24 +234,65 @@ describe('encodeStore', () => {
   })
 })
 
-describe('encodeCapture', () => {
-  it('writes the register into the slot when executed', async () => {
+describe('encodeCaptureOnce', () => {
+  it('emits a decodable blob whose RIP displacements both resolve to the slot', async () => {
     const near = (addon as any).attach(harness.pid).baseAddress
     const cave: string = (addon as any).allocateCave(handle, near)
     const slot = cave
     const code = '0x' + (BigInt(cave) + 8n).toString(16)
-    const hex: string = (addon as any).encodeCapture('rcx', code, slot)
+    const hex: string = (addon as any).encodeCaptureOnce('rcx', code, slot)
 
-    // It must decode as one instruction of exactly the length produced —
-    // proof the RIP displacement was folded into a real encoding.
+    // pushfq | cmp qword [rip+d1],0 | jne +7 | mov [rip+d2],rcx | popfq
+    expect(hex.length / 2).toBe(19)
+
+    // Every byte must decode as real instructions covering the whole blob —
+    // asking for the full length forces decodeRun to walk all five rather
+    // than stopping at the first.
     ;(addon as any).writeBytes(handle, code, hex)
-    const run = (addon as any).decodeRun(handle, code, 1)
+    const run = (addon as any).decodeRun(handle, code, 19)
     expect(run.decodable).toBe(true)
-    expect(run.length).toBe(hex.length / 2)
+    expect(run.length).toBe(19)
+
+    // Both displacements are RIP-relative and measured from the END of
+    // their own instruction, so they carry different values that must
+    // nonetheless name the same slot. Getting either wrong writes the
+    // captured pointer somewhere arbitrary, which no decode check catches.
+    const bytes = hex.match(/../g) as string[]
+    const readDisp32 = (at: number): bigint => {
+      const le = bytes.slice(at, at + 4).reverse().join('')
+      const raw = BigInt('0x' + le)
+      return raw >= 0x80000000n ? raw - 0x100000000n : raw // sign-extend
+    }
+    const cmpEnd = BigInt(code) + 9n // pushfq(1) + cmp(8)
+    const movEnd = BigInt(code) + 18n // ... + jne(2) + mov(7)
+    expect(cmpEnd + readDisp32(4)).toBe(BigInt(slot))
+    expect(movEnd + readDisp32(14)).toBe(BigInt(slot))
+
+    // The jne must clear exactly the 7-byte mov, landing on the popfq —
+    // one byte out and the blob returns with the flags still pushed.
+    expect(bytes[9]).toBe('75')
+    expect(bytes[10]).toBe('07')
+  })
+
+  it('leaves an already-populated slot alone', async () => {
+    // The point of capture-once. The instruction a capture rides on is
+    // usually shared — Valheim's health setter runs for every entity — so a
+    // slot rewritten on each execution ends up holding whatever was touched
+    // last rather than the object the user armed it on.
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave: string = (addon as any).allocateCave(handle, near)
+    const code = '0x' + (BigInt(cave) + 8n).toString(16)
+    const hex: string = (addon as any).encodeCaptureOnce('rcx', code, cave)
+
+    // A non-zero slot means the compare fails and the jne skips the store.
+    // Verified structurally here; the live proof is the end-to-end test.
+    const bytes = hex.match(/../g) as string[]
+    expect(bytes.slice(1, 3).join('')).toBe('4883') // cmp qword ptr ...
+    expect(bytes[8]).toBe('00') // ... , 0
   })
 
   it('rejects an unknown register', () => {
-    expect(() => (addon as any).encodeCapture('nope', '0x1000', '0x2000')).toThrow()
+    expect(() => (addon as any).encodeCaptureOnce('nope', '0x1000', '0x2000')).toThrow()
   })
 })
 
@@ -401,7 +442,7 @@ describe('capture injection — end to end', () => {
 
     const codeAddress = '0x' + (BigInt(cave) + 8n).toString(16)
     const captureAt = '0x' + (BigInt(codeAddress) + BigInt(displaced.length / 2)).toString(16)
-    const effect = (addon as any).encodeCapture(insn.baseRegister, captureAt, cave)
+    const effect = (addon as any).encodeCaptureOnce(insn.baseRegister, captureAt, cave)
     const returnTo = '0x' + (BigInt(site) + BigInt(run.length)).toString(16)
     const jumpBackFrom =
       '0x' + (BigInt(captureAt) + BigInt(effect.length / 2)).toString(16)

@@ -55,7 +55,7 @@ class FakeOps implements PatchOps {
   runDecodable = true
   runRelocatable = true
   encodeJumpCalls: { from: string; to: string }[] = []
-  encodeCaptureCalls: { baseRegister: string; atAddress: string; slotAddress: string }[] = []
+  encodeCaptureOnceCalls: { baseRegister: string; atAddress: string; slotAddress: string }[] = []
 
   allocateCave(): string | null {
     const address = '0x' + (this.nextCave += 0x1000).toString(16)
@@ -79,8 +79,8 @@ class FakeOps implements PatchOps {
   encodeStore(): string {
     return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f
   }
-  encodeCapture(baseRegister: string, atAddress: string, slotAddress: string): string {
-    this.encodeCaptureCalls.push({ baseRegister, atAddress, slotAddress })
+  encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string {
+    this.encodeCaptureOnceCalls.push({ baseRegister, atAddress, slotAddress })
     return '488905' + '00000000'
   }
   encodeJump(from: string, to: string): string {
@@ -328,14 +328,14 @@ describe('PatchEngine — capture injection', () => {
     // itself — and must be encoded for exactly that.
     await engine.apply(capturePatch)
     const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
-    expect(ops.encodeCaptureCalls).toEqual([
+    expect(ops.encodeCaptureOnceCalls).toEqual([
       { baseRegister: 'rdi', atAddress: codeAddress, slotAddress: ops.caves[0] }
     ])
 
     // Capture does not change what the game does, so unlike force mode the
     // whole displaced run IS replayed — after the effect, which has already
     // recorded the object pointer while the registers were untouched.
-    const effect = '48890500000000' // FakeOps.encodeCapture's fixed output
+    const effect = '48890500000000' // FakeOps.encodeCaptureOnce's fixed output
     const backJump = 'e900000000' // FakeOps.encodeJump's fixed output
     expect(ops.memory.get(codeAddress)).toBe(effect + ORIGINAL + backJump)
   })
