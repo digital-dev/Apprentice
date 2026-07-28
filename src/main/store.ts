@@ -60,6 +60,14 @@ export interface PatchCheat {
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
   length: number // bytes to NOP == instruction length
   signature: string // AOB with ?? wildcards, for relocating JIT code
+  // How many signature bytes precede the captured instruction. The pattern
+  // covers the surrounding method for uniqueness — a short method's own
+  // bytes are not distinctive enough on their own — so a scan match is the
+  // start of that context and the instruction is at match + this. Absent
+  // means 0: every patch saved before signatures grew a lead-in has its
+  // instruction at the start of the pattern, and must keep locating exactly
+  // as it did.
+  signatureOffset?: number
   moduleName: string | null // named module, or null for JIT/anonymous code
   moduleOffset: string | null // hex offset within that module
   // force and capture: which register held the object at capture time.

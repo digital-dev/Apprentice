@@ -260,6 +260,7 @@ export default function Scanner({
       originalBytes: insn.bytes,
       length: insn.length,
       signature: insn.signature,
+      signatureOffset: insn.signatureOffset,
       moduleName: insn.moduleName,
       moduleOffset: insn.moduleOffset,
       ...(patchModeChoice === 'force'

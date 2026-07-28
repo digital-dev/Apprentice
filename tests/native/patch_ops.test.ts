@@ -151,12 +151,26 @@ describe('scanAob', () => {
     // This assertion used to be a bare toContain, which passed happily while
     // the generator emitted 2-byte signatures matching 992 places — the bug
     // only surfaced against a real game.
-    expect(matches).toContain(insn.instructionAddress)
     expect(matches).toHaveLength(1)
 
-    // Patching at the SCANNED address (not the captured one) must have the
-    // same effect — this is the path a patch takes after a game restart.
-    const found = matches.find((m) => m === insn.instructionAddress) as string
+    // A signature covers the method AROUND the instruction, not just the
+    // bytes from it forward, so a match is the start of that context and
+    // the instruction sits signatureOffset bytes into it. Extending forward
+    // instead used to work here only because this harness is a static
+    // binary, where the padding and neighbouring code past a `ret` never
+    // move; in JIT'd code they do, and a signature built on them stopped
+    // matching after a game restart.
+    expect(insn.signatureOffset).toBeGreaterThan(0)
+    const expected =
+      '0x' + (BigInt(insn.instructionAddress) - BigInt(insn.signatureOffset)).toString(16)
+    expect(matches[0]).toBe(expected)
+
+    // Patching at the SCANNED address stepped forward by the offset (not at
+    // the captured address) must have the same effect — this is exactly the
+    // path a patch takes after a game restart.
+    const found =
+      '0x' + (BigInt(matches[0]) + BigInt(insn.signatureOffset)).toString(16)
+    expect(found).toBe(insn.instructionAddress)
     const nops = '90'.repeat(insn.length)
     expect((addon as any).writeBytes(handle, found, nops)).toBe(true)
 

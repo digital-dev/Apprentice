@@ -23,6 +23,9 @@ export interface CaughtInstruction {
   bytes: string
   length: number
   signature: string
+  // Bytes of the signature that precede this instruction — the pattern
+  // covers surrounding method code, so a match is at instruction - this.
+  signatureOffset: number
   baseRegister: string
   displacement: string
   baseAddress: string

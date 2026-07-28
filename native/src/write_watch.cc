@@ -35,6 +35,13 @@ struct Caught {
   std::vector<uint8_t> bytes;
   uint32_t length = 0;
   std::string signature;
+  // How many bytes of the signature sit BEFORE the caught instruction. The
+  // pattern covers surrounding method code for uniqueness, so a scan match
+  // is the start of that context, not the instruction: the instruction is
+  // at match + signatureOffset. Zero when the signature starts at the
+  // instruction itself, which is what every pre-existing saved patch
+  // assumes.
+  uint32_t signatureOffset = 0;
   std::string baseRegister;
   int64_t displacement = 0;
   uintptr_t baseAddress = 0;
@@ -150,6 +157,27 @@ uintptr_t RegValue(const CONTEXT& ctx, ZydisRegister reg) {
     case ZYDIS_REGISTER_R14: return ctx.R14;
     case ZYDIS_REGISTER_R15: return ctx.R15;
     default: return 0;
+  }
+}
+
+// True if this instruction ends the method it sits in, so a signature must
+// not extend across it in either direction. What lies beyond is alignment
+// padding, JIT metadata, and then some unrelated method — bytes that move
+// between runs even when this method does not, which is what made a short
+// Mono setter's signature stop matching after a game restart.
+bool EndsMethod(ZydisMnemonic m) {
+  switch (m) {
+    case ZYDIS_MNEMONIC_RET:
+    case ZYDIS_MNEMONIC_JMP:
+    case ZYDIS_MNEMONIC_IRET:
+    case ZYDIS_MNEMONIC_IRETD:
+    case ZYDIS_MNEMONIC_IRETQ:
+    case ZYDIS_MNEMONIC_INT3:
+    case ZYDIS_MNEMONIC_UD2:
+    case ZYDIS_MNEMONIC_HLT:
+      return true;
+    default:
+      return false;
   }
 }
 
@@ -478,23 +506,120 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
   // backward keeps the caught instruction at offset 0, so a match address
   // IS the instruction address and nothing downstream has to adjust.
   {
-    // 24 bytes was not enough in a real game: capturing Valheim's health
-    // write produced two candidates that each matched several places, so
-    // the engine refused them and the only locatable candidate left was a
-    // generic setter shared with every other entity. Length is the only
-    // lever on uniqueness here — JIT code has no module to anchor to — and
-    // the wildcarding below is what keeps a longer pattern from becoming
-    // MORE fragile as it grows.
+    // The signature covers the METHOD around the instruction, not just the
+    // bytes after it.
+    //
+    // Going only forward failed in both directions against a real game.
+    // Stopping at the caught instruction gave a 2-8 byte pattern that
+    // matched hundreds of places. Running forward to a fixed 48 bytes
+    // matched exactly once inside large methods, but ran clean off the end
+    // of a 15-byte Mono setter (`movss [rsi+0x3c]`, epilogue, `ret`) into
+    // alignment padding, JIT metadata, and a neighbouring method's
+    // prologue — none of which is stable across runs, so that patch
+    // located when captured and reported "no signature match" the next
+    // session. The same forward-past-the-end trick is what gives the
+    // static C harness its uniqueness, which is precisely why the harness
+    // could never surface this.
+    //
+    // A method's own preceding code is both stable and distinctive, so the
+    // pattern is extended BACKWARD instead, and never past a RET/JMP in
+    // either direction. The cost is that a match is no longer the
+    // instruction address — hence signatureOffset, the number of pattern
+    // bytes that precede it.
     constexpr size_t kMinSigBytes = 48;
-    constexpr size_t kWindowBytes = 128; // decode room beyond the minimum
+    constexpr size_t kLookBack = 64;  // how far back a method start may be
+    constexpr size_t kForward = 128;  // decode room past the instruction
 
-    uint8_t win[kWindowBytes] = {0};
+    uint8_t win[kLookBack + kForward] = {0};
     SIZE_T winGot = 0;
-    ReadProcessMemory(proc, (LPCVOID)insnAddr, win, sizeof(win), &winGot);
+    size_t lookBack = kLookBack;
+
+    // Reading from before the instruction can fail outright when it sits
+    // near the start of a mapping. That is not fatal — fall back to the
+    // instruction itself with no lead-in, which is the old behaviour.
+    if (!ReadProcessMemory(proc, (LPCVOID)(insnAddr - kLookBack), win, sizeof(win), &winGot) ||
+        winGot <= kLookBack) {
+      lookBack = 0;
+      winGot = 0;
+      ReadProcessMemory(proc, (LPCVOID)insnAddr, win, kForward, &winGot);
+    }
+
+    // x86 cannot be decoded backward, so the lead-in is found by trying
+    // each candidate start and keeping the ones whose instruction
+    // boundaries land EXACTLY on the caught instruction. A candidate that
+    // lands mid-instruction is a misalignment, and one that steps over a
+    // RET/JMP on the way has crossed out of this method into whatever
+    // preceded it — both are rejected. Longest valid lead-in wins: more of
+    // the method means more uniqueness.
+    // Two hard limits on how far back the pattern may reach.
+    size_t maxLead = lookBack;
+
+    // 1. Never cross a memory region boundary. scanAob searches one region
+    //    at a time, so a pattern straddling two can never match anything —
+    //    it silently finds zero, which is indistinguishable from a stale
+    //    signature. The harness's drain instruction sits 0x13 bytes into
+    //    its region, so an unclamped 64-byte lead-in produced exactly that.
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQueryEx(proc, (LPCVOID)insnAddr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+      uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+      size_t avail = insnAddr > regionBase ? (size_t)(insnAddr - regionBase) : 0;
+      if (maxLead > avail) maxLead = avail;
+    }
+
+    // 2. Stop at inter-method padding. A run of 0x00 or 0xCC before the
+    //    instruction is alignment fill between methods, not this method's
+    //    code: it adds no uniqueness and drags the pattern toward whatever
+    //    sits on the far side of it. A run is required rather than a single
+    //    byte, because real instructions contain zero bytes all the time
+    //    (`mov eax, 1` is b8 01 00 00 00) and one of those must not be
+    //    mistaken for the end of the method.
+    {
+      constexpr size_t kPadRun = 4;
+      size_t run = 0;
+      for (size_t i = lookBack; i-- > lookBack - maxLead;) {
+        const uint8_t b = win[i];
+        if (b == 0x00 || b == 0xCC) {
+          if (++run >= kPadRun) {
+            maxLead = lookBack - (i + kPadRun);
+            break;
+          }
+        } else {
+          run = 0;
+        }
+      }
+    }
+
+    size_t bestLead = 0;
+    for (size_t lead = maxLead; lead >= 1; lead--) {
+      size_t cursor = lookBack - lead;
+      bool aligned = true;
+      while (cursor < lookBack) {
+        ZydisDecodedInstruction probe;
+        ZydisDecodedOperand probeOps[ZYDIS_MAX_OPERAND_COUNT];
+        if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, win + cursor, winGot - cursor,
+                                                 &probe, probeOps))) {
+          aligned = false;
+          break;
+        }
+        if (EndsMethod(probe.mnemonic)) { // crossed a method boundary
+          aligned = false;
+          break;
+        }
+        cursor += probe.length;
+      }
+      if (aligned && cursor == lookBack) {
+        bestLead = lead;
+        break;
+      }
+    }
+
+    const size_t sigStart = lookBack - bestLead;
+    const size_t insnEnd = lookBack + out.length; // index just past the caught instruction
 
     out.signature.clear();
+    out.signatureOffset = (uint32_t)bestLead;
     char hb[4];
-    size_t offset = 0;
+    size_t offset = sigStart;
 
     while (offset < winGot) {
       ZydisDecodedInstruction cur;
@@ -550,7 +675,14 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
       }
 
       offset += cur.length;
-      if (offset >= kMinSigBytes) break;
+
+      // Both stop conditions only apply once the caught instruction itself
+      // is fully covered — the pattern is worthless without it, however
+      // long the lead-in already is.
+      if (offset >= insnEnd) {
+        if (EndsMethod(cur.mnemonic)) break;               // end of the method
+        if (offset - sigStart >= kMinSigBytes) break;       // long enough
+      }
     }
 
     // The widening window can legitimately come back empty: winGot can be 0
@@ -760,6 +892,7 @@ static Napi::Array SnapshotToArray(Napi::Env env) {
     o.Set("bytes", Napi::String::New(env, byteHex));
     o.Set("length", Napi::Number::New(env, c.length));
     o.Set("signature", Napi::String::New(env, c.signature));
+    o.Set("signatureOffset", Napi::Number::New(env, c.signatureOffset));
     o.Set("baseRegister", Napi::String::New(env, c.baseRegister));
     o.Set("displacement", Napi::String::New(env, ToHex((uintptr_t)c.displacement)));
     o.Set("baseAddress", Napi::String::New(env, ToHex(c.baseAddress)));

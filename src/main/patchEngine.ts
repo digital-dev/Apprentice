@@ -487,6 +487,12 @@ export class PatchEngine {
     // NOPping an unknown instruction.
     const matches = await this.ops.scanAob(patch.signature)
     if (matches.length !== 1) return { address: null, matchCount: matches.length }
-    return { address: matches[0], matchCount: 1 }
+    // A match is the start of the PATTERN, which may begin before the
+    // captured instruction — the signature covers surrounding method code
+    // so a short method is still uniquely identifiable. Step forward to the
+    // instruction itself. Absent offset means the pattern starts at the
+    // instruction, which is how every pre-injection patch was saved.
+    const lead = patch.signatureOffset ?? 0
+    return { address: '0x' + (BigInt(matches[0]) + BigInt(lead)).toString(16), matchCount: 1 }
   }
 }

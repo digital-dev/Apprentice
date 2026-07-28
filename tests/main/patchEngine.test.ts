@@ -459,6 +459,35 @@ describe('PatchEngine.locate', () => {
     })
   })
 
+  // A signature covers the method AROUND the instruction, because a short
+  // method's own bytes are not distinctive enough to relocate by — Valheim's
+  // 15-byte health setter matched nothing after a restart when the pattern
+  // was padded forward past its `ret` into JIT metadata. So the pattern can
+  // start BEFORE the instruction, and a scan match is the start of that
+  // context, not the instruction itself.
+  it('steps a signature match forward to the instruction when the pattern starts before it', async () => {
+    const leadIn = 12
+    const withLeadIn = { ...jitPatch, signatureOffset: leadIn }
+    ops.aobMatches = ['0x7ff000001000']
+    // The captured instruction sits leadIn bytes into the matched pattern.
+    ops.memory.set('0x7ff00000100c', ORIGINAL)
+
+    const status = await engine.locate(withLeadIn)
+    expect(status.address).toBe('0x7ff00000100c')
+    expect(status.state).toBe('original')
+    expect(status.applicable).toBe(true)
+  })
+
+  it('treats a patch with no signatureOffset as starting at the instruction', async () => {
+    // Every patch saved before signatures grew a lead-in has no such field,
+    // and must keep locating exactly where it always did.
+    expect('signatureOffset' in jitPatch).toBe(false)
+    ops.aobMatches = ['0x7ff000001000']
+    ops.memory.set('0x7ff000001000', ORIGINAL)
+    const status = await engine.locate(jitPatch)
+    expect(status.address).toBe('0x7ff000001000')
+  })
+
   it('refuses to guess when the signature scan finds several matches, and says how many', async () => {
     ops.aobMatches = ['0x7ff000001000', '0x7ff000002000', '0x7ff000003000']
     const status = await engine.locate(jitPatch)
