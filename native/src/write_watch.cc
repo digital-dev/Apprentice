@@ -605,6 +605,26 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
           aligned = false;
           break;
         }
+        // A chain can decode cleanly and still be misaligned: x86 is
+        // self-synchronizing, so starting mid-instruction often produces
+        // valid-looking instructions that happen to land exactly on the
+        // captured one. That is not harmless — a misaligned chain hides the
+        // real instruction boundaries, so the imm64 wildcarding never sees
+        // the `movabs` it is supposed to blank and the pattern bakes in an
+        // absolute address that changes every launch.
+        //
+        // Observed in Valheim: a lead-in beginning `00 90 49 bb ...`
+        // swallowed a `movabs r11, imm64` inside a bogus 6-byte decode,
+        // producing a signature that matched when captured and never again.
+        //
+        // Opcode 0x00 is the tell. Compilers effectively never emit it
+        // (`add byte ptr [mem], reg8` in this form), while runs of 0x00 are
+        // exactly what padding and data are made of — so a chain that
+        // decodes one is being read at the wrong offset.
+        if (probe.opcode == 0x00) {
+          aligned = false;
+          break;
+        }
         cursor += probe.length;
       }
       if (aligned && cursor == lookBack) {
