@@ -271,7 +271,11 @@ export default function Scanner({
             dataType
           }
         : {}),
-      ...(patchModeChoice === 'capture' ? { baseRegister: insn.baseRegister } : {})
+      // A capture patch is never toggled by the user directly — it exists to
+      // anchor the value cheat created alongside it below.
+      ...(patchModeChoice === 'capture'
+        ? { baseRegister: insn.baseRegister, internal: true }
+        : {})
     }
     // Saving reads the game's cheat file before rewriting it, so it fails
     // whenever that file is unreadable — a hand-edit that left invalid JSON
@@ -280,12 +284,30 @@ export default function Scanner({
     // which reads as a broken button rather than a broken file.
     try {
       await window.tamper.saveCheat(exeName, patch)
+      // Capture mode is not a cheat on its own — it records where the object
+      // is. Save the cheat that writes through it at the same time, so the
+      // user creates one thing and toggles one thing. The anchor's offset is
+      // the captured instruction's own displacement: the capture records the
+      // base register, and the field sits at base + displacement, which is
+      // exactly how the game reached it.
+      if (patchModeChoice === 'capture') {
+        await window.tamper.saveCheat(exeName, {
+          id: captureName.toLowerCase().replace(/\s+/g, '-'),
+          name: captureName,
+          dataType,
+          mode: 'freeze',
+          targets: [{ kind: 'anchor', patchId: patch.id, offset: insn.displacement }],
+          value: Number(forceValue)
+        })
+      }
     } catch (err) {
-      setCaptureError(`Couldn't save the patch: ${(err as Error).message}`)
+      setCaptureError(`Couldn't save the cheat: ${(err as Error).message}`)
       return
     }
     setSavedNotice(
-      `Saved patch "${captureName}". Test it in the cheat list, then come back — these instructions are still here.`
+      patchModeChoice === 'capture'
+        ? `Saved "${captureName}". Turn it on in the cheat list — these instructions are still here.`
+        : `Saved patch "${captureName}". Test it in the cheat list, then come back — these instructions are still here.`
     )
   }
 
@@ -395,13 +417,19 @@ export default function Scanner({
                   setPatchModeChoice(e.target.value as 'nop' | 'force' | 'capture')
                 }
               >
-                <option value="nop">Disable this write</option>
-                <option value="force">Force a value</option>
-                <option value="capture">Capture this object (for a persistent value cheat)</option>
+                {/* The labels name the consequence, not the mechanism. The
+                    difference that actually bites: force rewrites the
+                    instruction, so it applies to EVERY object that code runs
+                    for — in Valheim, forcing health hit enemies and
+                    destructibles too. Capture writes one address, so it
+                    reaches only the object it was armed on. */}
+                <option value="nop">Stop this value from changing</option>
+                <option value="capture">Set this value — for this object only</option>
+                <option value="force">Set this value — everywhere this code runs</option>
               </select>
-              {patchModeChoice === 'force' && (
+              {patchModeChoice !== 'nop' && (
                 <input
-                  placeholder={`Value to force (${dataType})`}
+                  placeholder={`Value to set (${dataType})`}
                   value={forceValue}
                   onChange={(e) => setForceValue(e.target.value)}
                 />
@@ -444,17 +472,18 @@ export default function Scanner({
                     !captureName ||
                     insn.length === 0 ||
                     !writesWatchedAddress(insn) ||
-                    (patchModeChoice === 'force' &&
+                    // Both value modes need a real number and a register to
+                    // reach the field through; only NOP needs neither.
+                    (patchModeChoice !== 'nop' &&
                       (forceValue.trim() === '' ||
                         !Number.isFinite(Number(forceValue)) ||
-                        !insn.baseRegister)) ||
-                    (patchModeChoice === 'capture' && !insn.baseRegister)
+                        !insn.baseRegister))
                   }
                   title={
                     patchModeChoice === 'force'
-                      ? 'Redirect this instruction to force the field to the given value instead'
+                      ? 'Rewrites the instruction, so it applies to every object this code runs for'
                       : patchModeChoice === 'capture'
-                        ? 'Redirect this instruction to also record the object pointer for a persistent value cheat'
+                        ? 'Records where this object is, then holds its value — reaches only this object, and survives a restart'
                         : 'Replace this instruction with no-ops so the write never happens'
                   }
                   onClick={() => createPatchFromInstruction(insn)}

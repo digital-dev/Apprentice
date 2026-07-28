@@ -207,7 +207,54 @@ export default function CheatList({
 
   async function toggle(cheat: CheatDefinition) {
     const next = !enabled.has(cheat.id)
+
+    // A cheat anchored to a capture patch can't resolve unless that patch is
+    // installed — the slot it reads through only exists while the injection
+    // is live. The patch is ours, not something the user manages, so drive it
+    // from here: install it before turning the cheat on, restore it after
+    // turning the cheat off. Turning it on FIRST also matters — the capture
+    // records the first object the game touches after arming, so the earlier
+    // it goes in the better.
+    const anchors = cheat.targets.filter(
+      (t): t is { kind: 'anchor'; patchId: string; offset: string } =>
+        (t as { kind?: string }).kind === 'anchor'
+    )
+    for (const anchor of anchors) {
+      const patch = patches.find((p) => p.id === anchor.patchId)
+      if (!patch) {
+        setPatchError((prev) =>
+          new Map(prev).set(cheat.id, `This cheat's capture patch (${anchor.patchId}) is missing.`)
+        )
+        return
+      }
+      if (next) {
+        const result = await window.tamper.applyPatch(patch)
+        if (!result.ok) {
+          setPatchError((prev) =>
+            new Map(prev).set(cheat.id, result.error ?? 'Could not install the capture patch.')
+          )
+          return
+        }
+        setPatchEnabled((prev) => new Set(prev).add(patch.id))
+      }
+    }
+
     await window.tamper.toggleFreeze(cheat, next)
+
+    // Restore only after the writing has stopped, so the last write can't
+    // land through a slot that is about to stop being maintained.
+    if (!next) {
+      for (const anchor of anchors) {
+        const patch = patches.find((p) => p.id === anchor.patchId)
+        if (!patch) continue
+        await window.tamper.restorePatch(patch)
+        setPatchEnabled((prev) => {
+          const copy = new Set(prev)
+          copy.delete(patch.id)
+          return copy
+        })
+      }
+    }
     setEnabled((prev) => {
       const copy = new Set(prev)
       if (next) copy.add(cheat.id)
@@ -227,6 +274,22 @@ export default function CheatList({
   async function remove(cheat: CheatDefinition) {
     if (enabled.has(cheat.id)) await window.tamper.toggleFreeze(cheat, false)
     await window.tamper.deleteCheat(exeName, cheat.id)
+
+    // Take the cheat's own capture patches with it. They are hidden from the
+    // list, so anything left behind is invisible and unmanageable — and it
+    // would still be installed in the game.
+    const anchoredPatchIds = cheat.targets
+      .filter((t): t is { kind: 'anchor'; patchId: string; offset: string } =>
+        (t as { kind?: string }).kind === 'anchor'
+      )
+      .map((t) => t.patchId)
+    for (const patchId of anchoredPatchIds) {
+      const patch = patches.find((p) => p.id === patchId)
+      if (!patch?.internal) continue // a patch the user made and manages
+      await window.tamper.deleteCheat(exeName, patchId)
+      setPatches((prev) => prev.filter((p) => p.id !== patchId))
+    }
+
     setCheats((prev) => prev.filter((c) => c.id !== cheat.id))
     setEnabled((prev) => {
       const copy = new Set(prev)
@@ -423,7 +486,10 @@ export default function CheatList({
       </ul>
       {patches.length > 0 && (
         <ul>
-          {patches.map((patch) => {
+          {/* Capture patches created to anchor a value cheat are plumbing,
+              not something to toggle: the cheat they belong to drives them.
+              Showing them would put two rows in the list for one cheat. */}
+          {patches.filter((p) => !p.internal).map((patch) => {
             const status = patchStatuses.get(patch.id)
             const error = patchError.get(patch.id)
             const slotInfo = patchSlots.get(patch.id)

@@ -68,6 +68,13 @@ export interface PatchCheat {
   // instruction at the start of the pattern, and must keep locating exactly
   // as it did.
   signatureOffset?: number
+  // True when this patch exists only to anchor a value cheat, rather than
+  // being something the user created and toggles directly. A persistent
+  // value cheat is really two pieces — a capture patch that records where
+  // the object is, and the cheat that writes through it — but that is our
+  // implementation showing through, not something to make the user manage.
+  // The cheat list hides these and drives them from the cheat they belong to.
+  internal?: boolean
   moduleName: string | null // named module, or null for JIT/anonymous code
   moduleOffset: string | null // hex offset within that module
   // force and capture: which register held the object at capture time.
