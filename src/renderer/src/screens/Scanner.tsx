@@ -38,7 +38,7 @@ export default function Scanner({
   const [watching, setWatching] = useState(false)
   const [caught, setCaught] = useState<CaughtInstruction[]>([])
   const [captureName, setCaptureName] = useState('')
-  const [patchModeChoice, setPatchModeChoice] = useState<'nop' | 'force' | 'capture'>('nop')
+  const [patchModeChoice, setPatchModeChoice] = useState<'nop' | 'force' | 'capture' | 'guard'>('nop')
   const [forceValue, setForceValue] = useState('')
   const [captureError, setCaptureError] = useState<string | null>(null)
   // Saving used to navigate straight back to the cheat list, which unmounted
@@ -275,7 +275,10 @@ export default function Scanner({
       // anchor the value cheat created alongside it below.
       ...(patchModeChoice === 'capture'
         ? { baseRegister: insn.baseRegister, internal: true }
-        : {})
+        : {}),
+      // guard is a patch the user toggles directly, like nop — it just
+      // decides per-object whether the game's own write runs.
+      ...(patchModeChoice === 'guard' ? { baseRegister: insn.baseRegister } : {})
     }
     // Saving reads the game's cheat file before rewriting it, so it fails
     // whenever that file is unreadable — a hand-edit that left invalid JSON
@@ -414,7 +417,7 @@ export default function Scanner({
               <select
                 value={patchModeChoice}
                 onChange={(e) =>
-                  setPatchModeChoice(e.target.value as 'nop' | 'force' | 'capture')
+                  setPatchModeChoice(e.target.value as 'nop' | 'force' | 'capture' | 'guard')
                 }
               >
                 {/* The labels name the consequence, not the mechanism. The
@@ -424,10 +427,11 @@ export default function Scanner({
                     destructibles too. Capture writes one address, so it
                     reaches only the object it was armed on. */}
                 <option value="nop">Stop this value from changing</option>
+                <option value="guard">Stop this value from changing — for this object only</option>
                 <option value="capture">Set this value — for this object only</option>
                 <option value="force">Set this value — everywhere this code runs</option>
               </select>
-              {patchModeChoice !== 'nop' && (
+              {(patchModeChoice === 'force' || patchModeChoice === 'capture') && (
                 <input
                   placeholder={`Value to set (${dataType})`}
                   value={forceValue}
@@ -474,7 +478,10 @@ export default function Scanner({
                     !writesWatchedAddress(insn) ||
                     // Both value modes need a real number and a register to
                     // reach the field through; only NOP needs neither.
-                    (patchModeChoice !== 'nop' &&
+                    // guard needs only a register to compare against; it
+                    // writes no value of its own.
+                    (patchModeChoice === 'guard' && !insn.baseRegister) ||
+                    ((patchModeChoice === 'force' || patchModeChoice === 'capture') &&
                       (forceValue.trim() === '' ||
                         !Number.isFinite(Number(forceValue)) ||
                         !insn.baseRegister))

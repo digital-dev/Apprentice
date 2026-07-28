@@ -83,6 +83,21 @@ class FakeOps implements PatchOps {
     this.encodeCaptureOnceCalls.push({ baseRegister, atAddress, slotAddress })
     return '488905' + '00000000'
   }
+  encodeGuardedSkipCalls: {
+    baseRegister: string
+    atAddress: string
+    slotAddress: string
+    returnAddress: string
+  }[] = []
+  encodeGuardedSkip(
+    baseRegister: string,
+    atAddress: string,
+    slotAddress: string,
+    returnAddress: string
+  ): string {
+    this.encodeGuardedSkipCalls.push({ baseRegister, atAddress, slotAddress, returnAddress })
+    return 'aa'.repeat(41)
+  }
   encodeJump(from: string, to: string): string {
     this.encodeJumpCalls.push({ from, to })
     return 'e900000000'
@@ -707,5 +722,66 @@ describe('PatchEngine.apply / restore', () => {
     // restore must still hit the original address A, not the re-derived one.
     expect(engine.restore(jitPatch)).toBe(true)
     expect(ops.memory.get('0x7ff000001000')).toBe(ORIGINAL)
+  })
+})
+
+describe('PatchEngine — guard injection', () => {
+  const guardPatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'guard',
+    id: 'patch-godmode',
+    name: 'God Mode',
+    originalBytes: ORIGINAL,
+    length: 5,
+    signature: 'f3 0f 11 41 10',
+    moduleName: 'game.exe',
+    moduleOffset: '0x100',
+    baseRegister: 'rsi'
+  }
+
+  // A guard replays the game's write for everyone else and skips it only for
+  // the object it locked onto, so unlike force mode the original bytes MUST
+  // still be in the cave — dropping them would give every entity god mode,
+  // which is the bug this mode exists to fix.
+  it('keeps the game\'s own write in the cave, after the guard', async () => {
+    const result = await engine.apply(guardPatch)
+    expect(result.ok).toBe(true)
+
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const guard = 'aa'.repeat(41)
+    expect(ops.memory.get(codeAddress)).toBe(guard + ORIGINAL + 'e900000000')
+  })
+
+  it('gives the guard the slot and the return address it needs', async () => {
+    await engine.apply(guardPatch)
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    expect(ops.encodeGuardedSkipCalls).toEqual([
+      {
+        baseRegister: 'rsi',
+        atAddress: codeAddress,
+        slotAddress: ops.caves[0],
+        // The skip path jumps past the whole displaced run at the site, not
+        // to the site's start — otherwise it re-enters the code it skipped.
+        returnAddress: '0x400105'
+      }
+    ])
+  })
+
+  it('installs without a value or field offset, which it never writes', async () => {
+    // guard compares; it does not write a value of its own. Demanding
+    // value/dataType/fieldOffset would reject it for lacking fields it has
+    // no use for.
+    expect(guardPatch.value).toBeUndefined()
+    expect(guardPatch.fieldOffset).toBeUndefined()
+    const result = await engine.apply(guardPatch)
+    expect(result.ok).toBe(true)
+  })
+
+  it('refuses without a base register, since it has nothing to compare', async () => {
+    const noReg = { ...guardPatch, id: 'patch-noreg', baseRegister: undefined } as PatchCheat
+    const result = await engine.apply(noReg)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
   })
 })

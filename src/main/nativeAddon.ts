@@ -119,6 +119,14 @@ export const nativeAddon = {
     addon.encodeStore(baseRegister, offset, imm32),
   encodeCaptureOnce: (baseRegister: string, atAddress: string, slotAddress: string): string =>
     addon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
+  // The guard prefix for a shared write: compares the object register
+  // against a self-arming slot and skips the write for that object only.
+  encodeGuardedSkip: (
+    baseRegister: string,
+    atAddress: string,
+    slotAddress: string,
+    returnAddress: string
+  ): string => addon.encodeGuardedSkip(baseRegister, atAddress, slotAddress, returnAddress),
   encodeJump: (from: string, to: string): string => addon.encodeJump(from, to),
   // Which backend the addon was built with, and whether injection works on
   // it. The Linux stub loads and reports false rather than failing at some

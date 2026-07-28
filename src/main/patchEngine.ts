@@ -25,6 +25,12 @@ export interface PatchOps {
   }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string
+  encodeGuardedSkip(
+    baseRegister: string,
+    atAddress: string,
+    slotAddress: string,
+    returnAddress: string
+  ): string
   encodeJump(from: string, to: string): string
   suspendThreads(): boolean
   resumeThreads(): void
@@ -98,7 +104,7 @@ interface AppliedPatch {
   caveAddress: string | null
   // Only a capture patch has a readable slot; recorded so slotAddress can
   // tell a capture cave from a force cave without re-deriving the mode.
-  mode: 'nop' | 'force' | 'capture'
+  mode: 'nop' | 'force' | 'capture' | 'guard'
 }
 
 // A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
@@ -352,7 +358,11 @@ export class PatchEngine {
       if (typeof patch.baseRegister !== 'string') {
         throw new Error('missing base register')
       }
-      if (mode !== 'capture') {
+      // capture and guard both need only the register: capture records it,
+      // guard compares against it. Neither writes a value of its own, so
+      // demanding value/dataType/fieldOffset would reject them for lacking
+      // fields they never use.
+      if (mode === 'force') {
         if (typeof patch.value !== 'number' || !patch.dataType) {
           throw new Error('missing force-mode fields')
         }
@@ -409,21 +419,34 @@ export class PatchEngine {
     //   capture records where the object is without changing what the game
     //           does, so the game's own write still has to happen. The
     //           whole displaced run is replayed after the effect.
-    const replay = mode === 'capture' ? displaced : displaced.slice(patch.length * 2)
+    // guard replays everything, like capture: it does not replace the write,
+    // it decides per-object whether to run it.
+    const replay =
+      mode === 'capture' || mode === 'guard' ? displaced : displaced.slice(patch.length * 2)
 
     // The capture store is RIP-relative, so it must be encoded for the
     // address it actually executes at — codeAddress, now that it runs
     // first. Encoding it for anywhere else silently corrupts whatever the
     // wrong RIP-relative target happens to be.
+    const returnTo = addHex(address, run.length)
     const effect =
       mode === 'capture'
         ? this.ops.encodeCaptureOnce(patch.baseRegister as string, codeAddress, cave)
-        : this.ops.encodeStore(
-            patch.baseRegister as string,
-            Number(BigInt(patch.fieldOffset as string)),
-            valueBits(patch.value as number, patch.dataType as DataType)
-          )
-    const returnTo = addHex(address, run.length)
+        : mode === 'guard'
+          ? // The guard needs the return address up front: its whole point is
+            // an early exit that skips the replayed write, so one of its two
+            // paths jumps straight back rather than falling through.
+            this.ops.encodeGuardedSkip(
+              patch.baseRegister as string,
+              codeAddress,
+              cave,
+              returnTo
+            )
+          : this.ops.encodeStore(
+              patch.baseRegister as string,
+              Number(BigInt(patch.fieldOffset as string)),
+              valueBits(patch.value as number, patch.dataType as DataType)
+            )
     const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
     const body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
 

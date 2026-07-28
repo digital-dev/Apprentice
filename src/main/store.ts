@@ -54,7 +54,7 @@ export interface PatchCheat {
   kind: 'patch'
   // How this patch changes the game. Absent means 'nop': every patch saved
   // before injection existed keeps working through the same code path.
-  mode?: 'nop' | 'force' | 'capture'
+  mode?: 'nop' | 'force' | 'capture' | 'guard'
   id: string
   name: string
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
@@ -92,7 +92,7 @@ export function isPatchCheat(cheat: StoredCheat): cheat is PatchCheat {
   return cheat.kind === 'patch'
 }
 
-export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' {
+export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'guard' {
   return patch.mode ?? 'nop'
 }
 

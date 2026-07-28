@@ -351,6 +351,110 @@ Napi::Value EncodeCaptureOnce(const Napi::CallbackInfo& info) {
   return Napi::String::New(env, BytesToHex(buf, kTotal));
 }
 
+// Emits the guard that makes a shared write apply to one object only.
+//
+// The problem it solves: a game's damage write is shared. NOPing it gave
+// every enemy and destructible in Valheim god mode along with the player,
+// because the instruction runs for all of them. The entity is in a register
+// at that instruction, so the cave can compare it against a remembered one
+// and skip the write for that entity alone.
+//
+// Self-arming: the slot starts empty and the first entity through fills it.
+// Take one hit while nothing else is being damaged and it locks onto you for
+// the session; toggling the patch off and on builds a fresh cave and re-arms.
+// That avoids having to prove the object here is the same one some other
+// capture site sees — a comparison against the wrong object fails silently,
+// which is the worst way for a cheat to be wrong.
+//
+//   pushfq                    flags must survive test/cmp
+//   push r11                  r11 is call-clobbered, but we are mid-function
+//   mov  r11, [rip+d1]
+//   test r11, r11
+//   jnz  compare
+//   mov  [rip+d2], reg        first entity through arms it
+//   mov  r11, reg
+//  compare:
+//   cmp  reg, r11
+//   jne  runOriginal          someone else: fall through to the replayed write
+//   pop  r11 / popfq
+//   jmp  return               it is us: skip the write entirely
+//  runOriginal:
+//   pop  r11 / popfq
+//   (caller appends the displaced bytes and the jump back)
+//
+// The caller appends; this returns exactly the 41-byte prefix so the two
+// exits and both RIP displacements are computed against one agreed layout.
+Napi::Value EncodeGuardedSkip(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string regName = info[0].As<Napi::String>().Utf8Value();
+  uintptr_t at = ParseHex(info[1].As<Napi::String>().Utf8Value());
+  uintptr_t slot = ParseHex(info[2].As<Napi::String>().Utf8Value());
+  uintptr_t returnTo = ParseHex(info[3].As<Napi::String>().Utf8Value());
+
+  if (RegisterByName(regName) == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown base register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  static const char* kOrder[16] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+                                   "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15"};
+  int r = 0;
+  for (int i = 0; i < 16; i++) if (regName == kOrder[i]) { r = i; break; }
+
+  // r11 is the scratch. Guarding an instruction whose own object register IS
+  // r11 would have the push/pop fight the comparison, so refuse rather than
+  // emit something subtly wrong.
+  if (r == 11) {
+    Napi::Error::New(env, "cannot guard on r11 — it is the scratch register")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  const bool ext = r >= 8;               // needs REX.R / REX.B
+  const uint8_t low = (uint8_t)(r & 0x7);
+
+  constexpr size_t kTotal = 41;
+  constexpr size_t kMovR11End = 10;      // end of `mov r11,[rip+d1]`
+  constexpr size_t kStoreEnd = 22;       // end of `mov [rip+d2],reg`
+  constexpr size_t kJmpAt = 33;          // the player-exit `jmp rel32`
+
+  const int64_t d1 = (int64_t)slot - (int64_t)(at + kMovR11End);
+  const int64_t d2 = (int64_t)slot - (int64_t)(at + kStoreEnd);
+  const int64_t rel = (int64_t)returnTo - (int64_t)(at + kJmpAt + 5);
+  if (d1 > INT32_MAX || d1 < INT32_MIN || d2 > INT32_MAX || d2 < INT32_MIN ||
+      rel > INT32_MAX || rel < INT32_MIN) {
+    Napi::Error::New(env, "guard target out of 32-bit range").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  const int32_t d1_32 = (int32_t)d1, d2_32 = (int32_t)d2, rel_32 = (int32_t)rel;
+
+  uint8_t b[kTotal];
+  size_t i = 0;
+  b[i++] = 0x9C;                                   // pushfq
+  b[i++] = 0x41; b[i++] = 0x53;                    // push r11
+  b[i++] = 0x4C; b[i++] = 0x8B; b[i++] = 0x1D;     // mov r11, [rip+d1]
+  memcpy(b + i, &d1_32, 4); i += 4;                // -> i == 10
+  b[i++] = 0x4D; b[i++] = 0x85; b[i++] = 0xDB;     // test r11, r11
+  b[i++] = 0x75; b[i++] = 0x0A;                    // jnz compare (over 10 bytes)
+  b[i++] = (uint8_t)(0x48 | (ext ? 0x04 : 0x00));  // mov [rip+d2], reg
+  b[i++] = 0x89;
+  b[i++] = (uint8_t)(0x05 | (low << 3));
+  memcpy(b + i, &d2_32, 4); i += 4;                // -> i == 22
+  b[i++] = (uint8_t)(0x49 | (ext ? 0x04 : 0x00));  // mov r11, reg
+  b[i++] = 0x89;
+  b[i++] = (uint8_t)(0xC0 | (low << 3) | 0x03);    // -> i == 25 (compare:)
+  b[i++] = (uint8_t)(0x4C | (ext ? 0x01 : 0x00));  // cmp reg, r11
+  b[i++] = 0x39;
+  b[i++] = (uint8_t)(0xD8 | low);
+  b[i++] = 0x75; b[i++] = 0x08;                    // jne runOriginal (over 8)
+  b[i++] = 0x41; b[i++] = 0x5B;                    // pop r11
+  b[i++] = 0x9D;                                   // popfq   -> i == 33
+  b[i++] = 0xE9;                                   // jmp return (skip the write)
+  memcpy(b + i, &rel_32, 4); i += 4;
+  b[i++] = 0x41; b[i++] = 0x5B;                    // runOriginal: pop r11
+  b[i++] = 0x9D;                                   // popfq   -> i == 41
+
+  return Napi::String::New(env, BytesToHex(b, kTotal));
+}
+
 // Thin N-API wrapper over platform::SuspendAll/ResumeAll (Task 2). No OS
 // calls of their own: everything goes through platform::.
 Napi::Value SuspendThreads(const Napi::CallbackInfo& info) {

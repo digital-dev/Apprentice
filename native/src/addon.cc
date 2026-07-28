@@ -71,6 +71,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("decodeRun", Napi::Function::New(env, DecodeRun));
   exports.Set("encodeStore", Napi::Function::New(env, EncodeStore));
   exports.Set("encodeCaptureOnce", Napi::Function::New(env, EncodeCaptureOnce));
+  exports.Set("encodeGuardedSkip", Napi::Function::New(env, EncodeGuardedSkip));
   exports.Set("encodeJump", Napi::Function::New(env, EncodeJump));
   exports.Set("suspendThreads", Napi::Function::New(env, SuspendThreads));
   exports.Set("resumeThreads", Napi::Function::New(env, ResumeThreads));

@@ -480,3 +480,65 @@ describe('capture injection — end to end', () => {
     }
   }, 30000)
 })
+
+describe('encodeGuardedSkip', () => {
+  // The guard makes a SHARED write apply to one object only. NOPing Valheim's
+  // damage write gave every enemy and destructible god mode along with the
+  // player, because that instruction runs for all of them; this compares the
+  // object register against a self-arming slot and skips the write for that
+  // object alone.
+  it('emits a fully decodable 41-byte guard', async () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave: string = (addon as any).allocateCave(handle, near)
+    const code = '0x' + (BigInt(cave) + 8n).toString(16)
+    const returnTo = '0x' + (BigInt(near) + 0x40n).toString(16)
+    const hex: string = (addon as any).encodeGuardedSkip('rsi', code, cave, returnTo)
+
+    expect(hex.length / 2).toBe(41)
+
+    // Every byte must decode as real instructions. A hand-encoded blob with
+    // two exit paths is exactly where a wrong ModRM hides — it would still
+    // "work" until the game ran it.
+    ;(addon as any).writeBytes(handle, code, hex)
+    const run = (addon as any).decodeRun(handle, code, 41)
+    expect(run.decodable).toBe(true)
+    expect(run.length).toBe(41)
+  })
+
+  it('preserves flags and the scratch register on both paths', () => {
+    const hex: string = (addon as any).encodeGuardedSkip('rsi', '0x1000', '0x2000', '0x3000')
+    const bytes = hex.match(/../g) as string[]
+
+    // pushfq / push r11 on entry — the compare below clobbers flags the
+    // game's next instruction may depend on, and r11 may be live here.
+    expect(bytes[0]).toBe('9c')
+    expect(bytes.slice(1, 3).join('')).toBe('4153')
+
+    // Both exits must pop what the entry pushed, in the right order, or the
+    // stack is left skewed and the game dies somewhere unrelated.
+    expect(bytes.slice(30, 33).join('')).toBe('415b9d') // skip path
+    expect(bytes.slice(38, 41).join('')).toBe('415b9d') // run-original path
+  })
+
+  it('jumps to the return address on the skip path', () => {
+    const at = 0x1000n
+    const returnTo = 0x3000n
+    const hex: string = (addon as any).encodeGuardedSkip('rsi', '0x1000', '0x2000', '0x3000')
+    const bytes = hex.match(/../g) as string[]
+
+    // The skip path's `jmp rel32` sits at offset 33 and is measured from the
+    // end of its own 5 bytes. Wrong here and the guard returns into the
+    // middle of an instruction rather than past the write it skipped.
+    expect(bytes[33]).toBe('e9')
+    const le = bytes.slice(34, 38).reverse().join('')
+    const raw = BigInt('0x' + le)
+    const rel = raw >= 0x80000000n ? raw - 0x100000000n : raw
+    expect(at + 33n + 5n + rel).toBe(returnTo)
+  })
+
+  it('refuses to guard on the scratch register itself', () => {
+    // r11 holds the remembered pointer, so guarding an instruction whose own
+    // object register is r11 would have the push/pop fight the comparison.
+    expect(() => (addon as any).encodeGuardedSkip('r11', '0x1000', '0x2000', '0x3000')).toThrow()
+  })
+})
