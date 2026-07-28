@@ -478,8 +478,15 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
   // backward keeps the caught instruction at offset 0, so a match address
   // IS the instruction address and nothing downstream has to adjust.
   {
-    constexpr size_t kMinSigBytes = 24; // enough to be unique in practice
-    constexpr size_t kWindowBytes = 64; // decode room beyond the minimum
+    // 24 bytes was not enough in a real game: capturing Valheim's health
+    // write produced two candidates that each matched several places, so
+    // the engine refused them and the only locatable candidate left was a
+    // generic setter shared with every other entity. Length is the only
+    // lever on uniqueness here — JIT code has no module to anchor to — and
+    // the wildcarding below is what keeps a longer pattern from becoming
+    // MORE fragile as it grows.
+    constexpr size_t kMinSigBytes = 48;
+    constexpr size_t kWindowBytes = 128; // decode room beyond the minimum
 
     uint8_t win[kWindowBytes] = {0};
     SIZE_T winGot = 0;
@@ -513,9 +520,28 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
         }
       }
 
+      // A 64-bit immediate in JIT code is an absolute address, and the
+      // allocation it names moves every launch. Proven against Valheim:
+      // the same instruction captured in two sessions produced signatures
+      // identical in every byte except a `movabs r11, imm64` operand —
+      // 0x000247ca4f8a1000 one run, 0x000001c74de92310 the next. Left
+      // literal, those eight bytes guarantee the pattern never matches
+      // again after a restart, which looks exactly like "the code was
+      // recompiled" and sends the user off to re-capture forever.
+      //
+      // Only imm64 is wildcarded. A 32-bit immediate cannot hold an
+      // address on x86-64 — code that needs one uses RIP-relative
+      // addressing, already handled above — so imm32 is a genuine constant
+      // and stays literal, where it still contributes uniqueness.
+      size_t immStart = cur.raw.imm[0].offset;
+      size_t immSize = cur.raw.imm[0].size / 8;
+      bool absoluteImm = cur.raw.imm[0].size == 64;
+
       for (size_t i = 0; i < cur.length && offset + i < winGot; i++) {
         if (!out.signature.empty()) out.signature += " ";
-        if (ripRel && dispSize && i >= dispStart && i < dispStart + dispSize) {
+        bool wildDisp = ripRel && dispSize && i >= dispStart && i < dispStart + dispSize;
+        bool wildImm = absoluteImm && immSize && i >= immStart && i < immStart + immSize;
+        if (wildDisp || wildImm) {
           out.signature += "??";
         } else {
           snprintf(hb, sizeof(hb), "%02x", win[offset + i]);
