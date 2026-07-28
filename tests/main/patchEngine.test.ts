@@ -122,22 +122,22 @@ describe('PatchEngine — force injection', () => {
     expect(site.startsWith('e9')).toBe(true)
     expect(site.length / 2).toBe(5)
 
-    // The cave carries the displaced original, then the effect, then the
-    // jump back — in that order, not merely containing the original
-    // somewhere. The first 8 bytes of the cave are reserved as the
-    // capture-mode slot, so the body starts after that offset.
+    // The cave carries the effect FIRST, then the jump back. The captured
+    // store is the write force mode replaces, so it is not replayed at all
+    // — and here the run is exactly the captured instruction, so there is
+    // no swallowed tail to replay either. The first 8 bytes of the cave are
+    // reserved as the capture-mode slot, so the body starts after that.
     const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
     const effect = 'c787180800000000af43' // FakeOps.encodeStore's fixed output
     const backJump = 'e900000000' // FakeOps.encodeJump's fixed output
     const cave = ops.memory.get(codeAddress) as string
-    expect(cave).toBe(ORIGINAL + effect + backJump)
+    expect(cave).toBe(effect + backJump)
+    expect(cave).not.toContain(ORIGINAL) // the replaced write must not run
 
-    // The byte arithmetic the brief calls out as the hazard: the back-jump
-    // must start exactly after the displaced bytes and the effect, and must
-    // return to exactly the end of the displaced run at the site — not to
-    // the site's start, and not short by the effect's length.
-    const jumpBackFrom =
-      '0x' + (BigInt(codeAddress) + BigInt(ORIGINAL.length / 2 + effect.length / 2)).toString(16)
+    // The byte arithmetic: the back-jump starts exactly after the effect
+    // and whatever was replayed, and returns to exactly the end of the
+    // displaced run at the site — not to the site's start.
+    const jumpBackFrom = '0x' + (BigInt(codeAddress) + BigInt(effect.length / 2)).toString(16)
     const returnTo = '0x' + (BigInt('0x400100') + 5n).toString(16)
     expect(ops.encodeJumpCalls).toEqual([
       { from: jumpBackFrom, to: returnTo }, // the back-jump written into the cave
@@ -195,30 +195,35 @@ describe('PatchEngine — force injection', () => {
     expect(engine.isApplied('patch-stamina')).toBe(false)
   })
 
-  // Reproduces the Valheim crash. forcePatch addresses the field through
-  // rdi; if an instruction swallowed into the displaced run writes rdi, the
-  // effect that runs after the displaced bytes dereferences whatever the
-  // game left there. In the real case that was `mov eax, 1` after a 4-byte
-  // `movss [rax], xmm5`, and the injected store faulted on address 0x1.
-  // Nothing may be written and no cave may be allocated: a refusal that has
-  // already touched the game is not a refusal.
-  it('refuses when the displaced run overwrites the register the effect addresses through', async () => {
-    ops.runClobbers = ['rdi']
-    const result = await engine.apply(forcePatch)
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('rdi')
-    expect(ops.writes).toHaveLength(0)
-    expect(ops.caves).toHaveLength(0)
-    expect(engine.isApplied('patch-stamina')).toBe(false)
-  })
+  // The Valheim crash, as a layout guarantee rather than a refusal.
+  //
+  // A 4-byte captured store followed by `mov eax, 1` made the injected
+  // store fault on address 0x1: the effect ran last, after the swallowed
+  // instruction had already overwritten the base register it addressed
+  // through. Putting the effect first makes that structurally impossible —
+  // it sees the registers exactly as the capture recorded them.
+  //
+  // This asserts the property that makes the crash unreachable: whatever
+  // else the cave replays, the effect is the FIRST thing in it.
+  it('runs the effect before any replayed instruction, so a clobbering tail cannot reach it', async () => {
+    // An 8-byte run against a 5-byte captured instruction: 3 bytes of
+    // swallowed tail, standing in for Valheim's `mov eax, 1`.
+    ops.runLength = 8
+    ops.memory.set('0x400100', ORIGINAL + 'aabbcc')
 
-  it('installs normally when the displaced run clobbers some other register', async () => {
-    // Only the effect's own base register matters — refusing on any clobber
-    // at all would reject most real captures, since the instructions after a
-    // store routinely write unrelated registers.
-    ops.runClobbers = ['rax', 'rcx']
     const result = await engine.apply(forcePatch)
     expect(result.ok).toBe(true)
+
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const effect = 'c787180800000000af43'
+    const cave = ops.memory.get(codeAddress) as string
+
+    expect(cave.startsWith(effect)).toBe(true)
+    // The swallowed tail is unrelated game code and must still run — after
+    // the effect, where it can no longer affect it.
+    expect(cave).toBe(effect + 'aabbcc' + 'e900000000')
+    // The captured store is the write being replaced; it must not run.
+    expect(cave).not.toContain(ORIGINAL)
   })
 
   it('refuses when the run cannot be decoded', async () => {
@@ -319,23 +324,20 @@ describe('PatchEngine — capture injection', () => {
   it('encodes the capture store for the address it actually executes at, not the cave code start', async () => {
     // The capture store is RIP-relative, so encoding it for the wrong
     // address silently corrupts whatever the wrong displacement happens to
-    // land on. The cave body is displaced + effect + jumpBack, so the
-    // capture instruction executes after the displaced bytes — at
-    // codeAddress + displaced.length / 2 — not at codeAddress itself. This
-    // is the exact defect the brief flagged as most likely; a regression
-    // here must fail this assertion.
+    // land on. It runs first in the cave, so it executes at codeAddress
+    // itself — and must be encoded for exactly that.
     await engine.apply(capturePatch)
     const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
-    const atAddress = '0x' + (BigInt(codeAddress) + BigInt(ORIGINAL.length / 2)).toString(16)
     expect(ops.encodeCaptureCalls).toEqual([
-      { baseRegister: 'rdi', atAddress, slotAddress: ops.caves[0] }
+      { baseRegister: 'rdi', atAddress: codeAddress, slotAddress: ops.caves[0] }
     ])
 
-    // The cave body places the capture effect between the displaced bytes
-    // and the jump back, in that order — not merely somewhere in the cave.
+    // Capture does not change what the game does, so unlike force mode the
+    // whole displaced run IS replayed — after the effect, which has already
+    // recorded the object pointer while the registers were untouched.
     const effect = '48890500000000' // FakeOps.encodeCapture's fixed output
     const backJump = 'e900000000' // FakeOps.encodeJump's fixed output
-    expect(ops.memory.get(codeAddress)).toBe(ORIGINAL + effect + backJump)
+    expect(ops.memory.get(codeAddress)).toBe(effect + ORIGINAL + backJump)
   })
 
   it('reports no slot for a patch that is not installed', () => {

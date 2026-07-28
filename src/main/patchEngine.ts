@@ -370,32 +370,6 @@ export class PatchEngine {
       }
     }
 
-    // The displaced run is not the captured instruction alone: decodeRun
-    // rounds up to whole instructions to reach the 5 a jmp rel32 needs, so a
-    // short captured store drags in whatever follows it. The cave replays
-    // `displaced + effect`, and the effect addresses the field through
-    // baseRegister — so if any swallowed instruction WRITES that register,
-    // the effect dereferences a value the game has already repurposed.
-    //
-    // This crashed Valheim: `movss [rax], xmm5` (4 bytes) followed by
-    // `mov eax, 1`. Writing eax zero-extends across all of rax, so the
-    // injected `mov dword [rax], imm32` faulted on address 0x1 every time.
-    //
-    // Refuse rather than work around it. Putting the effect BEFORE the
-    // displaced bytes would let the game's own write overwrite ours, which
-    // defeats force mode; restoring baseRegister after the run would undo a
-    // value the game expects to have changed (`mov eax, 1` is a return
-    // value). Another caught instruction is the honest answer.
-    // Checked before allocateCave so a refusal never leaks a cave.
-    if (run.clobbers.includes(patch.baseRegister as string)) {
-      return {
-        ok: false,
-        error: `Patching here would need ${patch.baseRegister} to survive, but the instruction right after this one overwrites it — the patch would crash the game. Try a different caught instruction.`,
-        caveAddress: null,
-        displaced: null
-      }
-    }
-
     const cave = this.ops.allocateCave(address)
     if (cave === null) {
       return {
@@ -410,28 +384,48 @@ export class PatchEngine {
     // fixed offset; code starts after it in both modes, so the layout is
     // the same whichever mode installed the cave.
     const codeAddress = addHex(cave, 8)
+
+    // The effect runs FIRST, before any displaced bytes.
+    //
+    // The obvious layout — replay the game's instructions, then apply the
+    // effect — is what crashed Valheim. The displaced run is not the
+    // captured instruction alone: decodeRun rounds up to whole instructions
+    // to reach the 5 a jmp rel32 needs, so a short captured store drags in
+    // whatever follows. A swallowed instruction that writes the base
+    // register then leaves the effect dereferencing a value the game has
+    // already repurposed — `movss [rax], xmm5` followed by `mov eax, 1`
+    // made the injected store fault on address 0x1, every time.
+    //
+    // Running the effect first means it always sees the registers exactly
+    // as they were at the patched instruction — the state the capture
+    // recorded them in. What follows it differs by mode:
+    //
+    //   force   the captured store is the write being REPLACED, so it is
+    //           not replayed at all. Replaying it and then overwriting
+    //           reaches the same value by doing the work twice, and only
+    //           survives when the base register happens to be untouched.
+    //           Instructions swallowed AFTER it are unrelated game code and
+    //           must still run.
+    //   capture records where the object is without changing what the game
+    //           does, so the game's own write still has to happen. The
+    //           whole displaced run is replayed after the effect.
+    const replay = mode === 'capture' ? displaced : displaced.slice(patch.length * 2)
+
     // The capture store is RIP-relative, so it must be encoded for the
-    // address it actually executes at. The cave body is
-    // displaced + effect + jumpBack, so the capture instruction does not
-    // execute at codeAddress — it executes after the displaced bytes, at
-    // codeAddress + displaced.length / 2. Encoding it for codeAddress
-    // instead would silently corrupt whatever the wrong RIP-relative target
-    // happens to be.
+    // address it actually executes at — codeAddress, now that it runs
+    // first. Encoding it for anywhere else silently corrupts whatever the
+    // wrong RIP-relative target happens to be.
     const effect =
       mode === 'capture'
-        ? this.ops.encodeCapture(
-            patch.baseRegister as string,
-            addHex(codeAddress, displaced.length / 2),
-            cave
-          )
+        ? this.ops.encodeCapture(patch.baseRegister as string, codeAddress, cave)
         : this.ops.encodeStore(
             patch.baseRegister as string,
             Number(BigInt(patch.fieldOffset as string)),
             valueBits(patch.value as number, patch.dataType as DataType)
           )
     const returnTo = addHex(address, run.length)
-    const jumpBackFrom = addHex(codeAddress, displaced.length / 2 + effect.length / 2)
-    const body = displaced + effect + this.ops.encodeJump(jumpBackFrom, returnTo)
+    const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
+    const body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
 
     if (!this.ops.writeBytes(codeAddress, body)) {
       return { ok: false, error: 'Failed to write the injected code.', caveAddress: null, displaced: null }
