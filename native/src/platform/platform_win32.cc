@@ -21,6 +21,14 @@ bool ReadPeFields(platform::ProcessHandle handle, uintptr_t base,
   IMAGE_NT_HEADERS64 nt{};
   if (!platform::ReadMemory(handle, base + dos.e_lfanew, &nt, sizeof(nt))) return false;
   if (nt.Signature != IMAGE_NT_SIGNATURE) return false;
+  // This project is x86-64 only. A 32-bit target's IMAGE_OPTIONAL_HEADER32
+  // has a different layout before SizeOfImage (no 8-byte ImageBase, plus a
+  // BaseOfData field the 64-bit header doesn't have), so reading it through
+  // the 64-bit struct lands on the wrong offset and produces a plausible
+  // but wrong size/timestamp instead of an obvious failure. Refuse instead
+  // of guessing: a wrong build fingerprint is worse than none, since it
+  // would mark a changed build as verified.
+  if (nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return false;
   size = nt.OptionalHeader.SizeOfImage;
   timestamp = nt.FileHeader.TimeDateStamp;
   return true;
