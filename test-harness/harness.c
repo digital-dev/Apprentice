@@ -56,6 +56,10 @@ static volatile int g_drain_running = 0;
 static volatile int g_wide_running = 0;
 static volatile int g_shield_running = 0;
 
+static HMODULE g_probe_dll = NULL;
+static void (*g_probe_write)(float*, float) = NULL;
+static float g_probe_target = 5.0f;
+
 // The instruction under test for code patching. Non-inlined and taking the
 // counter as a runtime pointer argument, so the compiler emits a real
 // memory read-modify-write through a general-purpose register (e.g.
@@ -238,7 +242,27 @@ int main(void) {
     if (line[0] == 'q') break;
     int val;
     float fval;
-    if (sscanf(line, "set %d", &val) == 1) {
+    if (strncmp(line, "loaddll2", 8) == 0) {
+      if (g_probe_dll == NULL) g_probe_dll = LoadLibraryA("test-harness\\probe2.dll");
+      if (g_probe_dll == NULL) printf("ERR\n");
+      else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_probe_dll);
+    } else if (strncmp(line, "loaddll", 7) == 0) {
+      if (g_probe_dll == NULL) g_probe_dll = LoadLibraryA("test-harness\\probe.dll");
+      if (g_probe_dll == NULL) {
+        printf("ERR\n");
+      } else {
+        g_probe_write = (void (*)(float*, float))GetProcAddress(g_probe_dll, "probe_write");
+        printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_probe_dll);
+      }
+    } else if (strncmp(line, "unloaddll", 9) == 0) {
+      if (g_probe_dll != NULL) { FreeLibrary(g_probe_dll); g_probe_dll = NULL; g_probe_write = NULL; }
+      printf("OK\n");
+    } else if (strncmp(line, "probewrite", 10) == 0) {
+      if (g_probe_write != NULL) g_probe_write(&g_probe_target, 42.0f);
+      printf("OK\n");
+    } else if (strncmp(line, "probeget", 8) == 0) {
+      printf("OK %f\n", g_probe_target);
+    } else if (sscanf(line, "set %d", &val) == 1) {
       *g_health_ptr = val;
       printf("OK\n");
     } else if (sscanf(line, "setf %f", &fval) == 1) {
