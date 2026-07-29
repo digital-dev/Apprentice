@@ -8,11 +8,13 @@ being trustworthy when the game updates.
 #7 proved a patch can relocate by byte-pattern scan and survive a restart.
 What it did not do is make that automatic or safe at scale:
 
-- **Nothing anchors to a module.** `PatchCheat` has `moduleName` and
-  `moduleOffset` fields, and every capture writes `null` into both. Even
-  for a game whose code sits at a fixed offset in a loaded DLL — which is
-  most games that are not Mono-JIT — relocation means scanning every
-  executable region in the process and hoping the pattern is unique.
+- **Nothing verifies a module anchor.** Capture already records
+  `moduleName` and `moduleOffset` when the instruction lies inside a
+  module, and `resolveAddress` will happily do the arithmetic — but it
+  trusts the offset blindly, never checking that the bytes there are still
+  the captured instruction, and never falling back to a scan when they are
+  not. Valheim's own patch has `null` for both because Mono JIT code is not
+  in any module, so this path has never actually run against a game.
 - **Nothing knows what build the cheat was captured against.** A game
   update can move, rewrite or delete the captured code. Today the only
   defence is that the signature stops matching; if it still matches
@@ -39,8 +41,8 @@ running and where its modules are, so this one comes first.
   a cheat anchors into, alongside the cheats themselves. Backwards
   compatible with today's bare-array `games/*.json`.
 - Module enumeration in the native layer, through the platform seam.
-- Recording `moduleName` + `moduleOffset` at capture time when the captured
-  instruction lies inside a module.
+- Recording the fingerprint of a patch's module into the profile when that
+  patch is saved. (`moduleName` + `moduleOffset` are already captured.)
 - An anchor resolution strategy that prefers arithmetic (module base +
   RVA) over scanning, verifies bytes either way, and re-learns the RVA
   when a scan relocates a patch in a changed build.
@@ -131,10 +133,18 @@ handful of reads and no file I/O — hashing a multi-hundred-megabyte
 preserve both size and timestamp are not the failure mode we are defending
 against.
 
+Version comes from the module file's version resource where it has one, and
+is `null` otherwise; it is recorded for the user's benefit and is not part
+of the match test, so a game that ships unversioned DLLs loses nothing.
+
 A cheat is **verified** when the module it names has a fingerprint in the
-profile and that fingerprint matches what is loaded now. Anything else —
-module absent, fingerprint absent, fingerprint different — makes the cheat
-**unverified**.
+profile and that fingerprint's `size` and `timestamp` match what is loaded
+now. Anything else — module absent, fingerprint absent, fingerprint
+different — makes the cheat **unverified**.
+
+Fingerprints are recorded on save: when a patch naming a module is written
+to a profile, that module's currently-loaded fingerprint goes in with it.
+`moduleName` and `moduleOffset` themselves are already captured today.
 
 ### `anchor.ts` — where a patch lives now
 
