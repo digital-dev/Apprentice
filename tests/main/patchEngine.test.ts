@@ -818,3 +818,55 @@ describe('PatchEngine — locating a patch that is already installed', () => {
     expect(ops.memory.get('0x400100')).toBe(ORIGINAL)
   })
 })
+
+describe('PatchEngine — arming a guard', () => {
+  const guardWithArm: PatchCheat = {
+    kind: 'patch',
+    mode: 'guard',
+    id: 'patch-armed',
+    name: 'God Mode',
+    originalBytes: ORIGINAL,
+    length: 5,
+    signature: 'f3 0f 11 41 10',
+    moduleName: 'game.exe',
+    moduleOffset: '0x100',
+    baseRegister: 'rsi',
+    armValue: '0x1c6986d75e4'
+  }
+
+  // Self-arming takes whichever entity the game touches first, and at a site
+  // that runs for every loaded creature that is essentially never the player
+  // — a real session watched it lock onto a stranger three times running.
+  // The capture already knows which object was writing the watched address,
+  // so the slot is seeded with it at install.
+  it('writes the armed pointer into the slot, little-endian', async () => {
+    const result = await engine.apply(guardWithArm)
+    expect(result.ok).toBe(true)
+
+    // The slot is the first 8 bytes of the cave, ahead of the code.
+    const slot = ops.memory.get(ops.caves[0]) as string
+    expect(slot).toBe('e4756d98c6010000')
+    // Round-trips back to the address we asked to protect.
+    const bytes = slot.match(/../g) as string[]
+    expect('0x' + BigInt('0x' + bytes.reverse().join('')).toString(16)).toBe('0x1c6986d75e4')
+  })
+
+  it('arms before the site is redirected, so nothing can reach an empty slot', async () => {
+    await engine.apply(guardWithArm)
+    // Order matters: cave slot, cave body, then the site jump last. A guard
+    // reachable before it is armed would protect whatever arrived first,
+    // which is the bug seeding exists to remove.
+    const addresses = ops.writes.map((w) => w.address)
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    expect(addresses).toEqual([ops.caves[0], codeAddress, '0x400100'])
+  })
+
+  it('falls back to self-arming when no armValue is stored', async () => {
+    const unarmed = { ...guardWithArm, id: 'patch-unarmed', armValue: undefined } as PatchCheat
+    const result = await engine.apply(unarmed)
+    expect(result.ok).toBe(true)
+    // No slot write — the injected code arms itself at runtime instead.
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    expect(ops.writes.map((w) => w.address)).toEqual([codeAddress, '0x400100'])
+  })
+})

@@ -278,7 +278,12 @@ export default function Scanner({
         : {}),
       // guard is a patch the user toggles directly, like nop — it just
       // decides per-object whether the game's own write runs.
-      ...(patchModeChoice === 'guard' ? { baseRegister: insn.baseRegister } : {})
+      // baseAddress is what the register actually held when this instruction
+      // wrote the address being watched — the user's own object. Seeding the
+      // guard with it beats racing every other entity for the slot.
+      ...(patchModeChoice === 'guard'
+        ? { baseRegister: insn.baseRegister, armValue: insn.baseAddress }
+        : {})
     }
     // Saving reads the game's cheat file before rewriting it, so it fails
     // whenever that file is unreadable — a hand-edit that left invalid JSON

@@ -77,8 +77,14 @@ export interface PatchCheat {
   internal?: boolean
   moduleName: string | null // named module, or null for JIT/anonymous code
   moduleOffset: string | null // hex offset within that module
-  // force and capture: which register held the object at capture time.
+  // force, capture and guard: which register held the object at capture time.
   baseRegister?: string
+  // guard only: the value that register held when the capture caught it
+  // writing the watched address — i.e. the object that is actually yours.
+  // Written into the slot at install so the guard protects the right thing
+  // immediately, instead of self-arming on whichever entity the game happens
+  // to touch first. Absent means fall back to self-arming.
+  armValue?: string
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
   fieldOffset?: string

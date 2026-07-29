@@ -135,6 +135,18 @@ interface InstallResult {
   displaced: string | null
 }
 
+// An address as the 8 little-endian bytes the slot holds, so a guard can be
+// pre-armed with the object the capture actually saw.
+export function pointerToSlotHex(address: string): string {
+  let value = BigInt(address)
+  let out = ''
+  for (let i = 0; i < 8; i++) {
+    out += (value & 0xffn).toString(16).padStart(2, '0')
+    value >>= 8n
+  }
+  return out
+}
+
 function addHex(address: string, delta: number): string {
   return '0x' + (BigInt(address) + BigInt(delta)).toString(16)
 }
@@ -470,6 +482,23 @@ export class PatchEngine {
             )
     const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
     const body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
+
+    // Pre-arm the guard before anything can reach the cave. Self-arming
+    // takes whichever entity the game touches first, and at a site that runs
+    // for every loaded creature that is essentially never the player — a
+    // real session watched it lock onto a stranger three times running. The
+    // capture already recorded the register's value at the moment it wrote
+    // the address the user was watching, which is by construction theirs.
+    if (mode === 'guard' && patch.armValue) {
+      if (!this.ops.writeBytes(cave, pointerToSlotHex(patch.armValue))) {
+        return {
+          ok: false,
+          error: 'Failed to arm the guard.',
+          caveAddress: null,
+          displaced: null
+        }
+      }
+    }
 
     if (!this.ops.writeBytes(codeAddress, body)) {
       return { ok: false, error: 'Failed to write the injected code.', caveAddress: null, displaced: null }

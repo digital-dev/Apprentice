@@ -6,8 +6,8 @@
     "name": "Health",
     "originalBytes": "f30f1128",
     "length": 4,
-    "signature": "8d 44 88 20 f2 0f 5a e8 f3 0f 11 28 b8 01 00 00 00 e9 c1 00 00 00",
-    "signatureOffset": 8,
+    "signature": "48 8b 47 18 f3 0f 10 45 d8 f3 0f 5a c0 49 63 cf 39 48 18 0f 86 0b 01 00 00 48 8d 44 88 20 f2 0f 5a e8 f3 0f 11 28 b8 01 00 00 00 e9 c1 00 00 00",
+    "signatureOffset": 34,
     "moduleName": null,
     "moduleOffset": null,
     "baseRegister": "rax"
