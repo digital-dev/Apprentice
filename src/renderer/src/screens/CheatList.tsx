@@ -175,7 +175,11 @@ export default function CheatList({
   // than read once, or an armed patch looks broken until something happens
   // to touch it.
   useEffect(() => {
-    const captures = patches.filter((p) => p.mode === 'capture' && patchEnabled.has(p.id))
+    // guard remembers an object too, and seeing which one it locked onto is
+    // the only way to tell "armed on the wrong entity" from "not working".
+    const captures = patches.filter(
+      (p) => (p.mode === 'capture' || p.mode === 'guard') && patchEnabled.has(p.id)
+    )
     if (captures.length === 0) return
     let cancelled = false
 
@@ -509,18 +513,21 @@ export default function CheatList({
                     ? 'capture'
                     : patch.mode === 'force'
                       ? 'force'
-                      : 'code patch'}
+                      : patch.mode === 'guard'
+                        ? 'guard'
+                        : 'code patch'}
                 </span>
-                {patch.mode === 'capture' && patchEnabled.has(patch.id) && (
+                {(patch.mode === 'capture' || patch.mode === 'guard') &&
+                  patchEnabled.has(patch.id) && (
                   // The address an anchored cheat resolves through. Shown so
                   // authoring one doesn't mean inferring the object's address
                   // from a pair of value scans and some subtraction.
                   <span className="address-chip" title="Use this patch's id as an anchor patchId">
                     {slotInfo?.pointer
-                      ? `captured ${slotInfo.pointer}`
+                      ? `${patch.mode === 'guard' ? 'protecting' : 'captured'} ${slotInfo.pointer}`
                       : 'waiting for the game to run this code'}
                   </span>
-                )}
+                  )}
                 {status && (
                   <span
                     className="address-chip"

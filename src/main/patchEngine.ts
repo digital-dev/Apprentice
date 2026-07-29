@@ -253,7 +253,13 @@ export class PatchEngine {
   // patch has no memory in the game to read from.
   slotAddress(id: string): string | null {
     const entry = this.applied.get(id)
-    if (!entry || entry.mode !== 'capture') return null
+    // Both injected modes that remember something use the same slot at the
+    // cave's start: capture records the object for an anchored cheat to read
+    // through, guard records the one object it protects. Reporting guard's
+    // too is what lets the UI show which entity a guard locked onto — without
+    // it, a guard that armed on the wrong thing is indistinguishable from one
+    // that isn't working, and both just look like "it does nothing".
+    if (!entry || (entry.mode !== 'capture' && entry.mode !== 'guard')) return null
     return entry.caveAddress
   }
 
