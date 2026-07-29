@@ -11,6 +11,7 @@
         "src/write_watch.cc",
         "src/patch_ops.cc",
         "src/cave_ops.cc",
+        "src/module_info.cc",
         "third_party/zydis/Zydis.c"
       ],
       "include_dirs": [
@@ -24,7 +25,7 @@
         "VCCLCompilerTool": { "ExceptionHandling": 1, "AdditionalOptions": ["/std:c++17"] }
       },
       "conditions": [
-        ["OS=='win'", { "sources": [ "src/platform/platform_win32.cc" ], "libraries": ["-lpsapi.lib"] }],
+        ["OS=='win'", { "sources": [ "src/platform/platform_win32.cc" ], "libraries": ["-lpsapi.lib", "-lversion.lib"] }],
         ["OS=='linux'", { "sources": [ "src/platform/platform_linux.cc" ] }]
       ]
     }

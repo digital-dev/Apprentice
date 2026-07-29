@@ -28,5 +28,9 @@ bool QueryRegion(ProcessHandle, uintptr_t, Region&) { return false; }
 uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }
 bool SuspendAll(ProcessHandle, uint32_t) { return false; }
 void ResumeAll() {}
+bool ListModules(ProcessHandle, std::vector<ModuleInfo>& out) {
+  out.clear();
+  return false;
+}
 
 } // namespace platform

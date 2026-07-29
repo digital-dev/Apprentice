@@ -1,12 +1,49 @@
 #include "platform.h"
 #include <windows.h>
 #include <tlhelp32.h>
+#include <psapi.h>
 #include <vector>
+#include <string>
 
 namespace platform {
 namespace {
 std::vector<HANDLE> g_suspended;
 constexpr uintptr_t kJumpReach = 0x7FFF0000;
+
+// Reads SizeOfImage and TimeDateStamp out of the image mapped in the target.
+// e_lfanew leads from the DOS header to the NT headers; both fields live in
+// the NT headers, so this is two small reads and no file I/O.
+bool ReadPeFields(platform::ProcessHandle handle, uintptr_t base,
+                  uint32_t& size, uint32_t& timestamp) {
+  IMAGE_DOS_HEADER dos{};
+  if (!platform::ReadMemory(handle, base, &dos, sizeof(dos))) return false;
+  if (dos.e_magic != IMAGE_DOS_SIGNATURE) return false;
+  IMAGE_NT_HEADERS64 nt{};
+  if (!platform::ReadMemory(handle, base + dos.e_lfanew, &nt, sizeof(nt))) return false;
+  if (nt.Signature != IMAGE_NT_SIGNATURE) return false;
+  size = nt.OptionalHeader.SizeOfImage;
+  timestamp = nt.FileHeader.TimeDateStamp;
+  return true;
+}
+
+// Best-effort file version. Absent for most game DLLs and for anything
+// without a VERSIONINFO resource; recorded for the user, never compared.
+std::string ReadFileVersion(const char* fullPath) {
+  DWORD ignored = 0;
+  DWORD sz = GetFileVersionInfoSizeA(fullPath, &ignored);
+  if (sz == 0) return "";
+  std::vector<uint8_t> buf(sz);
+  if (!GetFileVersionInfoA(fullPath, 0, sz, buf.data())) return "";
+  VS_FIXEDFILEINFO* ffi = nullptr;
+  UINT len = 0;
+  if (!VerQueryValueA(buf.data(), "\\", (LPVOID*)&ffi, &len) || ffi == nullptr) return "";
+  char out[64];
+  snprintf(out, sizeof(out), "%u.%u.%u.%u",
+           HIWORD(ffi->dwFileVersionMS), LOWORD(ffi->dwFileVersionMS),
+           HIWORD(ffi->dwFileVersionLS), LOWORD(ffi->dwFileVersionLS));
+  return out;
+}
+
 } // namespace
 
 bool IsSupported() { return true; }
@@ -187,6 +224,34 @@ bool SuspendAll(ProcessHandle handle, uint32_t pid) {
 void ResumeAll() {
   for (HANDLE th : g_suspended) { ResumeThread(th); CloseHandle(th); }
   g_suspended.clear();
+}
+
+bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
+  out.clear();
+  HANDLE h = reinterpret_cast<HANDLE>(handle);
+  HMODULE mods[1024];
+  DWORD needed = 0;
+  if (!EnumProcessModulesEx(h, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) return false;
+  size_t count = needed / sizeof(HMODULE);
+  if (count > 1024) count = 1024;
+  for (size_t i = 0; i < count; i++) {
+    ModuleInfo info;
+    info.base = reinterpret_cast<uintptr_t>(mods[i]);
+    char name[MAX_PATH] = {0};
+    if (GetModuleBaseNameA(h, mods[i], name, MAX_PATH) == 0) continue;
+    info.name = name;
+    uint32_t size = 0, timestamp = 0;
+    if (ReadPeFields(handle, info.base, size, timestamp)) {
+      info.size = size;
+      info.timestamp = timestamp;
+    }
+    char fullPath[MAX_PATH] = {0};
+    if (GetModuleFileNameExA(h, mods[i], fullPath, MAX_PATH) != 0) {
+      info.version = ReadFileVersion(fullPath);
+    }
+    out.push_back(info);
+  }
+  return true;
 }
 
 } // namespace platform

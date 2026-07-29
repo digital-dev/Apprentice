@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <string>
+#include <vector>
 
 // The OS operations code injection needs, and nothing else. Windows is the
 // platform that works today; the Linux backend is a stub that refuses
@@ -21,6 +23,18 @@ struct Region {
   bool readable = false;
   bool executable = false;
 };
+
+struct ModuleInfo {
+  std::string name;      // file name only, e.g. "GameAssembly.dll"
+  uintptr_t base = 0;
+  uint32_t size = 0;      // PE SizeOfImage
+  uint32_t timestamp = 0; // PE TimeDateStamp
+  std::string version;    // file version resource, empty when absent
+};
+
+// Every module loaded in the target. False on failure (protected or exiting
+// process); callers treat that as "cannot verify" rather than as an error.
+bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out);
 
 bool IsSupported();
 const char* Name();

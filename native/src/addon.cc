@@ -6,6 +6,7 @@
 #include "write_watch.h"
 #include "patch_ops.h"
 #include "cave_ops.h"
+#include "module_info.h"
 #include "platform/platform.h"
 
 #include <string>
@@ -75,6 +76,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("encodeJump", Napi::Function::New(env, EncodeJump));
   exports.Set("suspendThreads", Napi::Function::New(env, SuspendThreads));
   exports.Set("resumeThreads", Napi::Function::New(env, ResumeThreads));
+  exports.Set("listModules", Napi::Function::New(env, ListModules));
   return exports;
 }
 

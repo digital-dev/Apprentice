@@ -3,6 +3,13 @@ import path from 'node:path'
 const addon = require(path.join(__dirname, '../../native/build/Release/memory_addon.node'))
 
 export interface ProcessInfo { pid: number; name: string }
+export interface ModuleInfo {
+  name: string
+  base: string
+  size: number
+  timestamp: number
+  version: string | null
+}
 export interface AttachResult { handle: number; baseAddress: string }
 export interface Candidate { address: string; value: number }
 export type ScanFilter =
@@ -134,5 +141,9 @@ export const nativeAddon = {
   platformName: (): { name: string; supported: boolean } => addon.platformName(),
   suspendThreads: (handle: number, pid: number): boolean =>
     addon.suspendThreads(handle, pid),
-  resumeThreads: (): void => addon.resumeThreads()
+  resumeThreads: (): void => addon.resumeThreads(),
+  // Every module loaded in the target, with the PE fields a build
+  // fingerprint is made of. Returns [] rather than throwing when the
+  // process is protected or exiting — "cannot verify" is a normal answer.
+  listModules: (handle: number): ModuleInfo[] => addon.listModules(handle)
 }
