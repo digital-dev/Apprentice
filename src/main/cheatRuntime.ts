@@ -53,6 +53,12 @@ export class CheatRuntime {
   private states = new Map<string, CheatStatus>()
   private timers = new Map<string, unknown>()
   private armed = new Map<string, PatchCheat>()
+  // Bumped on every arm(). A stale attempt() continuation from a prior
+  // arm captures the generation it started with, so a disarm()+arm() that
+  // happens while it's mid-await can't have it write into states or
+  // register an orphaned timer once it finally resolves — armed.has() alone
+  // isn't enough, since a re-arm repopulates the same key.
+  private generations = new Map<string, number>()
   private changeCb: ((patchId: string, status: CheatStatus) => void) | null = null
 
   constructor(deps: RuntimeDeps, clock: Clock = realClock) {
@@ -78,6 +84,8 @@ export class CheatRuntime {
     const current = this.status(patch.id).state
     if (current === 'arming' || current === 'active' || current === 'degraded') return
     this.armed.set(patch.id, patch)
+    const generation = (this.generations.get(patch.id) ?? 0) + 1
+    this.generations.set(patch.id, generation)
     this.set(patch.id, {
       state: 'arming',
       unverified: !this.deps.isVerified(patch),
@@ -85,13 +93,14 @@ export class CheatRuntime {
       address: null,
       attempts: 0
     })
-    void this.attempt(patch)
+    void this.attempt(patch, generation)
   }
 
   disarm(patchId: string, patch?: PatchCheat): void {
     this.cancelTimer(patchId)
+    const target = this.armed.get(patchId) ?? patch
     this.armed.delete(patchId)
-    const target = patch ?? undefined
+    this.generations.set(patchId, (this.generations.get(patchId) ?? 0) + 1)
     if (target) this.deps.restore(target)
     this.states.set(patchId, idle())
     this.changeCb?.(patchId, idle())
@@ -114,6 +123,7 @@ export class CheatRuntime {
   processExited(): void {
     for (const id of Array.from(this.states.keys())) {
       this.cancelTimer(id)
+      this.generations.set(id, (this.generations.get(id) ?? 0) + 1)
       this.states.set(id, idle())
       this.changeCb?.(id, idle())
     }
@@ -128,11 +138,17 @@ export class CheatRuntime {
     }
   }
 
-  private async attempt(patch: PatchCheat): Promise<void> {
-    if (!this.armed.has(patch.id)) return
+  // `generation` pins this call to the arm() that started it. Every check
+  // below confirms this.generations still matches it, not just that the
+  // key is present in `armed` — a disarm()+arm() that races a stale
+  // in-flight attempt bumps the generation, so the stale continuation's
+  // eventual resolution becomes a no-op instead of clobbering the new
+  // attempt's state or scheduling an orphaned timer.
+  private async attempt(patch: PatchCheat, generation: number): Promise<void> {
+    if (this.generations.get(patch.id) !== generation) return
     const attempts = this.status(patch.id).attempts + 1
     const located = await this.deps.locate(patch)
-    if (!this.armed.has(patch.id)) return // disarmed while we were away
+    if (this.generations.get(patch.id) !== generation) return // superseded while we were away
 
     if (located.address === null) {
       const retryable = located.reason !== null && RETRYABLE.includes(located.reason)
@@ -146,14 +162,14 @@ export class CheatRuntime {
         patch.id,
         this.clock.setTimeout(() => {
           this.timers.delete(patch.id)
-          void this.attempt(patch)
+          void this.attempt(patch, generation)
         }, delay)
       )
       return
     }
 
     const applied = await this.deps.apply(patch)
-    if (!this.armed.has(patch.id)) return
+    if (this.generations.get(patch.id) !== generation) return
     if (!applied.ok) {
       this.set(patch.id, { state: 'failed', reason: null, address: located.address, attempts })
       return

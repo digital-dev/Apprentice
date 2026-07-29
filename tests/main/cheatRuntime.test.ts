@@ -212,4 +212,37 @@ describe('CheatRuntime', () => {
     await settle()
     expect(deps.applyCalls).toBe(before)
   })
+
+  it('a stale attempt from before a disarm+re-arm race does not clobber the new arm', async () => {
+    // Hold the first locate() forever so its attempt() is still mid-await
+    // when we disarm and re-arm. If the stale continuation isn't fenced by
+    // generation, its eventual resolution overwrites the state the new
+    // arm() produced and registers a second, orphaned retry timer.
+    let releaseFirst: (() => void) | null = null
+    const firstLocate = new Promise<void>((r) => (releaseFirst = r))
+    let locateCalls = 0
+    deps.locate = async () => {
+      locateCalls++
+      if (locateCalls === 1) {
+        await firstLocate
+        return { address: null, reason: 'not-yet-compiled' as AnchorReason }
+      }
+      return { address: '0x9000', reason: null }
+    }
+
+    runtime.arm(patch) // starts attempt #1, which blocks inside locate()
+    runtime.disarm('p1', patch)
+    runtime.arm(patch) // starts attempt #2 while #1 is still pending
+    await settle()
+    expect(runtime.status('p1').state).toBe('active')
+    expect(runtime.status('p1').address).toBe('0x9000')
+
+    // Now let the stale first attempt resolve. It should be a no-op: no
+    // clobbered state, no orphaned retry timer.
+    releaseFirst!()
+    await settle()
+    expect(runtime.status('p1').state).toBe('active')
+    expect(runtime.status('p1').address).toBe('0x9000')
+    expect(clock.pending).toHaveLength(0)
+  })
 })
