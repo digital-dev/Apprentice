@@ -103,9 +103,15 @@ export const nativeAddon = {
   writeBytes: (handle: number, address: string, hexBytes: string): boolean =>
     addon.writeBytes(handle, address, hexBytes),
   // Runs on a background thread in the addon (Napi::AsyncWorker) and returns
-  // a Promise — it walks all executable memory of the target.
-  scanAob: (handle: number, signature: string): Promise<string[]> =>
-    addon.scanAob(handle, signature),
+  // a Promise. Bounds are optional and restrict the walk to one module's
+  // address range; absent bounds walk all executable memory, exactly as
+  // before.
+  scanAob: (
+    handle: number,
+    signature: string,
+    rangeStart?: string,
+    rangeEnd?: string
+  ): Promise<string[]> => addon.scanAob(handle, signature, rangeStart, rangeEnd),
   startWriteWatch: (pid: number, address: string): void =>
     addon.startWriteWatch(pid, address),
   pollWriteWatch: (): CaughtInstruction[] => addon.pollWriteWatch(),

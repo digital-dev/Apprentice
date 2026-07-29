@@ -89,13 +89,20 @@ bool ParseSignature(const std::string& sig, std::vector<PatternByte>& out) {
 // PAGE_EXECUTE is excluded because it isn't readable, so ReadProcessMemory
 // would fail on it anyway. One bulk read per region, same as the value
 // scanner — a per-address read is what made earlier scans look hung.
-std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& pattern) {
+// `rangeStart`/`rangeEnd` are inclusive-exclusive bounds. rangeEnd == 0
+// means "no upper bound", which is how an unbounded call arrives here — the
+// existing behaviour, byte for byte.
+std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& pattern,
+                                   uintptr_t rangeStart, uintptr_t rangeEnd) {
   std::vector<uintptr_t> out;
   const size_t plen = pattern.size();
 
   MEMORY_BASIC_INFORMATION mbi;
-  uintptr_t addr = 0;
+  uintptr_t addr = rangeStart;
   while (VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+    uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+    if (rangeEnd != 0 && regionBase >= rangeEnd) break;
+
     bool executable = (mbi.State == MEM_COMMIT) &&
         (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
         !(mbi.Protect & PAGE_GUARD);
@@ -112,7 +119,12 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
             if (pattern[k].wildcard) continue;
             if (buffer[offset + k] != pattern[k].value) { match = false; break; }
           }
-          if (match) out.push_back(base + offset);
+          if (match) {
+            uintptr_t hit = base + offset;
+            if (hit >= rangeStart && (rangeEnd == 0 || hit + plen <= rangeEnd)) {
+              out.push_back(hit);
+            }
+          }
         }
       }
     }
@@ -129,15 +141,18 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
 // blocking the entire Electron app.
 class ScanAobWorker : public Napi::AsyncWorker {
  public:
-  ScanAobWorker(Napi::Env env, HANDLE handle, std::vector<PatternByte> pattern)
+  ScanAobWorker(Napi::Env env, HANDLE handle, std::vector<PatternByte> pattern,
+                uintptr_t rangeStart, uintptr_t rangeEnd)
       : Napi::AsyncWorker(env),
         handle_(handle),
         pattern_(std::move(pattern)),
+        rangeStart_(rangeStart),
+        rangeEnd_(rangeEnd),
         deferred_(Napi::Promise::Deferred::New(env)) {}
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { results_ = RunScanAob(handle_, pattern_); }
+  void Execute() override { results_ = RunScanAob(handle_, pattern_, rangeStart_, rangeEnd_); }
 
   void OnOK() override {
     Napi::Env env = Env();
@@ -153,6 +168,8 @@ class ScanAobWorker : public Napi::AsyncWorker {
  private:
   HANDLE handle_;
   std::vector<PatternByte> pattern_;
+  uintptr_t rangeStart_;
+  uintptr_t rangeEnd_;
   std::vector<uintptr_t> results_;
   Napi::Promise::Deferred deferred_;
 };
@@ -243,7 +260,11 @@ Napi::Value ScanAob(const Napi::CallbackInfo& info) {
     return env.Null();
   }
 
-  auto* worker = new ScanAobWorker(env, h, std::move(pattern));
+  uintptr_t rangeStart = 0, rangeEnd = 0;
+  if (info.Length() >= 3 && info[2].IsString()) rangeStart = ParseHex(info[2].As<Napi::String>().Utf8Value());
+  if (info.Length() >= 4 && info[3].IsString()) rangeEnd = ParseHex(info[3].As<Napi::String>().Utf8Value());
+
+  auto* worker = new ScanAobWorker(env, h, std::move(pattern), rangeStart, rangeEnd);
   Napi::Promise promise = worker->GetPromise();
   worker->Queue();
   return promise;

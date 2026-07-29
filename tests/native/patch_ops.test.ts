@@ -202,3 +202,41 @@ describe('scanAob', () => {
     expect(() => (addon as any).scanAob(handle, 'zz 11')).toThrow()
   })
 })
+
+describe('scanAob bounds', () => {
+  it('finds a pattern inside the given range and not outside it', async () => {
+    const reply = await send('loaddll')
+    const base = reply.split(' ')[1]
+    const mods = (addon as any).listModules(handle)
+    const probe = mods.find((m: any) => m.name.toLowerCase() === 'probe.dll')
+    const end = '0x' + (BigInt(probe.base) + BigInt(probe.size)).toString(16)
+
+    // Take a real byte run out of the probe's code and scan for it. Not
+    // probe.base itself — that's the PE header (DOS/NT headers), which sits
+    // on a non-executable page, and scanAob only ever walks executable
+    // regions (by design — see RunScanAob's comment). 0x1000 is past the
+    // headers and into .text (confirmed against probe.c's actual layout);
+    // PAD_SIZE only grows g_pad at the end of the image, so this offset is
+    // stable across both probe.dll build variants.
+    const codeAddress = '0x' + (BigInt(probe.base) + 0x1000n).toString(16)
+    const someCode = (addon as any).readBytes(handle, codeAddress, 16)
+    const sig = (someCode.match(/../g) as string[]).join(' ')
+
+    const inRange = await (addon as any).scanAob(handle, sig, base, end)
+    expect(inRange.length).toBeGreaterThan(0)
+
+    // A range that ends before the module starts cannot contain it.
+    const belowEnd = '0x' + (BigInt(probe.base) - 1n).toString(16)
+    const outOfRange = await (addon as any).scanAob(handle, sig, '0x1000', belowEnd)
+    expect(outOfRange).not.toContain(probe.base)
+
+    await send('unloaddll')
+  })
+
+  it('with no bounds behaves as before', async () => {
+    // The existing unbounded call must keep working unchanged — this is the
+    // back-compat guarantee every existing caller relies on.
+    const matches = await (addon as any).scanAob(handle, '90 90 90 90')
+    expect(Array.isArray(matches)).toBe(true)
+  })
+})
