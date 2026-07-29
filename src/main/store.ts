@@ -1,5 +1,4 @@
-import fs from 'node:fs'
-import path from 'node:path'
+import { loadProfile, saveProfile, setProfileDir } from './profile'
 
 export type CheatMode = 'freeze' | 'oneshot'
 export type DataType = 'int32' | 'float'
@@ -102,55 +101,24 @@ export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'gua
   return patch.mode ?? 'nop'
 }
 
-let gamesDir = path.resolve(__dirname, '../../games')
-
 export function setGamesDir(dir: string): void {
-  gamesDir = dir
-}
-
-function filePathFor(exeName: string): string {
-  return path.join(gamesDir, `${exeName.replace(/\.exe$/i, '')}.json`)
+  setProfileDir(dir)
 }
 
 export function loadCheats(exeName: string): StoredCheat[] {
-  const file = filePathFor(exeName)
-  if (!fs.existsSync(file)) return []
-  const raw = fs.readFileSync(file, 'utf-8')
-  // An empty file is the same as no file — a truncated write or a
-  // half-finished hand-edit leaves one behind, and there is nothing in it
-  // to lose by treating it as no cheats.
-  if (raw.trim() === '') return []
-  try {
-    return JSON.parse(raw) as StoredCheat[]
-  } catch (err) {
-    // Deliberately NOT recovering by returning []. saveCheat loads, appends
-    // and rewrites, so swallowing a parse failure here would replace a file
-    // full of cheats with whichever single one was being saved — silent
-    // data loss, and the user's own edit is the likeliest cause of the
-    // parse failure in the first place.
-    //
-    // Throwing is what makes the failure visible. When this file was left
-    // empty by an editor, the bare JSON.parse threw here, saveCheat threw
-    // with it, and "Create patch" did nothing at all with no message — the
-    // symptom looked like a broken button rather than a broken file.
-    throw new Error(
-      `${file} isn't valid JSON (${(err as Error).message}). Fix or delete the file — refusing to overwrite it and lose the cheats it holds.`
-    )
-  }
+  return loadProfile(exeName).cheats
 }
 
 export function saveCheat(exeName: string, cheat: StoredCheat): void {
-  const cheats = loadCheats(exeName)
-  const idx = cheats.findIndex((c) => c.id === cheat.id)
-  if (idx >= 0) cheats[idx] = cheat
-  else cheats.push(cheat)
-
-  fs.mkdirSync(gamesDir, { recursive: true })
-  fs.writeFileSync(filePathFor(exeName), JSON.stringify(cheats, null, 2))
+  const profile = loadProfile(exeName)
+  const idx = profile.cheats.findIndex((c) => c.id === cheat.id)
+  if (idx >= 0) profile.cheats[idx] = cheat
+  else profile.cheats.push(cheat)
+  saveProfile(exeName, profile)
 }
 
 export function deleteCheat(exeName: string, cheatId: string): void {
-  const cheats = loadCheats(exeName).filter((c) => c.id !== cheatId)
-  fs.mkdirSync(gamesDir, { recursive: true })
-  fs.writeFileSync(filePathFor(exeName), JSON.stringify(cheats, null, 2))
+  const profile = loadProfile(exeName)
+  profile.cheats = profile.cheats.filter((c) => c.id !== cheatId)
+  saveProfile(exeName, profile)
 }
