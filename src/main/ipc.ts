@@ -10,14 +10,27 @@ import {
   isAnchorTarget,
   StoredCheat,
   PatchCheat,
-  patchMode
+  patchMode,
+  isPatchCheat
 } from './store'
 import { PatchEngine, PatchOps } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
+import { loadProfile, recordModuleFingerprint, verifiedModules, fingerprintOf } from './profile'
+import { CheatRuntime } from './cheatRuntime'
+import { ProcessWatcher } from './watcher'
+import type { LoadedModule } from './anchor'
 
 let attachedHandle: number | null = null
 let attachedBase: string | null = null
 let attachedPid: number | null = null
+// The exe this session is attached to (no .exe suffix — matches profile file
+// naming), and what refreshModuleContext worked out about its modules on the
+// most recent attach: which are loaded now, and which of the ones cheats in
+// this profile depend on no longer match the fingerprint they were captured
+// against.
+let attachedExe: string | null = null
+let loadedModules = new Map<string, LoadedModule>()
+let changedModules: string[] = []
 
 // The native addon's readValue/writeValue walk a single combined offsets
 // array as: addr = base; for each offset: addr += offset; dereference
@@ -207,6 +220,111 @@ const patchEngine = new PatchEngine(patchOps)
 // null and surfacing as "no memory available near the instruction".
 const platformSupportsInjection = nativeAddon.platformName().supported
 
+// Everything that must be re-derived when we attach: which modules are
+// loaded, and which of the ones this game's cheats depend on still look
+// like the build they were captured against.
+function refreshModuleContext(exeName: string): void {
+  attachedExe = exeName.replace(/\.exe$/i, '')
+  loadedModules = new Map()
+  changedModules = []
+  if (attachedHandle === null) return
+
+  const live = nativeAddon.listModules(attachedHandle)
+  for (const m of live) {
+    loadedModules.set(m.name, { name: m.name, base: m.base, size: m.size })
+  }
+  const profile = loadProfile(attachedExe)
+  const verified = verifiedModules(profile, live)
+  changedModules = Object.keys(profile.modules).filter((name) => !verified.has(name))
+  patchEngine.setAnchorContext(loadedModules, verified)
+}
+
+// Shared by the manual process:attach handler and the watcher's onAppear —
+// both must go through the same restore-before-switch guard (put a
+// previously-attached process's code back while its handle is still valid)
+// and the same module-context refresh, rather than one of the two paths
+// quietly skipping it.
+function attachTo(pid: number, exeName: string): { handle: number; baseAddress: string } {
+  if (attachedHandle !== null && attachedPid !== pid) patchEngine.restoreAll()
+  const { handle, baseAddress } = nativeAddon.attach(pid)
+  attachedHandle = handle
+  attachedBase = baseAddress
+  attachedPid = pid
+  refreshModuleContext(exeName)
+  return { handle, baseAddress }
+}
+
+function currentGameState(): { exe: string | null; pid: number | null; changedModules: string[] } {
+  return { exe: attachedExe, pid: attachedPid, changedModules }
+}
+
+// A patch anchored to a module is only trustworthy across builds if we know
+// which build it was captured against. Record that module's fingerprint
+// beside the cheat as it is saved — this is the only moment we are certain
+// the anchor and the loaded module agree.
+export function saveCheatWithFingerprint(exeName: string, cheat: StoredCheat): void {
+  saveCheat(exeName, cheat)
+  if (!isPatchCheat(cheat) || cheat.moduleName === null || attachedHandle === null) return
+  const fp = fingerprintOf(nativeAddon.listModules(attachedHandle), cheat.moduleName)
+  if (fp !== null) recordModuleFingerprint(exeName, cheat.moduleName, fp)
+}
+
+const cheatRuntime = new CheatRuntime({
+  locate: async (patch) => {
+    const status = await patchEngine.locate(patch)
+    return { address: status.address, reason: status.reason ?? null }
+  },
+  apply: (patch) => patchEngine.apply(patch),
+  restore: (patch) => {
+    patchEngine.restore(patch)
+  },
+  isVerified: (patch) => patch.moduleName === null || !changedModules.includes(patch.moduleName)
+})
+
+// A relearned RVA is worth keeping — it turns the next launch of this build
+// into the arithmetic path. Best-effort: a failed write must not stop a
+// working cheat.
+patchEngine.onRelearn((patchId, offset) => {
+  if (attachedExe === null) return
+  try {
+    const profile = loadProfile(attachedExe)
+    const cheat = profile.cheats.find((c) => c.id === patchId)
+    if (cheat && isPatchCheat(cheat)) {
+      cheat.moduleOffset = offset
+      saveCheat(attachedExe, cheat)
+    }
+  } catch (err) {
+    console.warn(`[patch] could not persist relearned offset for ${patchId}: ${String(err)}`)
+  }
+})
+
+// Notices games we have cheats for launching and closing, and auto-attaches
+// (read-capable handle) — never auto-arms. Arming stays a user action.
+const watcher = new ProcessWatcher({
+  listProcesses: () => nativeAddon.listProcesses(),
+  hasProfile: (exeName) => loadProfile(exeName).cheats.length > 0
+})
+
+export function startWatching(getWindow: () => BrowserWindow): void {
+  watcher.onAppear((proc) => {
+    attachTo(proc.pid, proc.name)
+    getWindow().webContents.send('game:state', currentGameState())
+  })
+  watcher.onVanish(() => {
+    // The process is gone: reset the runtime WITHOUT restoring (there is no
+    // live handle to write a restore through), then drop our own view of it.
+    cheatRuntime.processExited()
+    attachedHandle = null
+    attachedBase = null
+    attachedPid = null
+    attachedExe = null
+    loadedModules = new Map()
+    changedModules = []
+    getWindow().webContents.send('game:state', currentGameState())
+  })
+  watcher.start()
+}
+
 // Called on app quit (from index.ts) so Tamper never leaves a game's code
 // modified after it closes.
 export function restoreAllPatches(): void {
@@ -235,29 +353,37 @@ export function releaseTarget(): void {
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   freezeLoop.onDegraded((cheatId) => {
+    // Also mirrored into the runtime's own tracking — inert for a plain
+    // value cheat (no armed patch shares its id), but keeps the two
+    // degraded/recovered notions from silently diverging if that ever
+    // changes.
+    cheatRuntime.markDegraded(cheatId)
     getWindow().webContents.send('cheat:broken', cheatId)
   })
   freezeLoop.onRecovered((cheatId) => {
+    cheatRuntime.markRecovered(cheatId)
     getWindow().webContents.send('cheat:recovered', cheatId)
+  })
+  cheatRuntime.onChange((cheatId, status) => {
+    getWindow().webContents.send('cheat:state', { cheatId, status })
   })
 
   ipcMain.handle('process:list', () => nativeAddon.listProcesses())
 
   ipcMain.handle('process:attach', (_e, pid: number) => {
-    // Attaching elsewhere means letting go of the current process — put its
-    // code back first, while its handle is still valid.
-    if (attachedHandle !== null && attachedPid !== pid) patchEngine.restoreAll()
-    const { handle, baseAddress } = nativeAddon.attach(pid)
-    attachedHandle = handle
-    attachedBase = baseAddress
-    attachedPid = pid
-    return { handle, baseAddress }
+    // The renderer only passes the pid; look the name up from the same
+    // listing it picked the process from so the profile file (named by exe)
+    // and module fingerprints can be resolved.
+    const proc = nativeAddon.listProcesses().find((p) => p.pid === pid)
+    return attachTo(pid, proc ? proc.name : String(pid))
   })
+
+  ipcMain.handle('game:current', () => currentGameState())
 
   ipcMain.handle('cheats:load', (_e, exeName: string): StoredCheat[] => loadCheats(exeName))
 
   ipcMain.handle('cheats:save', (_e, exeName: string, cheat: StoredCheat) => {
-    saveCheat(exeName, cheat)
+    saveCheatWithFingerprint(exeName, cheat)
   })
 
   ipcMain.handle('cheats:delete', (_e, exeName: string, cheatId: string) => {
@@ -333,12 +459,19 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (patchMode(patch) !== 'nop' && !platformSupportsInjection) {
       return { ok: false, error: 'Code injection is not supported on this platform yet.' }
     }
-    return patchEngine.apply(patch)
+    // Arming is the retrying state machine now, not a one-shot apply: this
+    // starts it and returns immediately. The real outcome (active / failed /
+    // still arming) arrives on 'cheat:state'.
+    cheatRuntime.arm(patch)
+    return { ok: true, error: null }
   })
 
   ipcMain.handle('patch:restore', (_e, patch: PatchCheat) => {
-    if (attachedHandle === null) return true // process gone; its code went with it
-    return patchEngine.restore(patch)
+    // Safe even when nothing is attached or nothing is armed: disarm()
+    // sources its restore target from its own armed map, and patchOps'
+    // writeBytes/suspendThreads already no-op against a null handle.
+    cheatRuntime.disarm(patch.id, patch)
+    return true
   })
 
   // What a capture patch has recorded, so the user can see whether it has
@@ -364,4 +497,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       pointer: pointer === 0n ? null : '0x' + pointer.toString(16)
     }
   })
+
+  startWatching(getWindow)
 }
