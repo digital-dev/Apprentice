@@ -169,11 +169,21 @@ export class PatchEngine {
   private applied = new Map<string, AppliedPatch>()
 
   // What the engine currently knows about the target's modules. Set by the
-  // caller after every attach; empty until then, which routes every
-  // module-anchored patch through the legacy getModuleBase arithmetic below
-  // rather than the verified anchor path — see resolveAddress.
+  // caller after every attach; empty until then, which routes every patch —
+  // module-anchored AND JIT — through the legacy getModuleBase/scanAob
+  // arithmetic below rather than the verified anchor path — see
+  // resolveAddress.
   private modules = new Map<string, LoadedModule>()
   private verified = new Set<string>()
+  // Whether setAnchorContext has ever been called with real data. This, not
+  // per-patch module membership, is what gates resolveAddress: gating
+  // per-patch would strand JIT patches (moduleName is always null, so a
+  // per-module check never matches them) and a loaded-but-unverified module
+  // (the "game updated" case this whole anchor path exists for) on the
+  // legacy path forever, even after the caller starts supplying context —
+  // exactly the two cases resolvePatchAddress's scan-and-relearn fallback is
+  // for.
+  private contextSet = false
   private relearnCb: ((patchId: string, offset: string) => void) | null = null
   // Set fresh on every resolveAddress call; only the anchor path (module
   // verified, or a JIT patch) ever assigns it a real reason. Left undefined
@@ -189,6 +199,7 @@ export class PatchEngine {
   setAnchorContext(modules: Map<string, LoadedModule>, verified: Set<string>): void {
     this.modules = modules
     this.verified = verified
+    this.contextSet = true
   }
 
   // Fired when a scan relocated a module-anchored patch, so the caller can
@@ -575,24 +586,31 @@ export class PatchEngine {
     return { ok: true, error: null, caveAddress: cave, displaced: displaced.toLowerCase() }
   }
 
-  // Verified module arithmetic before scanning, delegated to anchor.ts —
-  // but only once real anchor context exists for this patch's exact module.
-  // Until setAnchorContext has been called with a fingerprint-verified
-  // entry for it, fall back to legacyResolveAddress: the pre-verification
-  // behavior every already-saved patch (module-anchored AND JIT) was
-  // resolving through, which trusts getModuleBase's live base
+  // Verified module arithmetic before scanning, delegated to anchor.ts — but
+  // only once the caller has ever supplied real anchor context. Until
+  // setAnchorContext is called, fall back to legacyResolveAddress: the
+  // pre-verification behavior every already-saved patch (module-anchored
+  // AND JIT) was resolving through, which trusts getModuleBase's live base
   // unconditionally and lets locate() verify the bytes downstream instead
   // of resolveAddress gating a scan fallback on them. Keeping that split —
-  // rather than routing everything through resolvePatchAddress — is what
-  // keeps a module patch reported 'mismatch' at its arithmetic address
-  // instead of being silently rescanned into 'not-found' the moment its
-  // bytes stop matching, and keeps a 'not-found' PatchStatus free of a
-  // `reason` the caller never asked for until anchor context exists.
+  // rather than routing everything through resolvePatchAddress from the
+  // start — is what keeps a module patch reported 'mismatch' at its
+  // arithmetic address instead of being silently rescanned into 'not-found'
+  // the moment its bytes stop matching, and keeps a 'not-found' PatchStatus
+  // free of a `reason` the caller never asked for until anchor context
+  // exists.
+  //
+  // The gate is on contextSet, NOT on whether this particular patch's
+  // module is present/verified: a per-patch check would permanently strand
+  // JIT patches (moduleName is always null, so it can never match a
+  // per-module condition) and a loaded-but-unverified module (the "game
+  // updated" case the whole anchor path exists for) on the legacy,
+  // never-relearns path — even once the caller starts supplying context.
+  // Once contextSet is true, every patch goes through resolvePatchAddress,
+  // unconditionally, exactly as originally specified.
   private async resolveAddress(patch: PatchCheat): Promise<Resolution> {
     this.lastReason = undefined
-    const anchored =
-      patch.moduleName !== null && this.modules.has(patch.moduleName) && this.verified.has(patch.moduleName)
-    if (!anchored) return this.legacyResolveAddress(patch)
+    if (!this.contextSet) return this.legacyResolveAddress(patch)
 
     const result = await resolvePatchAddress(patch, this.modules, this.verified, this.ops)
     if (result.relearnedOffset !== null && result.relearnedOffset !== patch.moduleOffset) {
