@@ -228,7 +228,7 @@ describe('scanAob bounds', () => {
     // A range that ends before the module starts cannot contain it.
     const belowEnd = '0x' + (BigInt(probe.base) - 1n).toString(16)
     const outOfRange = await (addon as any).scanAob(handle, sig, '0x1000', belowEnd)
-    expect(outOfRange).not.toContain(probe.base)
+    expect(outOfRange).not.toContain(codeAddress)
 
     await send('unloaddll')
   })
