@@ -156,6 +156,21 @@ export class PatchEngine {
   }
 
   async locate(patch: PatchCheat): Promise<PatchStatus> {
+    // A patch we installed is at the address we installed it at — no need to
+    // go looking, and looking gives the wrong answer.
+    //
+    // An injection replaces the instruction with a jump, so the signature
+    // (which describes the ORIGINAL bytes) genuinely matches nothing once
+    // the patch is on. Re-scanning then reported "no signature match" the
+    // moment a cheat was enabled, which reads as a failure but is the patch
+    // working exactly as intended — it sent a real session chasing a
+    // relocation bug that did not exist. A NOP patch has the same problem in
+    // milder form: its bytes are all 0x90 and only match by luck.
+    const installed = this.applied.get(patch.id)
+    if (installed) {
+      return { address: installed.address, state: 'applied', applicable: true, matchCount: 1 }
+    }
+
     const { address, matchCount } = await this.resolveAddress(patch)
     if (address === null) return { address: null, state: 'not-found', applicable: false, matchCount }
 

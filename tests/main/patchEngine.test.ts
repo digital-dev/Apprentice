@@ -785,3 +785,36 @@ describe('PatchEngine — guard injection', () => {
     expect(ops.writes).toHaveLength(0)
   })
 })
+
+describe('PatchEngine — locating a patch that is already installed', () => {
+  // Enabling an injection replaces the instruction with a jump, so the
+  // signature — which describes the ORIGINAL bytes — matches nothing while
+  // the patch is on. Re-scanning reported "no signature match" the instant a
+  // cheat was enabled, which reads as a broken relocation but is the patch
+  // working. The engine knows where it installed it; it must not go looking.
+  it('reports the recorded address without scanning', async () => {
+    await engine.apply(forcePatch)
+
+    // The trampoline is at the site now, so a scan would find nothing.
+    ops.aobMatches = []
+    const status = await engine.locate(forcePatch)
+
+    expect(status.state).toBe('applied')
+    expect(status.applicable).toBe(true)
+    expect(status.address).toBe('0x400100')
+    expect(status.matchCount).toBe(1)
+  })
+
+  it('stops short-circuiting once the patch is restored', async () => {
+    await engine.apply(forcePatch)
+    engine.restore(forcePatch)
+
+    // forcePatch is module-anchored, so this resolves by arithmetic rather
+    // than scanning — and now actually reads the site again, finding the
+    // original bytes restore() put back rather than reporting 'applied'
+    // from a stale record.
+    const status = await engine.locate(forcePatch)
+    expect(status.state).toBe('original')
+    expect(ops.memory.get('0x400100')).toBe(ORIGINAL)
+  })
+})
