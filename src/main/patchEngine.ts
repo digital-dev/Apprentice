@@ -1,5 +1,7 @@
 import type { PatchCheat, DataType } from './store'
 import { patchMode } from './store'
+import { resolvePatchAddress } from './anchor'
+import type { AnchorReason, LoadedModule } from './anchor'
 
 // Everything PatchEngine needs from the target process. Injected rather
 // than imported so the engine's locate/apply/restore logic — the part that
@@ -9,7 +11,9 @@ export interface PatchOps {
   getModuleBase(moduleName: string): string | null
   readBytes(address: string, length: number): string | null
   writeBytes(address: string, hexBytes: string): boolean
-  scanAob(signature: string): Promise<string[]>
+  // Optional bounds, `0x`-prefixed hex: absent means an unbounded scan.
+  // Widened so PatchOps satisfies AnchorOps structurally.
+  scanAob(signature: string, rangeStart?: string, rangeEnd?: string): Promise<string[]>
   allocateCave(nearAddress: string): string | null
   decodeRun(
     address: string,
@@ -63,6 +67,11 @@ export interface PatchStatus {
   // fixes — re-capture vs. a longer signature — so the count has to survive
   // as far as the UI rather than collapsing into one 'not-found'.
   matchCount: number | null
+  // Which anchor failure this was, for the UI chip. Present only when
+  // resolution went through the verified-module anchor path and failed;
+  // undefined for the legacy resolution path and for states that never
+  // needed resolution (e.g. the already-applied short-circuit in locate()).
+  reason?: AnchorReason
 }
 
 // What resolveAddress worked out: where the patch currently lives, and how
@@ -159,8 +168,34 @@ export class PatchEngine {
   // original bytes back.
   private applied = new Map<string, AppliedPatch>()
 
+  // What the engine currently knows about the target's modules. Set by the
+  // caller after every attach; empty until then, which routes every
+  // module-anchored patch through the legacy getModuleBase arithmetic below
+  // rather than the verified anchor path — see resolveAddress.
+  private modules = new Map<string, LoadedModule>()
+  private verified = new Set<string>()
+  private relearnCb: ((patchId: string, offset: string) => void) | null = null
+  // Set fresh on every resolveAddress call; only the anchor path (module
+  // verified, or a JIT patch) ever assigns it a real reason. Left undefined
+  // by the legacy path and by success, so a status built from it via
+  // `reason: this.lastReason` omits the key entirely under toEqual rather
+  // than asserting a stale one from a previous call.
+  private lastReason: AnchorReason | undefined = undefined
+
   constructor(ops: PatchOps) {
     this.ops = ops
+  }
+
+  setAnchorContext(modules: Map<string, LoadedModule>, verified: Set<string>): void {
+    this.modules = modules
+    this.verified = verified
+  }
+
+  // Fired when a scan relocated a module-anchored patch, so the caller can
+  // write the new RVA back to the profile. Best-effort by design: a failed
+  // write must not stop an otherwise working cheat from arming.
+  onRelearn(cb: (patchId: string, offset: string) => void): void {
+    this.relearnCb = cb
   }
 
   isApplied(id: string): boolean {
@@ -184,7 +219,8 @@ export class PatchEngine {
     }
 
     const { address, matchCount } = await this.resolveAddress(patch)
-    if (address === null) return { address: null, state: 'not-found', applicable: false, matchCount }
+    if (address === null)
+      return { address: null, state: 'not-found', applicable: false, matchCount, reason: this.lastReason }
 
     const current = this.ops.readBytes(address, patch.length)
     // Resolved but unreadable: the address is still worth reporting — it
@@ -539,7 +575,34 @@ export class PatchEngine {
     return { ok: true, error: null, caveAddress: cave, displaced: displaced.toLowerCase() }
   }
 
+  // Verified module arithmetic before scanning, delegated to anchor.ts —
+  // but only once real anchor context exists for this patch's exact module.
+  // Until setAnchorContext has been called with a fingerprint-verified
+  // entry for it, fall back to legacyResolveAddress: the pre-verification
+  // behavior every already-saved patch (module-anchored AND JIT) was
+  // resolving through, which trusts getModuleBase's live base
+  // unconditionally and lets locate() verify the bytes downstream instead
+  // of resolveAddress gating a scan fallback on them. Keeping that split —
+  // rather than routing everything through resolvePatchAddress — is what
+  // keeps a module patch reported 'mismatch' at its arithmetic address
+  // instead of being silently rescanned into 'not-found' the moment its
+  // bytes stop matching, and keeps a 'not-found' PatchStatus free of a
+  // `reason` the caller never asked for until anchor context exists.
   private async resolveAddress(patch: PatchCheat): Promise<Resolution> {
+    this.lastReason = undefined
+    const anchored =
+      patch.moduleName !== null && this.modules.has(patch.moduleName) && this.verified.has(patch.moduleName)
+    if (!anchored) return this.legacyResolveAddress(patch)
+
+    const result = await resolvePatchAddress(patch, this.modules, this.verified, this.ops)
+    if (result.relearnedOffset !== null && result.relearnedOffset !== patch.moduleOffset) {
+      this.relearnCb?.(patch.id, result.relearnedOffset)
+    }
+    this.lastReason = result.reason ?? undefined
+    return { address: result.address, matchCount: result.matchCount }
+  }
+
+  private async legacyResolveAddress(patch: PatchCheat): Promise<Resolution> {
     if (patch.moduleName !== null && patch.moduleOffset !== null) {
       const base = this.ops.getModuleBase(patch.moduleName)
       if (base === null) return { address: null, matchCount: null }
