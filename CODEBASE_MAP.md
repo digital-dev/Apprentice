@@ -30,14 +30,14 @@ channels in `src/main/ipc.ts` bridged in `src/preload/index.ts`.
 | `write_watch.cc` | 945 | **Find-what-writes.** Hardware breakpoints (Dr0/Dr7) via a debugger loop; decodes the faulting instruction with Zydis; builds the AOB **signature**. The most subtle file here. |
 | `cave_ops.cc` | 477 | Code-cave primitives: `allocateCave`, `decodeRun`, and the instruction **encoders** (`encodeStore`, `encodeCaptureOnce`, `encodeGuardedSkip`, `encodeJump`), plus thread suspend/resume wrappers. |
 | `pointer.cc` | 339 | Pointer-chain discovery (module base + offsets) for value cheats. |
-| `patch_ops.cc` | 250 | `readBytes` / `writeBytes` (protect → write → restore → flush) and `scanAob`. |
+| `patch_ops.cc` | 271 | `readBytes` / `writeBytes` (protect → write → restore → flush) and `scanAob`, bounded by optional `(rangeStart, rangeEnd)`. |
 | `scanner.cc` | 205 | Value scanning: `scanFirst` / `scanNext`. |
-| `platform/platform_win32.cc` | 192 | The OS backend: read/write/query/allocate-near/suspend-all. |
+| `platform/platform_win32.cc` | 265 | The OS backend: read/write/query/allocate-near/suspend-all, and `ListModules` (the Win32-level module enumeration `module_info.cc` calls through the platform seam). |
 | `memory_ops.cc` | 93 | `readValue` / `writeValue` through an offset chain. |
-| `addon.cc` | 81 | N-API export table. |
+| `addon.cc` | 83 | N-API export table. |
 | `process_utils.cc` | 67 | Process enumeration and attach. |
 | `module_info.cc` | 37 | `listModules`: every module loaded in the target (name, base, `SizeOfImage`, `TimeDateStamp`, version string) — the PE fields a build fingerprint is made of. Returns `[]` rather than throwing on a protected/exiting process. |
-| `platform/platform_linux.cc` | 32 | Stub: compiles, loads, refuses (`IsSupported() === false`). |
+| `platform/platform_linux.cc` | 36 | Stub: compiles, loads, refuses (`IsSupported() === false`). |
 
 **Addon exports:** `ping listProcesses attach scanFirst scanNext
 resolvePointerChain getModuleBase readValue writeValue startWriteWatch
