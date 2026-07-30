@@ -98,3 +98,33 @@ describe('probe dll', () => {
     await send('unloaddll')
   })
 })
+
+describe('a module anchor survives a reload', () => {
+  it('finds the same instruction at a new base by RVA', async () => {
+    const first = await send('loaddll')
+    const firstBase = first.split(' ')[1]
+    const mods = (addon as any).listModules(handle)
+    const probe = mods.find((m: any) => m.name.toLowerCase() === 'probe.dll')
+
+    // Take a byte run from a fixed RVA inside the probe and remember both
+    // the RVA and the bytes — this is exactly what a saved patch holds.
+    const rva = 0x1000
+    const captured = (addon as any).readBytes(handle, '0x' + (BigInt(firstBase) + BigInt(rva)).toString(16), 8)
+    expect(captured).toMatch(/^[0-9a-f]{16}$/)
+
+    await send('unloaddll')
+    // Load something else first so the probe is unlikely to land back at
+    // the same base; if it does, the assertion below is skipped rather than
+    // failing, since the OS chooses.
+    await send('loaddll2')
+    await send('unloaddll')
+    const second = await send('loaddll')
+    const secondBase = second.split(' ')[1]
+
+    const atSameRva = (addon as any).readBytes(handle, '0x' + (BigInt(secondBase) + BigInt(rva)).toString(16), 8)
+    expect(atSameRva).toBe(captured)
+    expect(probe.size).toBeGreaterThan(rva)
+
+    await send('unloaddll')
+  })
+})

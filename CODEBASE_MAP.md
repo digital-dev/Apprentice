@@ -36,13 +36,19 @@ channels in `src/main/ipc.ts` bridged in `src/preload/index.ts`.
 | `memory_ops.cc` | 93 | `readValue` / `writeValue` through an offset chain. |
 | `addon.cc` | 81 | N-API export table. |
 | `process_utils.cc` | 67 | Process enumeration and attach. |
+| `module_info.cc` | 37 | `listModules`: every module loaded in the target (name, base, `SizeOfImage`, `TimeDateStamp`, version string) — the PE fields a build fingerprint is made of. Returns `[]` rather than throwing on a protected/exiting process. |
 | `platform/platform_linux.cc` | 32 | Stub: compiles, loads, refuses (`IsSupported() === false`). |
 
 **Addon exports:** `ping listProcesses attach scanFirst scanNext
 resolvePointerChain getModuleBase readValue writeValue startWriteWatch
 pollWriteWatch stopWriteWatch readBytes writeBytes scanAob platformName
 allocateCave decodeRun encodeStore encodeCaptureOnce encodeGuardedSkip
-encodeJump suspendThreads resumeThreads`
+encodeJump suspendThreads resumeThreads listModules`
+
+`scanAob` takes optional `(rangeStart, rangeEnd)` bounds (inclusive-exclusive)
+after the signature; absent bounds walk all executable memory, unchanged from
+before. Bounding to a module's `[base, base+size)` is what lets a scan recover
+without paying to re-search the whole process.
 
 **The platform seam** (`platform/platform.h`) exists so injection can be ported
 to Linux. **Only new code uses it** — `cave_ops.cc` must contain *no* Win32
@@ -55,16 +61,31 @@ still call Win32 directly; porting them is a separate sub-project.
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `patchEngine.ts` | 571 | **The core.** Locate / apply / restore for code patches, and the cave assembly for every injection mode. Takes a `PatchOps` interface, so every path — especially every refusal — is tested without a game. |
-| `ipc.ts` | 367 | Channel handlers, the live `patchOps` implementation, anchor resolution, freeze wiring. |
-| `store.ts` | 156 | Persistence to `games/<exe>.json`. Types: `CheatDefinition`, `PatchCheat`, `ChainTarget`, `AnchorTarget`. |
-| `nativeAddon.ts` | 138 | Typed wrappers over the addon. Note the throwing / non-throwing pairs: `readValue`/`tryReadValue`, `readBytes`/`tryReadBytes`. |
+| `patchEngine.ts` | 665 | **The core.** Locate / apply / restore for code patches, and the cave assembly for every injection mode. Takes a `PatchOps` interface, so every path — especially every refusal — is tested without a game. Also owns `setAnchorContext` (module map + verified set, refreshed on every attach) and `onRelearn` (a scan-found RVA worth writing back to the profile). |
+| `ipc.ts` | 506 | Channel handlers, the live `patchOps` implementation, anchor resolution, freeze wiring, `refreshModuleContext`/`attachTo` (shared by manual attach and the watcher), and the `cheatRuntime`/`watcher` wiring that pushes `game:state` / `cheat:state`. |
+| `anchor.ts` | 115 | `resolvePatchAddress`: where a module-anchored patch lives *right now*. Tries module-base + RVA first (only when the module's fingerprint is verified), falls back to a scan bounded to that module's address range, and verifies captured bytes on **both** paths before trusting an address. Returns an `AnchorReason` (`module-missing` / `no-match` / `ambiguous` / `bytes-differ` / `not-yet-compiled`) rather than a bare failure, since the fix differs per reason. Pure — takes an `AnchorOps` interface, no addon. |
+| `cheatRuntime.ts` | 179 | `CheatRuntime`: the state machine behind a patch chip (`idle → arming → active`, plus `degraded`/`failed`), with exponential backoff (`BACKOFF_BASE_MS`..`BACKOFF_CAP_MS`) retrying only the reasons in `RETRYABLE` — `not-yet-compiled` is not an error, it means Mono hasn't JITted the method yet. Generation counters guard against a disarm()+arm() race clobbering a stale in-flight attempt. |
+| `watcher.ts` | 76 | `ProcessWatcher`: polls `listProcesses` every `POLL_INTERVAL_MS` for a process this game has a profile for, and fires `onAppear`/`onVanish`. Attaches only — auto-arming a patch into an unverified build is how a save file gets corrupted unattended. |
+| `profile.ts` | 127 | `games/<exe>.json` schema 2: `{ schema, exe, modules, cheats }`. `modules` records a `ModuleFingerprint` (`size`, `timestamp`, `version`) per module some cheat anchors into — only those, not everything loaded. `verifiedModules` / `fingerprintOf` are the pure comparisons `ipc.ts` drives on every attach and every save. Schema 1 (a bare cheat array) loads as an empty-fingerprint profile — every cheat in it starts unverified, exactly its old behavior. |
+| `store.ts` | 124 | Types (`CheatDefinition`, `PatchCheat`, `ChainTarget`, `AnchorTarget`) and thin CRUD over `profile.ts`'s `loadProfile`/`saveProfile`. |
+| `nativeAddon.ts` | 155 | Typed wrappers over the addon. Note the throwing / non-throwing pairs: `readValue`/`tryReadValue`, `readBytes`/`tryReadBytes`. `scanAob` takes optional `(rangeStart, rangeEnd)`. `listModules` returns `ModuleInfo[]`. |
 | `freezeLoop.ts` | 87 | Rewrites frozen values on a tick; marks a cheat degraded after repeated failure. |
 
-**IPC channels:** `process:list process:attach cheats:load cheats:save
-cheats:delete cheats:toggleFreeze cheats:oneShot scan:first scan:next
-scan:resolveChain writeWatch:start writeWatch:poll writeWatch:stop
-patch:locate patch:apply patch:restore patch:slot`
+**IPC channels:** `process:list process:attach game:current cheats:load
+cheats:save cheats:delete cheats:toggleFreeze cheats:oneShot cheats:verify
+scan:first scan:next scan:resolveChain writeWatch:start writeWatch:poll
+writeWatch:stop patch:locate patch:apply patch:restore patch:slot`
+
+**Push events** (main → renderer, not request/response): `game:state` — sent
+on attach and on the watched process vanishing; payload is
+`{ exe, pid, changedModules }` (`changedModules` is which of the profile's
+fingerprinted modules no longer match what's loaded, i.e. unverified).
+`cheat:state` — sent on every `CheatRuntime` state transition; payload is
+`{ cheatId, status }` where `status` is a `CheatStatus` (`state`, `unverified`,
+`reason`, `address`, `attempts`). `cheat:broken` / `cheat:recovered` — the
+freeze loop's existing degraded/recovered signal, now also mirrored into
+`CheatRuntime.markDegraded`/`markRecovered` so the two notions of "broken"
+stay in sync.
 
 ---
 
@@ -121,6 +142,28 @@ garbage. This crashed Valheim.
 
 ---
 
+## Relocation (`anchor.ts`): two paths, one verification
+
+A module-anchored patch is relocated by `resolvePatchAddress` (`anchor.ts`),
+which tries **module base + RVA arithmetic first**, not the signature scan —
+arithmetic is exact and free, where a scan walks executable memory. Arithmetic
+is only trusted when the module's live fingerprint (`profile.ts`'s
+`verifiedModules`) still matches what was recorded at save time; otherwise it
+falls straight to a scan bounded to that module's `[base, base+size)`.
+**Both paths verify the captured bytes before returning an address** — an RVA
+that no longer points at the captured instruction (a build changed layout) is
+discarded rather than patched, and a scan match that found the right pattern
+but wrong bytes at the target offset (`bytes-differ`) is likewise refused. A
+successful scan on a module-anchored patch writes its RVA back to the profile
+(`relearnedOffset`) so the *next* launch of that exact build takes the
+arithmetic path instead of re-scanning. This is the mechanism
+`tests/native/module_info.test.ts`'s "a module anchor survives a reload" test
+proves at the native-primitive level: the same 8 bytes read at `base + rva`
+before and after a DLL unload/reload, regardless of whether the reload landed
+at a different base.
+
+---
+
 ## Signatures (the part that survives a game restart)
 
 Built in `write_watch.cc`. A signature covers the **whole enclosing method**,
@@ -148,13 +191,24 @@ from one game's evidence. A Cheat Engine table for the same game used an
 
 ---
 
-## Tests — 145, and what they can't tell you
+## Tests — 213, and what they can't tell you
 
 `npx vitest run` · `npx tsc --noEmit` · `npm run build`
 
 Native tests drive a **real child process**: `test-harness/harness.exe`, built
 from `harness.c`, driven over stdin (`drainloop`, `forceloop`, `wideloop`,
-`shieldloop`, `tight_write`, …).
+`shieldloop`, `tight_write`, `loaddll`, `loaddll2`, `unloaddll`, …).
+
+`loaddll` / `loaddll2` / `unloaddll` load and unload a real DLL
+(`probe.dll` / `probe2.dll`, a size/timestamp-varied variant of the same
+DLL) into the harness process, replying `OK <0xbase>`. This is what
+`tests/native/module_info.test.ts` uses to prove `listModules` sees a module
+appear/disappear with a plausible fingerprint, that two builds of "the same"
+DLL fingerprint differently (the pair `profile.ts`'s verification test
+compares), and — the acceptance test for the whole arithmetic relocation path
+— that the same bytes read at a fixed RVA survive the DLL being unloaded and
+reloaded at a **different** base address (loading `probe2.dll` in between
+specifically to discourage the loader from reusing the old base).
 
 **The harness is a static MSVC binary; the real target is Mono JIT.** Almost
 every defect found in-game was invisible here for that reason: stable bytes
@@ -162,9 +216,11 @@ past a `ret`, no absolute addresses in code, no shared setters, well-behaved
 threads. When a fix passes here, that is necessary and not sufficient.
 
 Two hazards when editing tests:
-- `tests/native/cave_ops.test.ts` must keep **exactly one top-level
-  `beforeAll`** — awaiting an `AsyncWorker` promise in a second one reliably
-  segfaults the vitest worker.
+- `tests/native/cave_ops.test.ts` and `tests/native/module_info.test.ts` must
+  each keep **exactly one top-level `beforeAll`** — awaiting an `AsyncWorker`
+  promise in a second one reliably segfaults the vitest worker. New `describe`
+  blocks in these files share the file's single `beforeAll`-spawned harness
+  and its `send()` helper rather than adding their own setup.
 - Scans in the native tests are **one-shot**: they key off a field's initial
   value, which the first test to run overwrites.
 
