@@ -117,6 +117,16 @@ li:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.banner {
+  font-size: 13px;
+  color: var(--accent);
+  background: rgba(255, 176, 0, 0.08);
+  border: 1px solid rgba(255, 176, 0, 0.3);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin: 12px 0 0;
+}
+
 .pulse-dot {
   width: 6px;
   height: 6px;

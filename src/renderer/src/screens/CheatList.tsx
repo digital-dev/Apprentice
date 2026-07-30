@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CheatDefinition, StoredCheat, PatchCheat, CheatTarget } from '../../../main/store'
-import type { TargetStatus, PatchStatus } from '../tamper.d'
+import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
 import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
 
@@ -60,6 +60,37 @@ function patchStatusLabel(status: PatchStatus): string {
   }
 }
 
+// One chip, one honest answer. "Toggled on but still retrying" must never
+// look the same as "working" — that ambiguity is what cost a whole Valheim
+// session to a patch that was fine.
+function cheatStateLabel(status: CheatStatus): string {
+  switch (status.state) {
+    case 'idle':
+      return 'ready'
+    case 'arming':
+      return status.reason === 'not-yet-compiled'
+        ? 'waiting for the game to run this code'
+        : 'arming'
+    case 'active':
+      return status.unverified ? 'active (new game build)' : 'active'
+    case 'degraded':
+      return 'degraded — stopped working'
+    case 'failed':
+      switch (status.reason) {
+        case 'ambiguous':
+          return 'ambiguous signature — re-capture'
+        case 'bytes-differ':
+          return 'the code changed — re-capture'
+        case 'module-missing':
+          return 'module not loaded'
+        case 'no-match':
+          return 'no signature match — re-capture'
+        default:
+          return 'failed'
+      }
+  }
+}
+
 export default function CheatList({
   exeName,
   onOpenScanner
@@ -95,6 +126,21 @@ export default function CheatList({
   // Which cheat's verify panel is expanded, and the value typed into it.
   const [verifyOpen, setVerifyOpen] = useState<string | null>(null)
   const [verifyValue, setVerifyValue] = useState('')
+  // Runtime state pushed by cheatRuntime for each armed patch — keyed by
+  // patch id, same as patchStatuses. Populated only once a patch has been
+  // toggled on at least once; patchStatusLabel covers the pre-arm readout.
+  const [cheatStates, setCheatStates] = useState<Map<string, CheatStatus>>(new Map())
+  // Modules whose on-disk fingerprint no longer matches what was captured
+  // against — drives the "this game has updated" banner.
+  const [changedModules, setChangedModules] = useState<string[]>([])
+
+  useEffect(() => {
+    window.tamper.onCheatState(({ cheatId, status }) => {
+      setCheatStates((prev) => new Map(prev).set(cheatId, status))
+    })
+    window.tamper.onGameState((state) => setChangedModules(state.changedModules))
+    void window.tamper.currentGame().then((state) => setChangedModules(state.changedModules))
+  }, [])
 
   useEffect(() => {
     async function loadAndRevalidate() {
@@ -407,6 +453,13 @@ export default function CheatList({
   return (
     <div>
       <h2>{exeName}</h2>
+      {changedModules.length > 0 && (
+        <div className="banner">
+          This game has updated since these cheats were captured
+          ({changedModules.join(', ')}). They&apos;ll be verified against the new
+          build when you turn them on.
+        </div>
+      )}
       <button onClick={onOpenScanner}>+ New cheat</button>
       <ul>
         {cheats.map((cheat) => {
@@ -495,6 +548,7 @@ export default function CheatList({
               Showing them would put two rows in the list for one cheat. */}
           {patches.filter((p) => !p.internal).map((patch) => {
             const status = patchStatuses.get(patch.id)
+            const runtimeStatus = cheatStates.get(patch.id)
             const error = patchError.get(patch.id)
             const slotInfo = patchSlots.get(patch.id)
             return (
@@ -528,13 +582,34 @@ export default function CheatList({
                       : 'waiting for the game to run this code'}
                   </span>
                   )}
-                {status && (
+                {runtimeStatus ? (
+                  // Once a patch has been toggled on at least once, the
+                  // runtime's state machine is the more informative readout
+                  // — it covers what patchStatusLabel can't: arming/backoff,
+                  // degraded-after-active, and "active but the game build
+                  // changed since capture".
                   <span
                     className="address-chip"
-                    style={{ color: status.applicable ? 'var(--muted)' : 'var(--error)' }}
+                    style={{
+                      color:
+                        runtimeStatus.state === 'failed' || runtimeStatus.state === 'degraded'
+                          ? 'var(--error)'
+                          : runtimeStatus.state === 'active'
+                            ? 'var(--active)'
+                            : 'var(--muted)'
+                    }}
                   >
-                    {patchStatusLabel(status)}
+                    {cheatStateLabel(runtimeStatus)}
                   </span>
+                ) : (
+                  status && (
+                    <span
+                      className="address-chip"
+                      style={{ color: status.applicable ? 'var(--muted)' : 'var(--error)' }}
+                    >
+                      {patchStatusLabel(status)}
+                    </span>
+                  )
                 )}
                 <Toggle
                   enabled={patchEnabled.has(patch.id)}

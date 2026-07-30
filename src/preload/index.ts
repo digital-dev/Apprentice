@@ -31,5 +31,10 @@ contextBridge.exposeInMainWorld('tamper', {
   restorePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:restore', patch),
   // What a capture patch has recorded so far: its slot, and the pointer in
   // it (null until the game runs the captured instruction).
-  patchSlot: (patchId: string) => ipcRenderer.invoke('patch:slot', patchId)
+  patchSlot: (patchId: string) => ipcRenderer.invoke('patch:slot', patchId),
+  onCheatState: (cb: (payload: { cheatId: string; status: unknown }) => void) =>
+    ipcRenderer.on('cheat:state', (_e, payload) => cb(payload)),
+  onGameState: (cb: (payload: { exe: string | null; pid: number | null; changedModules: string[] }) => void) =>
+    ipcRenderer.on('game:state', (_e, payload) => cb(payload)),
+  currentGame: () => ipcRenderer.invoke('game:current')
 })

@@ -7,6 +7,7 @@ export {}
 // actually produces. This is a type-only import, so nothing from the main
 // process ends up in the renderer bundle.
 export type { PatchState, PatchStatus } from '../../main/patchEngine'
+export type { CheatState, CheatStatus } from '../../main/cheatRuntime'
 
 export interface Candidate {
   address: string
@@ -78,6 +79,12 @@ declare global {
       patchSlot: (
         patchId: string
       ) => Promise<{ slot: string; pointer: string | null } | null>
+      // void return is intentional—idiomatic for event listeners; underlying IpcRenderer.on() return is not used
+      onCheatState: (cb: (payload: { cheatId: string; status: CheatStatus }) => void) => void
+      onGameState: (
+        cb: (payload: { exe: string | null; pid: number | null; changedModules: string[] }) => void
+      ) => void
+      currentGame: () => Promise<{ exe: string | null; pid: number | null; changedModules: string[] }>
     }
   }
 }
