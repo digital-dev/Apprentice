@@ -61,7 +61,18 @@ export class ProcessWatcher {
       return
     }
 
-    const match = processes.find((p) => this.deps.hasProfile(p.name)) ?? null
+    // hasProfile is expected to be total (see ipc.ts's wiring, which is
+    // careful to catch loadProfile's deliberate throw on a malformed
+    // games/*.json), but this poll runs forever on a 2-second timer with no
+    // one watching for an unhandled rejection to fix it — a single bad
+    // implementation must not crash the process. Same belt-and-suspenders
+    // treatment as listProcesses just above.
+    let match: { pid: number; name: string } | null = null
+    try {
+      match = processes.find((p) => this.deps.hasProfile(p.name)) ?? null
+    } catch {
+      return
+    }
 
     if (this.current !== null && (match === null || match.pid !== this.current.pid)) {
       const gone = this.current

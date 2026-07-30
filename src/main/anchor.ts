@@ -57,14 +57,21 @@ export async function resolvePatchAddress(
   verified: Set<string>,
   ops: AnchorOps
 ): Promise<AnchorResult> {
-  const module = patch.moduleName === null ? undefined : modules.get(patch.moduleName)
+  // modules/verified are keyed lowercase by the caller (see ipc.ts's
+  // refreshModuleContext), but this function shouldn't assume that — the OS
+  // can report a module's casing differently across launches (or the stored
+  // moduleName can differ only in case from what's live right now), and
+  // profile.ts's verifiedModules already treats that as the same module.
+  // Lowercase at the lookup site rather than trust the caller normalized.
+  const module =
+    patch.moduleName === null ? undefined : modules.get(patch.moduleName.toLowerCase())
 
   // Path 1: module base + RVA, for a module whose fingerprint still matches.
   if (
     patch.moduleName !== null &&
     patch.moduleOffset !== null &&
     module &&
-    verified.has(patch.moduleName)
+    verified.has(patch.moduleName.toLowerCase())
   ) {
     let candidate: string | null = null
     try {

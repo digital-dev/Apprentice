@@ -33,6 +33,16 @@ function filePathFor(exeName: string): string {
   return path.join(gamesDir, `${exeName.replace(/\.exe$/i, '')}.json`)
 }
 
+// A cheap existsSync-only check, deliberately separate from loadProfile:
+// callers that only need to know "is there a profile at all" (e.g. the
+// process watcher, polled every couple seconds against every running
+// process) can skip the read+parse entirely for the common case of a
+// process with no profile file, rather than paying a filesystem read and a
+// JSON.parse per process per tick.
+export function profileFileExists(exeName: string): boolean {
+  return fs.existsSync(filePathFor(exeName))
+}
+
 function emptyProfile(exeName: string): GameProfile {
   return { schema: 2, exe: exeName.replace(/\.exe$/i, ''), modules: {}, cheats: [] }
 }

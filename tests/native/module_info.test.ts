@@ -100,7 +100,7 @@ describe('probe dll', () => {
 })
 
 describe('a module anchor survives a reload', () => {
-  it('finds the same instruction at a new base by RVA', async () => {
+  it('finds the same instruction at a new base by RVA', async (ctx) => {
     const first = await send('loaddll')
     const firstBase = first.split(' ')[1]
     const mods = (addon as any).listModules(handle)
@@ -114,12 +114,28 @@ describe('a module anchor survives a reload', () => {
 
     await send('unloaddll')
     // Load something else first so the probe is unlikely to land back at
-    // the same base; if it does, the assertion below is skipped rather than
-    // failing, since the OS chooses.
+    // the same base — this makes the test actually prove RVA-anchored
+    // relocation across a real base change, rather than just proving
+    // readBytes is deterministic.
     await send('loaddll2')
     await send('unloaddll')
     const second = await send('loaddll')
     const secondBase = second.split(' ')[1]
+
+    // The whole point of this test is a genuine base change — proving an
+    // RVA survives relocation, not just that readBytes is deterministic.
+    // In practice the OS/loader does sometimes hand the freed slot straight
+    // back (observed in this repo's own CI runs), which would make a hard
+    // `not.toBe` assertion flaky rather than meaningful. Skip visibly
+    // rather than pass vacuously when that happens, so a same-base run is
+    // reported, not silently green.
+    if (secondBase === firstBase) {
+      console.warn(
+        '[module_info.test.ts] probe.dll reloaded at the same base twice in a row; skipping the RVA-relocation assertion for this run.'
+      )
+      ctx.skip()
+      return
+    }
 
     const atSameRva = (addon as any).readBytes(handle, '0x' + (BigInt(secondBase) + BigInt(rva)).toString(16), 8)
     expect(atSameRva).toBe(captured)

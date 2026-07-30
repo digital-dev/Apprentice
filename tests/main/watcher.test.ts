@@ -97,6 +97,22 @@ describe('ProcessWatcher', () => {
     expect(() => watcher.tick()).not.toThrow()
   })
 
+  // The real hasProfile wiring (ipc.ts) reads and parses a games/*.json for
+  // every candidate process; a malformed file makes loadProfile throw by
+  // design. WatcherDeps promises a plain boolean, so a throwing hasProfile
+  // must not escape tick() and crash the setInterval callback that drives
+  // it — this is a total-function contract on the caller as much as it is
+  // on ProcessWatcher, but pinning it here guards the composition seam
+  // regardless of which side a future regression comes from.
+  it('survives hasProfile throwing, without crashing the tick', () => {
+    deps.processes = [{ pid: 10, name: 'valheim.exe' }]
+    deps.hasProfile = () => {
+      throw new Error('corrupt profile JSON')
+    }
+    expect(() => watcher.tick()).not.toThrow()
+    expect(appeared).toHaveLength(0)
+  })
+
   it('stop cancels the interval', () => {
     watcher.start()
     watcher.stop()

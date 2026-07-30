@@ -249,10 +249,19 @@ bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
     if (GetModuleBaseNameA(h, mods[i], name, MAX_PATH) == 0) continue;
     info.name = name;
     uint32_t size = 0, timestamp = 0;
-    if (ReadPeFields(handle, info.base, size, timestamp)) {
-      info.size = size;
-      info.timestamp = timestamp;
-    }
+    // A module whose PE headers can't be read (protected memory, a 32-bit
+    // image the Magic check above refuses, a partially-unmapped module
+    // mid-unload) must not be reported with a {size: 0, timestamp: 0}
+    // fingerprint — profile.ts's verifiedModules compares fingerprints for
+    // equality, and 0/0 is not a sentinel it treats specially: two modules
+    // that both fail this read would compare EQUAL to each other, and a
+    // recorded 0/0 fingerprint (which should never exist, but a corrupt or
+    // hand-edited profile could carry one) would spuriously "verify"
+    // against either. Skip the module entirely rather than push a
+    // zero-fingerprint entry that can participate in that comparison.
+    if (!ReadPeFields(handle, info.base, size, timestamp)) continue;
+    info.size = size;
+    info.timestamp = timestamp;
     char fullPath[MAX_PATH] = {0};
     if (GetModuleFileNameExA(h, mods[i], fullPath, MAX_PATH) != 0) {
       info.version = ReadFileVersion(fullPath);

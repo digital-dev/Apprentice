@@ -15,7 +15,13 @@ import {
 } from './store'
 import { PatchEngine, PatchOps } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
-import { loadProfile, recordModuleFingerprint, verifiedModules, fingerprintOf } from './profile'
+import {
+  loadProfile,
+  recordModuleFingerprint,
+  verifiedModules,
+  fingerprintOf,
+  profileFileExists
+} from './profile'
 import { CheatRuntime } from './cheatRuntime'
 import { ProcessWatcher } from './watcher'
 import type { LoadedModule } from './anchor'
@@ -182,8 +188,10 @@ const patchOps: PatchOps = {
     attachedHandle === null ? null : nativeAddon.tryReadBytes(attachedHandle, address, length),
   writeBytes: (address, hexBytes) =>
     attachedHandle === null ? false : nativeAddon.writeBytes(attachedHandle, address, hexBytes),
-  scanAob: async (signature) =>
-    attachedHandle === null ? [] : nativeAddon.scanAob(attachedHandle, signature),
+  scanAob: async (signature, rangeStart, rangeEnd) =>
+    attachedHandle === null
+      ? []
+      : nativeAddon.scanAob(attachedHandle, signature, rangeStart, rangeEnd),
   allocateCave: (nearAddress) =>
     attachedHandle === null ? null : nativeAddon.allocateCave(attachedHandle, nearAddress),
   decodeRun: (address, minBytes) => {
@@ -223,6 +231,29 @@ const platformSupportsInjection = nativeAddon.platformName().supported
 // Everything that must be re-derived when we attach: which modules are
 // loaded, and which of the ones this game's cheats depend on still look
 // like the build they were captured against.
+//
+// Keyed lowercase throughout: the OS's reported casing for a module name
+// can differ from what's stored in a profile (or from run to run), and
+// profile.ts's verifiedModules already treats that as the same module —
+// this must match, or a patch's arithmetic path silently stops resolving
+// on nothing more than a casing difference. anchor.ts also lowercases at
+// its own lookup site rather than trust a caller did this, but everything
+// that reaches it should already be normalized.
+export function buildModuleContext(
+  profile: ReturnType<typeof loadProfile>,
+  live: { name: string; base: string; size: number; timestamp: number }[]
+): { modules: Map<string, LoadedModule>; verified: Set<string>; changedModules: string[] } {
+  const modules = new Map<string, LoadedModule>()
+  for (const m of live) {
+    modules.set(m.name.toLowerCase(), { name: m.name, base: m.base, size: m.size })
+  }
+  const verified = new Set(Array.from(verifiedModules(profile, live), (name) => name.toLowerCase()))
+  const changedModules = Object.keys(profile.modules)
+    .map((name) => name.toLowerCase())
+    .filter((name) => !verified.has(name))
+  return { modules, verified, changedModules }
+}
+
 function refreshModuleContext(exeName: string): void {
   attachedExe = exeName.replace(/\.exe$/i, '')
   loadedModules = new Map()
@@ -230,13 +261,11 @@ function refreshModuleContext(exeName: string): void {
   if (attachedHandle === null) return
 
   const live = nativeAddon.listModules(attachedHandle)
-  for (const m of live) {
-    loadedModules.set(m.name, { name: m.name, base: m.base, size: m.size })
-  }
   const profile = loadProfile(attachedExe)
-  const verified = verifiedModules(profile, live)
-  changedModules = Object.keys(profile.modules).filter((name) => !verified.has(name))
-  patchEngine.setAnchorContext(loadedModules, verified)
+  const context = buildModuleContext(profile, live)
+  loadedModules = context.modules
+  changedModules = context.changedModules
+  patchEngine.setAnchorContext(context.modules, context.verified)
 }
 
 // Shared by the manual process:attach handler and the watcher's onAppear —
@@ -245,7 +274,17 @@ function refreshModuleContext(exeName: string): void {
 // and the same module-context refresh, rather than one of the two paths
 // quietly skipping it.
 function attachTo(pid: number, exeName: string): { handle: number; baseAddress: string } {
-  if (attachedHandle !== null && attachedPid !== pid) patchEngine.restoreAll()
+  if (attachedHandle !== null && attachedPid !== pid) {
+    patchEngine.restoreAll()
+    // patchEngine's bookkeeping just got cleared for the process we're
+    // leaving; cheatRuntime's must reset with it. Without this, a manual
+    // re-attach to a different game leaves cheatRuntime reporting 'active'
+    // for a patch that restoreAll() just uninstalled — the UI chip lies,
+    // and arm() early-returns on 'active' so the user can't re-arm the
+    // cheat without first disarming it by hand. Matches what the watcher's
+    // onVanish path already does.
+    cheatRuntime.processExited()
+  }
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
   attachedBase = baseAddress
@@ -278,31 +317,78 @@ const cheatRuntime = new CheatRuntime({
   restore: (patch) => {
     patchEngine.restore(patch)
   },
-  isVerified: (patch) => patch.moduleName === null || !changedModules.includes(patch.moduleName)
+  isVerified: (patch) =>
+    patch.moduleName === null || !changedModules.includes(patch.moduleName.toLowerCase())
 })
 
 // A relearned RVA is worth keeping — it turns the next launch of this build
 // into the arithmetic path. Best-effort: a failed write must not stop a
 // working cheat.
+//
+// Relearning only fires when the fingerprint DIDN'T match (arithmetic was
+// skipped) but a scan found the code anyway — so persisting the new RVA
+// without also updating the fingerprint means the next launch hits the same
+// mismatch and re-scans forever, and the relearn mechanism never pays off
+// in the one case it exists for. Recording the fingerprint here is safe
+// despite skipping the usual save-time verification moment: persisting the
+// relearned RVA already implicitly trusts the build that produced it, and
+// anchor.ts always byte-checks the arithmetic result against the captured
+// instruction before ever trusting it — a bad fingerprint here can only
+// make the next launch fall back to a scan, never make it patch the wrong
+// bytes.
+// Pure: finds the relearned patch and returns it with the new offset
+// applied, or null when there's nothing to persist (patch not found, or not
+// a patch cheat at all). Kept separate from disk I/O so the decision is
+// testable without loadProfile/saveCheat/electron.
+export function applyRelearn(
+  profile: ReturnType<typeof loadProfile>,
+  patchId: string,
+  offset: string
+): PatchCheat | null {
+  const cheat = profile.cheats.find((c) => c.id === patchId)
+  if (!cheat || !isPatchCheat(cheat)) return null
+  cheat.moduleOffset = offset
+  return cheat
+}
+
 patchEngine.onRelearn((patchId, offset) => {
   if (attachedExe === null) return
   try {
     const profile = loadProfile(attachedExe)
-    const cheat = profile.cheats.find((c) => c.id === patchId)
-    if (cheat && isPatchCheat(cheat)) {
-      cheat.moduleOffset = offset
-      saveCheat(attachedExe, cheat)
+    const cheat = applyRelearn(profile, patchId, offset)
+    if (!cheat) return
+    saveCheat(attachedExe, cheat)
+    if (cheat.moduleName !== null && attachedHandle !== null) {
+      const fp = fingerprintOf(nativeAddon.listModules(attachedHandle), cheat.moduleName)
+      if (fp !== null) recordModuleFingerprint(attachedExe, cheat.moduleName, fp)
     }
   } catch (err) {
     console.warn(`[patch] could not persist relearned offset for ${patchId}: ${String(err)}`)
   }
 })
 
+// Wired into the watcher, which polls this against every running process
+// every couple of seconds — it must never throw. loadProfile deliberately
+// throws on a malformed games/*.json (a correct safety property for the
+// save path, which must not silently overwrite a file it can't parse), but
+// a corrupt profile must not crash the watcher's setInterval callback
+// forever; treat "can't tell" as "no profile" here. profileFileExists is a
+// cheap existsSync-only check first, so the common case (a process with no
+// profile at all) never pays for a read+JSON.parse.
+export function hasProfile(exeName: string): boolean {
+  if (!profileFileExists(exeName)) return false
+  try {
+    return loadProfile(exeName).cheats.length > 0
+  } catch {
+    return false
+  }
+}
+
 // Notices games we have cheats for launching and closing, and auto-attaches
 // (read-capable handle) — never auto-arms. Arming stays a user action.
 const watcher = new ProcessWatcher({
   listProcesses: () => nativeAddon.listProcesses(),
-  hasProfile: (exeName) => loadProfile(exeName).cheats.length > 0
+  hasProfile
 })
 
 export function startWatching(getWindow: () => BrowserWindow): void {
