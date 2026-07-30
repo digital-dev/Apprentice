@@ -312,8 +312,12 @@ export function startWatching(getWindow: () => BrowserWindow): void {
   })
   watcher.onVanish(() => {
     // The process is gone: reset the runtime WITHOUT restoring (there is no
-    // live handle to write a restore through), then drop our own view of it.
+    // live handle to write a restore through), and forget every address
+    // patchEngine recorded for it — restoreAll()'s next call must not carry
+    // this process's addresses forward into whatever attaches next (see
+    // PatchEngine.forgetAll).
     cheatRuntime.processExited()
+    patchEngine.forgetAll()
     attachedHandle = null
     attachedBase = null
     attachedPid = null

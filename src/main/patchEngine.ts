@@ -213,6 +213,19 @@ export class PatchEngine {
     return this.applied.has(id)
   }
 
+  // The process is gone (not merely being switched away from): its code —
+  // and every address this engine recorded for it — went with it. Forgetting
+  // is deliberately NOT restoring: restore() writes through the CURRENT
+  // attachedHandle, and after a vanish there either is none or, worse, one
+  // that has since moved on to a different process. Leaving these entries in
+  // `applied` would carry a dead process's addresses forward into whatever
+  // attaches next — restoreAll() would then blindly write through a live
+  // handle at an address it was never resolved against. Call this instead of
+  // restoreAll() when the target process is already gone.
+  forgetAll(): void {
+    this.applied.clear()
+  }
+
   async locate(patch: PatchCheat): Promise<PatchStatus> {
     // A patch we installed is at the address we installed it at — no need to
     // go looking, and looking gives the wrong answer.
