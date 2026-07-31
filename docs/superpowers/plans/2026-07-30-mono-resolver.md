@@ -550,6 +550,12 @@ describe('callRemoteFunction', () => {
   })
 
   it('resolves null rather than throwing when the function address is bogus', async () => {
+    // '0x1' is never backed by executable memory, so RunRemoteCall's
+    // QueryRegion check refuses before writing or running anything —
+    // deterministic, not a race against the target process surviving a
+    // bad `call`. Calling this WITHOUT that guard would crash the whole
+    // harness process, not just fail this one call — see Task 3's own
+    // history for why the guard exists.
     const result = await (addon as any).callRemoteFunction(handle, '0x1', [])
     expect(result).toBeNull()
   })
@@ -680,6 +686,17 @@ class RemoteCallWorker : public Napi::AsyncWorker {
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
   void Execute() override {
+    // Verified BEFORE anything else runs: a `call` to a caller-supplied
+    // address that isn't backed by executable memory raises an access
+    // violation INSIDE the target process, and since a real game has no
+    // exception handler installed for it, Windows tears the whole process
+    // down — not a recoverable "this call failed." Every caller of this
+    // primitive passes an address resolved elsewhere in the target with no
+    // independent proof it's still valid by the time we get here, so this
+    // check is load-bearing, not defensive-programming boilerplate.
+    platform::Region region;
+    if (!platform::QueryRegion(handle_, function_, region) || !region.executable) return;
+
     uintptr_t cave = platform::AllocateNear(handle_, function_, 256);
     if (!cave) return; // ok_ stays false; OnOK reports null
 
@@ -1105,11 +1122,14 @@ bool RunRemoteCall(platform::ProcessHandle handle, uintptr_t function,
                    const std::vector<uintptr_t>& args, uint8_t outResult[8]);
 ```
 
-In `native/src/mono_call.cc`, extract this from `RemoteCallWorker::Execute()`:
+In `native/src/mono_call.cc`, extract this from `RemoteCallWorker::Execute()`. **The very first check must verify `function` actually points into executable memory before anything else runs** — a `call` to a caller-supplied address that isn't backed by executable memory raises an access violation *inside the target process*, and since a real game has no exception handler installed for it, Windows tears this down as a whole-process crash, not a recoverable "this call failed." Every later task's Mono-resolved addresses are exactly the kind of value that needs this check: computed elsewhere in the target, with no independent proof they're still valid by the time this function calls them:
 
 ```cpp
 bool RunRemoteCall(platform::ProcessHandle handle, uintptr_t function,
                    const std::vector<uintptr_t>& args, uint8_t outResult[8]) {
+  platform::Region region;
+  if (!platform::QueryRegion(handle, function, region) || !region.executable) return false;
+
   uintptr_t cave = platform::AllocateNear(handle, function, 256);
   if (!cave) return false;
 
