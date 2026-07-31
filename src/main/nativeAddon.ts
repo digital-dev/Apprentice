@@ -161,5 +161,29 @@ export const nativeAddon = {
     handle: number,
     functionAddress: string,
     args: string[]
-  ): Promise<string | null> => addon.callRemoteFunction(handle, functionAddress, args)
+  ): Promise<string | null> => addon.callRemoteFunction(handle, functionAddress, args),
+  // Resolves a MonoClass* by namespace + name, and a field's offset or its
+  // own storage address, by making the target call its own Mono runtime's
+  // introspection functions on a throwaway attached thread. Null on any
+  // failure (class/field not found, Mono not loaded, attach failed) —
+  // never throws.
+  monoResolveClass: (
+    handle: number,
+    monoDllBase: string,
+    namespaceName: string,
+    className: string
+  ): Promise<string | null> => addon.monoResolveClass(handle, monoDllBase, namespaceName, className),
+  monoResolveField: (
+    handle: number,
+    monoDllBase: string,
+    classHandle: string,
+    fieldName: string
+  ): Promise<{ offset: number } | null> =>
+    addon.monoResolveField(handle, monoDllBase, classHandle, fieldName),
+  monoStaticFieldAddress: (
+    handle: number,
+    monoDllBase: string,
+    classHandle: string,
+    fieldName: string
+  ): Promise<string | null> => addon.monoStaticFieldAddress(handle, monoDllBase, classHandle, fieldName)
 }

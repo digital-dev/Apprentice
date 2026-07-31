@@ -8,6 +8,7 @@
 #include "cave_ops.h"
 #include "module_info.h"
 #include "mono_call.h"
+#include "mono_bridge.h"
 #include "platform/platform.h"
 
 #include <string>
@@ -81,6 +82,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("resolveExport", Napi::Function::New(env, ResolveExport));
   exports.Set("createRemoteThread", Napi::Function::New(env, CreateRemoteThread));
   exports.Set("callRemoteFunction", Napi::Function::New(env, CallRemoteFunction));
+  exports.Set("monoResolveClass", Napi::Function::New(env, MonoResolveClass));
+  exports.Set("monoResolveField", Napi::Function::New(env, MonoResolveField));
+  exports.Set("monoStaticFieldAddress", Napi::Function::New(env, MonoStaticFieldAddress));
   return exports;
 }
 

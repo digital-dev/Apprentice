@@ -13,6 +13,7 @@
         "src/cave_ops.cc",
         "src/module_info.cc",
         "src/mono_call.cc",
+        "src/mono_bridge.cc",
         "third_party/zydis/Zydis.c"
       ],
       "include_dirs": [
