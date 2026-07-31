@@ -185,5 +185,11 @@ export const nativeAddon = {
     monoDllBase: string,
     classHandle: string,
     fieldName: string
-  ): Promise<string | null> => addon.monoStaticFieldAddress(handle, monoDllBase, classHandle, fieldName)
+  ): Promise<string | null> => addon.monoStaticFieldAddress(handle, monoDllBase, classHandle, fieldName),
+  monoCompileMethod: (
+    handle: number,
+    monoDllBase: string,
+    classHandle: string,
+    methodName: string
+  ): Promise<string | null> => addon.monoCompileMethod(handle, monoDllBase, classHandle, methodName)
 }

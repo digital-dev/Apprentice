@@ -66,3 +66,29 @@ describe('monoStaticFieldAddress', () => {
     expect(addr).toMatch(/^0x[0-9a-f]+$/)
   })
 })
+
+describe('monoCompileMethod', () => {
+  it('finds a known method and compiles it to a stable address', async () => {
+    const klass = await (addon as any).monoResolveClass(handle, monoBase, '', 'Character')
+    const addr1 = await (addon as any).monoCompileMethod(handle, monoBase, klass, 'ApplyDamage')
+    expect(addr1).toMatch(/^0x[0-9a-f]+$/)
+    const addr2 = await (addon as any).monoCompileMethod(handle, monoBase, klass, 'ApplyDamage')
+    expect(addr2).toBe(addr1)
+  })
+
+  it('returns null for a method that does not exist on that class', async () => {
+    const klass = await (addon as any).monoResolveClass(handle, monoBase, '', 'Player')
+    const addr = await (addon as any).monoCompileMethod(handle, monoBase, klass, 'NoSuchMethod')
+    expect(addr).toBeNull()
+  })
+
+  it('distinguishes methods on different classes with the same iteration shape', async () => {
+    const player = await (addon as any).monoResolveClass(handle, monoBase, '', 'Player')
+    const stamina = await (addon as any).monoCompileMethod(handle, monoBase, player, 'UseStamina')
+    const character = await (addon as any).monoResolveClass(handle, monoBase, '', 'Character')
+    const damage = await (addon as any).monoCompileMethod(handle, monoBase, character, 'ApplyDamage')
+    expect(stamina).not.toBeNull()
+    expect(damage).not.toBeNull()
+    expect(stamina).not.toBe(damage)
+  })
+})

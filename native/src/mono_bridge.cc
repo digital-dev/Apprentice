@@ -273,3 +273,85 @@ Napi::Value MonoStaticFieldAddress(const Napi::CallbackInfo& info) {
   worker->Queue();
   return promise;
 }
+
+class MonoCompileMethodWorker : public Napi::AsyncWorker {
+ public:
+  MonoCompileMethodWorker(Napi::Env env, platform::ProcessHandle handle, uintptr_t monoDllBase,
+                          uintptr_t classHandle, std::string methodName)
+      : Napi::AsyncWorker(env), handle_(handle), monoDllBase_(monoDllBase),
+        classHandle_(classHandle), methodName_(std::move(methodName)),
+        deferred_(Napi::Promise::Deferred::New(env)) {}
+
+  Napi::Promise GetPromise() { return deferred_.Promise(); }
+
+  void Execute() override {
+    MonoContext ctx = AttachToMono(handle_, monoDllBase_);
+    if (!ctx.ok) return;
+
+    uintptr_t getMethods = platform::ResolveExport(handle_, monoDllBase_, "mono_class_get_methods");
+    uintptr_t getName = platform::ResolveExport(handle_, monoDllBase_, "mono_method_get_name");
+    uintptr_t compile = platform::ResolveExport(handle_, monoDllBase_, "mono_compile_method");
+    if (!getMethods || !getName || !compile) { DetachFromMono(handle_, monoDllBase_, ctx); return; }
+
+    uintptr_t iterSlot = platform::AllocateNear(handle_, monoDllBase_, 16);
+    if (!iterSlot) { DetachFromMono(handle_, monoDllBase_, ctx); return; }
+    uintptr_t zero = 0;
+    platform::WriteMemory(handle_, iterSlot, &zero, sizeof(zero));
+
+    for (int guard = 0; guard < 256; guard++) {
+      uint8_t result[8] = {0};
+      if (!RunRemoteCall(handle_, getMethods, {classHandle_, iterSlot}, result)) break;
+      uintptr_t method = BytesToPtr(result);
+      if (!method) break; // iteration exhausted
+
+      uint8_t nameResult[8] = {0};
+      if (!RunRemoteCall(handle_, getName, {method}, nameResult)) break;
+      uintptr_t namePtr = BytesToPtr(nameResult);
+      char nameBuf[256] = {0};
+      if (!platform::ReadMemory(handle_, namePtr, nameBuf, sizeof(nameBuf) - 1)) continue;
+
+      if (methodName_ == nameBuf) {
+        uint8_t compileResult[8] = {0};
+        if (RunRemoteCall(handle_, compile, {method}, compileResult)) {
+          uintptr_t entry = BytesToPtr(compileResult);
+          if (entry) { entryAddress_ = entry; ok_ = true; }
+        }
+        break;
+      }
+    }
+    DetachFromMono(handle_, monoDllBase_, ctx);
+  }
+
+  void OnOK() override {
+    if (!ok_) { deferred_.Resolve(Env().Null()); return; }
+    deferred_.Resolve(Napi::String::New(Env(), ToHex(entryAddress_)));
+  }
+  void OnError(const Napi::Error&) override { deferred_.Resolve(Env().Null()); }
+
+ private:
+  platform::ProcessHandle handle_;
+  uintptr_t monoDllBase_, classHandle_;
+  std::string methodName_;
+  bool ok_ = false;
+  uintptr_t entryAddress_ = 0;
+  Napi::Promise::Deferred deferred_;
+};
+
+Napi::Value MonoCompileMethod(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (!ValidateFieldArgs(
+          info,
+          "monoCompileMethod(handle, monoDllBase, classHandle, methodName) expects (number, string, string, string)")) {
+    return env.Null();
+  }
+  auto handle = static_cast<platform::ProcessHandle>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  uintptr_t monoDllBase = ParseHex(info[1].As<Napi::String>().Utf8Value());
+  uintptr_t classHandle = ParseHex(info[2].As<Napi::String>().Utf8Value());
+  std::string methodName = info[3].As<Napi::String>().Utf8Value();
+
+  auto* worker = new MonoCompileMethodWorker(env, handle, monoDllBase, classHandle, methodName);
+  Napi::Promise promise = worker->GetPromise();
+  worker->Queue();
+  return promise;
+}

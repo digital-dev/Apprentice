@@ -85,6 +85,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monoResolveClass", Napi::Function::New(env, MonoResolveClass));
   exports.Set("monoResolveField", Napi::Function::New(env, MonoResolveField));
   exports.Set("monoStaticFieldAddress", Napi::Function::New(env, MonoStaticFieldAddress));
+  exports.Set("monoCompileMethod", Napi::Function::New(env, MonoCompileMethod));
   return exports;
 }
 

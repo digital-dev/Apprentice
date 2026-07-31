@@ -26,5 +26,16 @@ export const monoResolver = {
     classHandle: string,
     fieldName: string
   ): Promise<string | null> =>
-    nativeAddon.monoStaticFieldAddress(handle, monoDllBase, classHandle, fieldName)
+    nativeAddon.monoStaticFieldAddress(handle, monoDllBase, classHandle, fieldName),
+
+  // The one operation in this bridge that can force real JIT compilation
+  // of a method the game hasn't run yet. Every caller of this function
+  // must be a deliberate, explicit user action — never a background retry
+  // — per the sub-project's own safety rule.
+  compileMethod: (
+    handle: number,
+    monoDllBase: string,
+    classHandle: string,
+    methodName: string
+  ): Promise<string | null> => nativeAddon.monoCompileMethod(handle, monoDllBase, classHandle, methodName)
 }
