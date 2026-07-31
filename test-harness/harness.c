@@ -263,7 +263,15 @@ int main(void) {
     if (line[0] == 'q') break;
     int val;
     float fval;
-    if (strncmp(line, "loaddll2", 8) == 0) {
+    if (strncmp(line, "loadmono", 8) == 0) {
+      HMODULE m = LoadLibraryA("test-harness\\probe_mono.dll");
+      if (m == NULL) printf("ERR\n");
+      else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)m);
+    } else if (strncmp(line, "unloadmono", 10) == 0) {
+      HMODULE m = GetModuleHandleA("probe_mono.dll");
+      if (m != NULL) FreeLibrary(m);
+      printf("OK\n");
+    } else if (strncmp(line, "loaddll2", 8) == 0) {
       if (g_probe_dll == NULL) g_probe_dll = LoadLibraryA("test-harness\\probe2.dll");
       if (g_probe_dll == NULL) printf("ERR\n");
       else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_probe_dll);
