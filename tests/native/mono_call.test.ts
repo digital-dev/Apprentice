@@ -106,3 +106,48 @@ describe('remote thread', () => {
     expect(typeof started).toBe('boolean')
   })
 })
+
+describe('callRemoteFunction', () => {
+  it('calls a real exported function with two arguments and observes its effect', async () => {
+    // RemoteCallProbe2(int* target, int value) is an ordinary 2-argument
+    // function (not shaped as a thread entry point like RemoteThreadProbe),
+    // so calling it through the stub proves the stub's argument
+    // marshalling. Both args are pointer/integer — the stub only ever
+    // loads RCX/RDX/R8/R9, matching the pointer/integer-only Mono
+    // introspection calls every later task makes; a float argument would
+    // need XMM1 per the Windows x64 ABI, which is out of scope here.
+    const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteCallProbe2')
+    const scratch = (addon as any).allocateCave(handle, harnessBase)
+
+    const result = await (addon as any).callRemoteFunction(handle, funcAddr, [scratch, '0x2a'])
+    expect(result).not.toBeNull()
+
+    const after = (addon as any).readBytes(handle, scratch, 4)
+    expect(Buffer.from(after, 'hex').readInt32LE(0)).toBe(0x2a)
+  })
+
+  it('works with fewer than 4 arguments', async () => {
+    const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteThreadProbe')
+    const scratch = (addon as any).allocateCave(handle, harnessBase)
+    const result = await (addon as any).callRemoteFunction(handle, funcAddr, [scratch])
+    expect(result).not.toBeNull()
+    const marker = (addon as any).readBytes(handle, scratch, 4)
+    expect(Buffer.from(marker, 'hex').readInt32LE(0)).toBe(0x1337)
+  })
+
+  it('resolves null rather than throwing when the function address is bogus', async () => {
+    // '0x1' isn't backed by executable memory, so RunRemoteCall's
+    // QueryRegion guard refuses before ever touching the target — no cave,
+    // no write, no thread. That's deterministic, unlike letting the stub
+    // actually `call` an unmapped address: that raises an access violation
+    // INSIDE the target process (proven with a standalone repro against
+    // this same harness — the target's whole process exited with
+    // STATUS_ACCESS_VIOLATION every time), which a real game has no
+    // exception handler for, so Windows tears down the entire process
+    // rather than just failing this one call. Without the guard, this test
+    // would only resolve to null by winning a race against that process
+    // teardown.
+    const result = await (addon as any).callRemoteFunction(handle, '0x1', [])
+    expect(result).toBeNull()
+  })
+})

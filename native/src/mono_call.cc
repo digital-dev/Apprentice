@@ -1,7 +1,9 @@
 #include "mono_call.h"
 #include "platform/platform.h"
 #include <cstdio>
+#include <cstring>
 #include <string>
+#include <vector>
 
 namespace {
 uintptr_t ParseHex(const std::string& s) {
@@ -54,4 +56,190 @@ Napi::Value CreateRemoteThread(const Napi::CallbackInfo& info) {
   bool ok = platform::WaitForRemoteThread(thread, 2000);
   platform::CloseRemoteThread(thread);
   return Napi::Boolean::New(env, ok);
+}
+
+namespace {
+
+// Builds a small stub, hand-encoded the same way EncodeJump in cave_ops.cc
+// is — the byte layout here is exactly what matters, so it is written
+// directly rather than through Zydis's encoder. Windows x64 calling
+// convention: the first four integer/pointer arguments go in RCX, RDX, R8,
+// R9. The stub loads up to 4 args, adjusts the stack for the call, calls
+// the target function, writes its 8-byte return value (RAX) to
+// resultAddress, and returns 0 as the thread's exit code.
+//
+// Stack alignment: CreateRemoteThread starts this stub the same way any
+// x64 call is made — through a real `call` in ntdll's thread-start
+// trampoline — so the ABI's usual invariant holds at entry: RSP is 8 mod 16
+// (a `call` always leaves RSP 0 mod 16 at the CALLEE it invokes only after
+// accounting for its own pushed return address; concretely, immediately
+// inside any function reached via `call`, RSP sits 8 mod 16, one push short
+// of the 16-alignment a nested `call` requires). `sub rsp, 0x28` (40, which
+// is 8 mod 16) lands exactly on 0 mod 16 for the `call rax` below, while
+// also carving out the mandatory 0x20 shadow space in the same
+// instruction. `add rsp, 0x28` afterward is `sub`'s exact inverse (unlike
+// an `and`, which would be destructive and irreversible), so RSP is back
+// to its entry value before the closing `ret` — which must pop the exact
+// return address the thread-start trampoline pushed, or the thread (and
+// the whole process, once it runs off into whatever garbage a wrong `ret`
+// lands on) corrupts on exit.
+//
+//   mov rcx, args[0]      48 B9 <imm64>   (10 bytes, 0 if unused)
+//   mov rdx, args[1]      48 BA <imm64>   (10 bytes)
+//   mov r8,  args[2]      49 B8 <imm64>   (10 bytes)
+//   mov r9,  args[3]      49 B9 <imm64>   (10 bytes)
+//   mov rax, function     48 B8 <imm64>   (10 bytes)
+//   sub rsp, 0x28         48 83 EC 28     (4 bytes)  -- align + shadow space
+//   call rax              FF D0           (2 bytes)
+//   add rsp, 0x28         48 83 C4 28     (4 bytes)  -- exact inverse of the sub above
+//   mov rcx, resultAddr   48 B9 <imm64>   (10 bytes)
+//   mov [rcx], rax        48 89 01        (3 bytes)
+//   xor eax, eax          31 C0           (2 bytes)
+//   ret                   C3              (1 byte)
+std::vector<uint8_t> BuildCallStub(uintptr_t function,
+                                   const std::vector<uintptr_t>& args,
+                                   uintptr_t resultAddress) {
+  std::vector<uint8_t> out;
+  auto emitMovImm64 = [&](uint8_t opcodeByte, bool rex49, uintptr_t imm) {
+    out.push_back(rex49 ? 0x49 : 0x48);
+    out.push_back(opcodeByte);
+    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
+  };
+
+  uintptr_t a0 = args.size() > 0 ? args[0] : 0;
+  uintptr_t a1 = args.size() > 1 ? args[1] : 0;
+  uintptr_t a2 = args.size() > 2 ? args[2] : 0;
+  uintptr_t a3 = args.size() > 3 ? args[3] : 0;
+
+  emitMovImm64(0xB9, false, a0);       // mov rcx, a0
+  emitMovImm64(0xBA, false, a1);       // mov rdx, a1
+  emitMovImm64(0xB8, true, a2);        // mov r8,  a2
+  emitMovImm64(0xB9, true, a3);        // mov r9,  a3
+  emitMovImm64(0xB8, false, function); // mov rax, function
+
+  out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28}); // sub rsp, 0x28
+  out.insert(out.end(), {0xFF, 0xD0});             // call rax
+  out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28}); // add rsp, 0x28
+
+  emitMovImm64(0xB9, false, resultAddress); // mov rcx, resultAddress
+  out.insert(out.end(), {0x48, 0x89, 0x01}); // mov [rcx], rax
+  out.insert(out.end(), {0x31, 0xC0});       // xor eax, eax
+  out.push_back(0xC3);                       // ret
+
+  return out;
+}
+
+// The 76-byte stub above, plus its 8-byte result slot, fits comfortably in
+// a single cave. The result slot sits at cave+0 and the stub code at
+// cave+8, matching cave_ops.cc's own documented slot-then-code layout.
+constexpr uintptr_t kResultOffset = 0;
+constexpr uintptr_t kCodeOffset = 8;
+
+} // namespace
+
+bool RunRemoteCall(platform::ProcessHandle handle, uintptr_t function,
+                    const std::vector<uintptr_t>& args, uint8_t result[8]) {
+  // Refuse before touching the target at all unless `function` is backed by
+  // executable memory right now. `call rax` to an address that isn't raises
+  // an access violation INSIDE the target process, not just in our
+  // throwaway thread — and a real game (like this test's harness) has no
+  // exception handler installed for it, so Windows tears down the whole
+  // process rather than just failing our call. That is a materially worse
+  // outcome than "this remote call failed", and every later task's
+  // Mono-resolved function addresses need exactly this protection: they
+  // come from calls made elsewhere in the target, with no guarantee they're
+  // still valid by the time we get here.
+  platform::Region region;
+  if (!platform::QueryRegion(handle, function, region) || !region.executable) return false;
+
+  uintptr_t cave = platform::AllocateNear(handle, function, 256);
+  if (!cave) return false;
+
+  std::vector<uint8_t> stub = BuildCallStub(function, args, cave + kResultOffset);
+  if (!platform::WriteMemory(handle, cave + kCodeOffset, stub.data(), stub.size())) return false;
+
+  platform::ThreadHandle thread =
+      platform::CreateRemoteThread(handle, cave + kCodeOffset, 0);
+  if (!thread) return false;
+
+  bool finished = platform::WaitForRemoteThread(thread, 2000);
+  platform::CloseRemoteThread(thread);
+  // Never read the result slot, and never treat the cave as free to
+  // reuse, unless the thread genuinely finished — see the never-free-a-
+  // live-cave rule. A caller only sees `null`; the cave is deliberately
+  // leaked in the timeout case rather than freed out from under a thread
+  // that might still be running inside it, the same trade-off #7 already
+  // made for a failed install.
+  if (!finished) return false;
+
+  return platform::ReadMemory(handle, cave + kResultOffset, result, 8);
+}
+
+class RemoteCallWorker : public Napi::AsyncWorker {
+ public:
+  RemoteCallWorker(Napi::Env env, platform::ProcessHandle handle,
+                   uintptr_t function, std::vector<uintptr_t> args)
+      : Napi::AsyncWorker(env),
+        handle_(handle),
+        function_(function),
+        args_(std::move(args)),
+        deferred_(Napi::Promise::Deferred::New(env)) {}
+
+  Napi::Promise GetPromise() { return deferred_.Promise(); }
+
+  void Execute() override {
+    ok_ = RunRemoteCall(handle_, function_, args_, result_);
+  }
+
+  void OnOK() override {
+    Napi::Env env = Env();
+    if (!ok_) {
+      deferred_.Resolve(env.Null());
+      return;
+    }
+    char hex[20];
+    snprintf(hex, sizeof(hex), "0x%02x%02x%02x%02x%02x%02x%02x%02x",
+             result_[7], result_[6], result_[5], result_[4],
+             result_[3], result_[2], result_[1], result_[0]);
+    deferred_.Resolve(Napi::String::New(env, hex));
+  }
+
+  void OnError(const Napi::Error&) override { deferred_.Resolve(Env().Null()); }
+
+ private:
+  platform::ProcessHandle handle_;
+  uintptr_t function_;
+  std::vector<uintptr_t> args_;
+  bool ok_ = false;
+  uint8_t result_[8] = {0};
+  Napi::Promise::Deferred deferred_;
+};
+
+Napi::Value CallRemoteFunction(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsString() || !info[2].IsArray()) {
+    Napi::TypeError::New(env, "callRemoteFunction(handle, functionAddress, args) expects (number, string, string[])")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto handle = static_cast<platform::ProcessHandle>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  uintptr_t function = ParseHex(info[1].As<Napi::String>().Utf8Value());
+
+  Napi::Array arr = info[2].As<Napi::Array>();
+  std::vector<uintptr_t> args;
+  for (uint32_t i = 0; i < arr.Length() && i < 4; i++) {
+    Napi::Value v = arr.Get(i);
+    if (!v.IsString()) {
+      Napi::TypeError::New(env, "callRemoteFunction: each arg must be a hex string")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    args.push_back(ParseHex(v.As<Napi::String>().Utf8Value()));
+  }
+
+  auto* worker = new RemoteCallWorker(env, handle, function, std::move(args));
+  Napi::Promise promise = worker->GetPromise();
+  worker->Queue();
+  return promise;
 }

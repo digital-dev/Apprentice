@@ -151,5 +151,15 @@ export const nativeAddon = {
   // Every module loaded in the target, with the PE fields a build
   // fingerprint is made of. Returns [] rather than throwing when the
   // process is protected or exiting — "cannot verify" is a normal answer.
-  listModules: (handle: number): ModuleInfo[] => addon.listModules(handle)
+  listModules: (handle: number): ModuleInfo[] => addon.listModules(handle),
+  // Makes the target execute a call into one of its own exported
+  // functions, on a throwaway thread, and reports the 8-byte return value
+  // back (as 0x-prefixed hex), or null on failure/timeout. Up to 4
+  // pointer/integer arguments. Runs on a background thread in the addon
+  // (Napi::AsyncWorker) — a remote call can take up to its 2s timeout.
+  callRemoteFunction: (
+    handle: number,
+    functionAddress: string,
+    args: string[]
+  ): Promise<string | null> => addon.callRemoteFunction(handle, functionAddress, args)
 }

@@ -80,6 +80,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("listModules", Napi::Function::New(env, ListModules));
   exports.Set("resolveExport", Napi::Function::New(env, ResolveExport));
   exports.Set("createRemoteThread", Napi::Function::New(env, CreateRemoteThread));
+  exports.Set("callRemoteFunction", Napi::Function::New(env, CallRemoteFunction));
   return exports;
 }
 

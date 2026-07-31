@@ -242,6 +242,17 @@ __declspec(dllexport) unsigned long __stdcall RemoteThreadProbe(void* param) {
   return 0;
 }
 
+// Task 3's two-argument remote-call proof: writes `value` through `target`.
+// Unlike RemoteThreadProbe above, this is NOT shaped as a thread entry
+// point — it's an ordinary function with a normal 2-argument prototype
+// (pointer, int; both go through RCX/RDX per the Windows x64 calling
+// convention), so calling it through callRemoteFunction's hand-encoded
+// stub proves the stub's argument marshalling, not just the raw
+// CreateRemoteThread mechanism.
+__declspec(dllexport) void __stdcall RemoteCallProbe2(int* target, int value) {
+  *target = value;
+}
+
 int main(void) {
   DWORD pid = GetCurrentProcessId();
   printf("PID %lu\n", (unsigned long)pid);
