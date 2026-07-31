@@ -37,5 +37,14 @@ export const monoResolver = {
     monoDllBase: string,
     classHandle: string,
     methodName: string
-  ): Promise<string | null> => nativeAddon.monoCompileMethod(handle, monoDllBase, classHandle, methodName)
+  ): Promise<string | null> => nativeAddon.monoCompileMethod(handle, monoDllBase, classHandle, methodName),
+
+  listFieldNames: (handle: number, monoDllBase: string, classHandle: string): Promise<string[]> =>
+    nativeAddon.monoListFieldNames(handle, monoDllBase, classHandle),
+
+  listMethodNames: (handle: number, monoDllBase: string, classHandle: string): Promise<string[]> =>
+    nativeAddon.monoListMethodNames(handle, monoDllBase, classHandle),
+
+  listAssemblies: (handle: number, monoDllBase: string): Promise<string[]> =>
+    nativeAddon.monoListAssemblies(handle, monoDllBase)
 }

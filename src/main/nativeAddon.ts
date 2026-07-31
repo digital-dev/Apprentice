@@ -191,5 +191,15 @@ export const nativeAddon = {
     monoDllBase: string,
     classHandle: string,
     methodName: string
-  ): Promise<string | null> => addon.monoCompileMethod(handle, monoDllBase, classHandle, methodName)
+  ): Promise<string | null> => addon.monoCompileMethod(handle, monoDllBase, classHandle, methodName),
+  // Every field/method name on a class, or every loaded assembly handle —
+  // loop-driven the same way resolveField/compileMethod are, except
+  // collecting every match instead of stopping at the first. Empty array
+  // rather than throwing on any failure (Mono not loaded, attach failed).
+  monoListFieldNames: (handle: number, monoDllBase: string, classHandle: string): Promise<string[]> =>
+    addon.monoListFieldNames(handle, monoDllBase, classHandle),
+  monoListMethodNames: (handle: number, monoDllBase: string, classHandle: string): Promise<string[]> =>
+    addon.monoListMethodNames(handle, monoDllBase, classHandle),
+  monoListAssemblies: (handle: number, monoDllBase: string): Promise<string[]> =>
+    addon.monoListAssemblies(handle, monoDllBase)
 }

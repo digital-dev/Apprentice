@@ -92,3 +92,25 @@ describe('monoCompileMethod', () => {
     expect(stamina).not.toBe(damage)
   })
 })
+
+describe('monoListAssemblies', () => {
+  it('finds the one fake assembly', async () => {
+    const assemblies = await (addon as any).monoListAssemblies(handle, monoBase)
+    expect(assemblies.length).toBe(1)
+    expect(assemblies[0]).toMatch(/^0x[0-9a-f]+$/)
+  })
+})
+
+describe('monoListFieldNames / monoListMethodNames', () => {
+  it('lists every field name on a class', async () => {
+    const klass = await (addon as any).monoResolveClass(handle, monoBase, '', 'Player')
+    const names = await (addon as any).monoListFieldNames(handle, monoBase, klass)
+    expect(names.sort()).toEqual(['m_godMode', 'm_localPlayer'])
+  })
+
+  it('lists every method name on a class', async () => {
+    const klass = await (addon as any).monoResolveClass(handle, monoBase, '', 'Character')
+    const names = await (addon as any).monoListMethodNames(handle, monoBase, klass)
+    expect(names).toEqual(['ApplyDamage'])
+  })
+})

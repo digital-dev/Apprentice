@@ -16,3 +16,14 @@ Napi::Value MonoStaticFieldAddress(const Napi::CallbackInfo& info);
 // an explicit, deliberate action (enforced by later tasks' call sites, not
 // here).
 Napi::Value MonoCompileMethod(const Napi::CallbackInfo& info);
+// Loop-driven name listers: the same iterator loop MonoResolveField/
+// MonoCompileMethod already run, collecting every name instead of
+// stopping at the first match.
+Napi::Value MonoListFieldNames(const Napi::CallbackInfo& info);
+Napi::Value MonoListMethodNames(const Napi::CallbackInfo& info);
+// The one genuinely new mechanism in this bridge: mono_assembly_foreach is
+// callback-based, so this injects a small collector stub the target calls
+// INTO once per assembly, appending each result to a growable buffer read
+// back once the top-level call returns. See mono_bridge.cc's
+// BuildAssemblyCollectorStub for the hand-encoded bytes.
+Napi::Value MonoListAssemblies(const Napi::CallbackInfo& info);
