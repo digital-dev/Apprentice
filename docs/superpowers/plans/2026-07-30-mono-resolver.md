@@ -1841,11 +1841,33 @@ namespace {
 //
 // Concretely: RCX = data (the MonoAssembly*), RDX = userData (our buffer).
 // Buffer layout: [0..8) = count (uint64), [8 + count*8 ..) = next slot.
+//
+// Two encoding details worth spelling out, because they are exactly the
+// kind of thing that looks plausible and is wrong: the jump must be JAE
+// (0x73), not JA (0x77) — CMP rax,64 followed by JA lets a count of
+// EXACTLY 64 fall through instead of skipping, writing slots[64] one past
+// the 64-slot buffer and directly into this stub's own code (stubAddr
+// sits immediately after the buffer). And the SIB-addressed store's REX
+// byte must be 0x49 (REX.X=0, REX.B=1), not 0x4A (REX.X=1, REX.B=0) —
+// REX.B extends the SIB *base* field and REX.X extends the SIB *index*
+// field; base here is r8 (extended, needs B) and index is rax (not
+// extended, X must stay 0). Getting X/B swapped doesn't fail to compile
+// or decode — it silently retargets the write to `[rax + r8*8]` instead
+// of `[r8 + rax*8]`: rax holds a small count (0-63) as a base address and
+// r8 holds a real pointer multiplied by 8 as an index, so the CPU
+// computes and writes through a wild, essentially-random address —
+// almost certainly an access violation that (per RunRemoteCall's own
+// documented crash mechanism) takes down the whole target process, not
+// just this call.
+//
 //   mov rax, [rdx]            48 8B 02          -- rax = count
 //   cmp rax, 64                48 83 F8 40       -- cap at 64 entries
-//   jae done                   77 0F             -- (rel8, patched below)
+//   jae done                   73 0E             -- rel8=14: the exact byte
+//                                                    count of every
+//                                                    instruction between
+//                                                    here and `ret`
 //   lea r8, [rdx+8]            4C 8D 42 08       -- r8 = &slots[0]
-//   mov [r8+rax*8], rcx        4A 89 0C C0       -- slots[count] = data
+//   mov [r8+rax*8], rcx        49 89 0C C0       -- slots[count] = data
 //   inc rax                    48 FF C0
 //   mov [rdx], rax             48 89 02          -- count += 1
 // done:
@@ -1854,9 +1876,9 @@ std::vector<uint8_t> BuildAssemblyCollectorStub() {
   std::vector<uint8_t> out = {
     0x48, 0x8B, 0x02,                   // mov rax, [rdx]
     0x48, 0x83, 0xF8, 0x40,             // cmp rax, 64
-    0x77, 0x0F,                         // jae +0x0F (to `ret`, 15 bytes ahead)
+    0x73, 0x0E,                         // jae +0x0E (to `ret`, 14 bytes ahead)
     0x4C, 0x8D, 0x42, 0x08,             // lea r8, [rdx+8]
-    0x4A, 0x89, 0x0C, 0xC0,             // mov [r8+rax*8], rcx
+    0x49, 0x89, 0x0C, 0xC0,             // mov [r8+rax*8], rcx
     0x48, 0xFF, 0xC0,                   // inc rax
     0x48, 0x89, 0x02,                   // mov [rdx], rax
     0xC3,                               // ret
