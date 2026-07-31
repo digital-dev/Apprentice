@@ -1059,124 +1059,9 @@ describe('monoStaticFieldAddress', () => {
 Run: `npx vitest run tests/native/mono_bridge.test.ts`
 Expected: FAIL — `monoResolveClass` is not a function.
 
-- [ ] **Step 3: Write `mono_bridge.cc`**
+- [ ] **Step 3: Write the shared remote-call sequence, then `mono_bridge.cc`**
 
-Create `native/src/mono_bridge.h`:
-
-```cpp
-#pragma once
-#include <napi.h>
-
-Napi::Value MonoResolveClass(const Napi::CallbackInfo& info);
-Napi::Value MonoResolveField(const Napi::CallbackInfo& info);
-Napi::Value MonoStaticFieldAddress(const Napi::CallbackInfo& info);
-```
-
-Create `native/src/mono_bridge.cc`. This is the first file to actually sequence multiple remote calls together (attach → lookup → detach), so it owns writing argument strings into the target and the attach/detach pairing every later bridge function reuses:
-
-```cpp
-#include "mono_bridge.h"
-#include "platform/platform.h"
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <vector>
-
-namespace {
-
-uintptr_t ParseHex(const std::string& s) {
-  return static_cast<uintptr_t>(strtoull(s.c_str(), nullptr, 16));
-}
-std::string ToHex(uintptr_t v) {
-  char buf[32];
-  snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)v);
-  return buf;
-}
-
-// Writes a null-terminated string into a small cave near `near`, for use
-// as a const char* argument to a remote call. Every mono_* function this
-// bridge calls that takes a name string goes through this first.
-uintptr_t WriteString(platform::ProcessHandle handle, uintptr_t near, const std::string& s) {
-  uintptr_t cave = platform::AllocateNear(handle, near, 256);
-  if (!cave) return 0;
-  std::vector<char> buf(s.begin(), s.end());
-  buf.push_back('\0');
-  if (!platform::WriteMemory(handle, cave, buf.data(), buf.size())) return 0;
-  return cave;
-}
-
-// Every Mono call in this bridge is bracketed by attach/detach — Mono
-// doesn't know about a thread it didn't create, and most of its API
-// asserts on that. This helper owns the pairing so no individual lookup
-// can forget the detach half; see the platform_win32-level plumbing this
-// wraps (mono_get_root_domain / mono_thread_attach / mono_thread_detach,
-// each just another callRemoteFunction under the hood — reached from the
-// TypeScript layer in monoResolver.ts, not duplicated here, since the
-// attach/detach calls themselves need no argument-string marshalling and
-// are simplest to sequence from monoResolver.ts's async function, which
-// already awaits each callRemoteFunction in turn).
-
-} // namespace
-
-Napi::Value MonoResolveClass(const Napi::CallbackInfo& info) {
-  // Deliberately synchronous here despite doing a remote call: mono_bridge
-  // functions build arguments (writing a string into the target) and then
-  // return a PROMISE from the underlying callRemoteFunction rather than
-  // blocking — see monoResolver.ts, which is what actually awaits the
-  // remote call. This native entry point's only synchronous work is
-  // writing the two name strings and returning their addresses alongside
-  // the class-lookup function's own address, all consumed together in
-  // monoResolver.ts's resolveClass. Kept here rather than in TypeScript
-  // because writing into the target's memory is native-only surface.
-  Napi::Env env = info.Env();
-  auto handle = static_cast<platform::ProcessHandle>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
-  uintptr_t imageOrNear = ParseHex(info[1].As<Napi::String>().Utf8Value());
-  std::string namespaceName = info[2].As<Napi::String>().Utf8Value();
-  std::string className = info[3].As<Napi::String>().Utf8Value();
-
-  uintptr_t nsAddr = WriteString(handle, imageOrNear, namespaceName);
-  uintptr_t nameAddr = WriteString(handle, imageOrNear, className);
-  if (!nsAddr || !nameAddr) return env.Null();
-
-  Napi::Object out = Napi::Object::New(env);
-  out.Set("namespaceAddress", Napi::String::New(env, ToHex(nsAddr)));
-  out.Set("nameAddress", Napi::String::New(env, ToHex(nameAddr)));
-  return out;
-}
-
-Napi::Value MonoResolveField(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  auto handle = static_cast<platform::ProcessHandle>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
-  uintptr_t imageOrNear = ParseHex(info[1].As<Napi::String>().Utf8Value());
-  std::string fieldName = info[2].As<Napi::String>().Utf8Value();
-
-  uintptr_t nameAddr = WriteString(handle, imageOrNear, fieldName);
-  if (!nameAddr) return env.Null();
-  return Napi::String::New(env, ToHex(nameAddr));
-}
-
-Napi::Value MonoStaticFieldAddress(const Napi::CallbackInfo& info) {
-  return MonoResolveField(info); // same shape: write the name, return its address
-}
-```
-
-This native layer is deliberately thin — it only does the one thing TypeScript cannot (write bytes into the target's memory). Sequencing multiple remote calls (attach, resolve export, call with the written string address, detach) belongs in `monoResolver.ts`, where `await` makes the sequence readable.
-
-- [ ] **Step 4: Wire the Napi exports**
-
-In `native/src/addon.cc`: add `#include "mono_bridge.h"` and, in the export table:
-
-```cpp
-  exports.Set("monoResolveClassArgs", Napi::Function::New(env, MonoResolveClass));
-  exports.Set("monoResolveFieldArgs", Napi::Function::New(env, MonoResolveField));
-  exports.Set("monoStaticFieldAddressArgs", Napi::Function::New(env, MonoStaticFieldAddress));
-```
-
-(Named with an `Args` suffix at the native boundary because these return argument *addresses*, not resolved results — `monoResolver.ts`'s exported functions, named without the suffix, are what Task 5's test actually calls, per Step 1 above; the test calls `addon.monoResolveClass` etc. because those are built as small TypeScript-level compositions in `monoResolver.ts`, re-exported onto the same `addon`-like surface the test imports. To keep the test in Step 1 accurate as written, implement `monoResolveClass`/`monoResolveField`/`monoStaticFieldAddress` as the actual native Napi exports directly — simplify by having the native layer do the FULL sequence itself instead of splitting args-only vs. TypeScript-sequenced, since Mono's `mono_class_from_name`/`mono_class_get_fields` calls are always reached the same fixed way from every call site. Revise Step 3 accordingly:)
-
-Replace Step 3's approach: rather than splitting "write args" (native) from "sequence the calls" (TypeScript), do the full sequence in native code, since every call site needs the exact same attach → call → detach pattern and C++ already has `platform::CreateRemoteThread`/`WaitForRemoteThread` available directly (no need to round-trip through the async `callRemoteFunction` Napi boundary from within `mono_bridge.cc` itself). Rewrite `mono_bridge.cc`'s three functions as full `Napi::AsyncWorker`s, each performing: resolve `mono_get_root_domain`/`mono_thread_attach`/`mono_thread_detach`/`mono_class_from_name` (or `mono_class_get_fields`+`mono_field_get_name`+`mono_field_get_offset`) via `platform::ResolveExport` against the passed-in `monoDllBase`, write the needed name strings via `WriteString`, and drive the calls with the SAME `BuildCallStub`/`CreateRemoteThread`/`WaitForRemoteThread` sequence `RemoteCallWorker` in `mono_call.cc` already implements — factor that sequence out of `RemoteCallWorker` into a shared free function first:
+Every bridge call needs the exact same attach → call → detach pattern, so first factor the allocate-write-run-read-cleanup sequence `RemoteCallWorker` (Task 3) already implements out into a shared free function — `mono_bridge.cc`'s workers call it directly rather than round-tripping through the async `callRemoteFunction` Napi boundary from within native code.
 
 In `native/src/mono_call.h`, add:
 
@@ -1210,9 +1095,9 @@ bool RunRemoteCall(platform::ProcessHandle handle, uintptr_t function,
 }
 ```
 
-(`BuildCallStub`, `kResultOffset`, `kCodeOffset` move out of the anonymous namespace so `mono_bridge.cc` — no, keep them file-local to `mono_call.cc`; only `RunRemoteCall` is declared in the header. `RemoteCallWorker::Execute()` becomes a two-line call to `RunRemoteCall`.)
+`BuildCallStub`, `kResultOffset`, and `kCodeOffset` stay file-local to `mono_call.cc` (only `RunRemoteCall` is declared in the header). `RemoteCallWorker::Execute()` becomes a two-line call to `RunRemoteCall`.
 
-Now rewrite `mono_bridge.cc` in full:
+Now write `mono_bridge.cc`:
 
 ```cpp
 #include "mono_bridge.h"
@@ -1472,7 +1357,7 @@ Update `native/src/mono_call.h` to declare `RunRemoteCall` as shown above, and r
   }
 ```
 
-- [ ] **Step 5: Wire the Napi exports and build**
+- [ ] **Step 4: Wire the Napi exports and build**
 
 In `native/src/addon.cc`: add `#include "mono_bridge.h"` and, in the export table:
 
@@ -1488,12 +1373,12 @@ In `native/binding.gyp`, add `"src/mono_bridge.cc"` to `sources`.
 cd native; npx node-gyp configure; npx node-gyp build; cd ..
 ```
 
-- [ ] **Step 6: Run the tests**
+- [ ] **Step 5: Run the tests**
 
 Run: `npx vitest run tests/native/mono_bridge.test.ts`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 7: Write `monoResolver.ts`**
+- [ ] **Step 6: Write `monoResolver.ts`**
 
 Create `src/main/monoResolver.ts`:
 
@@ -1554,7 +1439,7 @@ Add the corresponding typed wrappers to `src/main/nativeAddon.ts`:
   ): Promise<string | null> => addon.monoStaticFieldAddress(handle, monoDllBase, classHandle, fieldName),
 ```
 
-- [ ] **Step 8: Typecheck and commit**
+- [ ] **Step 7: Typecheck and commit**
 
 Run: `npx vitest run && npx tsc --noEmit`
 
