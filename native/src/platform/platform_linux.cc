@@ -32,5 +32,8 @@ bool ListModules(ProcessHandle, std::vector<ModuleInfo>& out) {
   out.clear();
   return false;
 }
+uintptr_t ResolveExport(ProcessHandle, uintptr_t, const std::string&) {
+  return 0;
+}
 
 } // namespace platform

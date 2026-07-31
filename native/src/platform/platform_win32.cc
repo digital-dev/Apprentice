@@ -271,4 +271,57 @@ bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
   return true;
 }
 
+uintptr_t ResolveExport(ProcessHandle handle, uintptr_t moduleBase, const std::string& name) {
+  IMAGE_DOS_HEADER dos{};
+  if (!platform::ReadMemory(handle, moduleBase, &dos, sizeof(dos))) return 0;
+  if (dos.e_magic != IMAGE_DOS_SIGNATURE) return 0;
+
+  IMAGE_NT_HEADERS64 nt{};
+  if (!platform::ReadMemory(handle, moduleBase + dos.e_lfanew, &nt, sizeof(nt))) return 0;
+  if (nt.Signature != IMAGE_NT_SIGNATURE) return 0;
+  if (nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return 0; // refuse a 32-bit image, same reasoning as ListModules
+
+  const IMAGE_DATA_DIRECTORY& exportDir =
+      nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+  if (exportDir.VirtualAddress == 0 || exportDir.Size == 0) return 0;
+  uintptr_t exportDirStart = moduleBase + exportDir.VirtualAddress;
+  uintptr_t exportDirEnd = exportDirStart + exportDir.Size;
+
+  IMAGE_EXPORT_DIRECTORY ied{};
+  if (!platform::ReadMemory(handle, exportDirStart, &ied, sizeof(ied))) return 0;
+
+  // Bounded the same way ListModules bounds its module count: a real
+  // module's export table is a few hundred to a few thousand entries, and
+  // capping avoids an unbounded read driven by a corrupt NumberOfNames.
+  uint32_t count = ied.NumberOfNames;
+  if (count > 16384) count = 16384;
+  if (count == 0) return 0;
+
+  std::vector<uint32_t> nameRvas(count);
+  if (!platform::ReadMemory(handle, moduleBase + ied.AddressOfNames,
+                            nameRvas.data(), count * sizeof(uint32_t))) return 0;
+  std::vector<uint16_t> ordinals(count);
+  if (!platform::ReadMemory(handle, moduleBase + ied.AddressOfNameOrdinals,
+                            ordinals.data(), count * sizeof(uint16_t))) return 0;
+
+  for (uint32_t i = 0; i < count; i++) {
+    char nameBuf[256] = {0};
+    if (!platform::ReadMemory(handle, moduleBase + nameRvas[i], nameBuf, sizeof(nameBuf) - 1)) continue;
+    if (name != nameBuf) continue;
+
+    uint16_t ordinal = ordinals[i];
+    uint32_t funcRva = 0;
+    if (!platform::ReadMemory(handle, moduleBase + ied.AddressOfFunctions + ordinal * sizeof(uint32_t),
+                              &funcRva, sizeof(funcRva))) return 0;
+    if (funcRva == 0) return 0;
+
+    uintptr_t funcAddr = moduleBase + funcRva;
+    // A forwarded export's RVA points back INSIDE the export directory
+    // itself (at a "OtherDll.OtherFunc" string) rather than at real code.
+    if (funcAddr >= exportDirStart && funcAddr < exportDirEnd) return 0;
+    return funcAddr;
+  }
+  return 0;
+}
+
 } // namespace platform

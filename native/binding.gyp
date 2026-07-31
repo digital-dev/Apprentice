@@ -12,6 +12,7 @@
         "src/patch_ops.cc",
         "src/cave_ops.cc",
         "src/module_info.cc",
+        "src/mono_call.cc",
         "third_party/zydis/Zydis.c"
       ],
       "include_dirs": [

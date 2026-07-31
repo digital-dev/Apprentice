@@ -36,6 +36,16 @@ struct ModuleInfo {
 // process); callers treat that as "cannot verify" rather than as an error.
 bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out);
 
+// The address of an exported function or variable inside a module already
+// loaded in the target, found by walking that module's own PE export
+// directory in the target's memory — not GetProcAddress, which only works
+// on modules loaded in THIS process. Returns 0 when the module isn't a
+// well-formed PE, the name isn't exported, or the export is a forwarder
+// (a string naming another DLL's export rather than a real address) —
+// none of this sub-project's targets are forwarded, and resolving a
+// forwarder chain is not attempted.
+uintptr_t ResolveExport(ProcessHandle handle, uintptr_t moduleBase, const std::string& name);
+
 bool IsSupported();
 const char* Name();
 
