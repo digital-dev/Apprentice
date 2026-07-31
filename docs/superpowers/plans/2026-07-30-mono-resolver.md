@@ -489,7 +489,7 @@ cd native; npx node-gyp build; cd ..
 ```
 
 Run: `npx vitest run tests/native/mono_call.test.ts`
-Expected: PASS, 6 tests total.
+Expected: PASS, 7 tests total (5 from Task 1 plus this task's 2).
 
 - [ ] **Step 10: Typecheck and commit**
 
@@ -522,27 +522,22 @@ Append to `tests/native/mono_call.test.ts`:
 ```ts
 describe('callRemoteFunction', () => {
   it('calls a real exported function with two arguments and observes its effect', async () => {
-    await send('loaddll')
-    const mods = (addon as any).listModules(handle)
-    const probe = mods.find((m: any) => m.name.toLowerCase() === 'probe.dll')
-    const writeAddr = (addon as any).resolveExport(handle, probe.base, 'probe_write')
-    const fieldAddr = (addon as any).resolveExport(handle, probe.base, 'g_probe_field')
+    // RemoteCallProbe2 is added to the harness in Step 3 below, specifically
+    // for this test: an ordinary two-pointer/integer-argument function,
+    // deliberately NOT float-typed. Windows x64 assigns argument registers
+    // positionally with the bank (GP vs XMM) chosen by that slot's type, so
+    // a float argument needs XMM1, not RDX — this stub only ever loads
+    // RCX/RDX/R8/R9, matching the plan's explicit scope: every real call
+    // site in this sub-project is a Mono introspection function taking
+    // pointers/integers only, never floats.
+    const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteCallProbe2')
+    const scratch = (addon as any).allocateCave(handle, harnessBase)
 
-    // probe_write(float* target, float value) — pass the field's address as
-    // arg0 and 99.5f's raw bits as arg1 (Mono's own real functions take
-    // pointer/integer args the same way; a float here stands in for that
-    // without needing floating-point argument support in the stub).
-    const valueBits = Buffer.alloc(4)
-    valueBits.writeFloatLE(99.5, 0)
-    const valueHex = '0x' + valueBits.readUInt32LE(0).toString(16)
-
-    const result = await (addon as any).callRemoteFunction(handle, writeAddr, [fieldAddr, valueHex])
+    const result = await (addon as any).callRemoteFunction(handle, funcAddr, [scratch, '0x2a'])
     expect(result).not.toBeNull()
 
-    const after = (addon as any).readBytes(handle, fieldAddr, 4)
-    expect(Buffer.from(after, 'hex').readFloatLE(0)).toBeCloseTo(99.5, 5)
-
-    await send('unloaddll')
+    const after = (addon as any).readBytes(handle, scratch, 4)
+    expect(Buffer.from(after, 'hex').readInt32LE(0)).toBe(42)
   })
 
   it('works with fewer than 4 arguments', async () => {
@@ -566,7 +561,29 @@ describe('callRemoteFunction', () => {
 Run: `npx vitest run tests/native/mono_call.test.ts -t "callRemoteFunction"`
 Expected: FAIL — `callRemoteFunction` is not a function.
 
-- [ ] **Step 3: Write the stub-builder**
+- [ ] **Step 3: Add a two-argument harness test target**
+
+In `test-harness/harness.c`, add near `RemoteThreadProbe` (Task 2):
+
+```c
+// A two-argument remote-call proof: writes `value` through `target`.
+// Unlike RemoteThreadProbe (Task 2), this is NOT shaped as a thread entry
+// point — it's an ordinary function with a normal 2-argument prototype,
+// proving the stub's argument marshalling rather than the raw
+// thread-start mechanism. Deliberately int/pointer-typed, not float:
+// Windows x64 assigns argument registers positionally with the bank (GP
+// vs XMM) chosen by that slot's type, and this stub only ever loads
+// RCX/RDX/R8/R9 — matching the plan's scope, since every real call site
+// in this sub-project is a Mono introspection function taking
+// pointers/integers only.
+__declspec(dllexport) void __stdcall RemoteCallProbe2(int* target, int value) {
+  *target = value;
+}
+```
+
+Rebuild the harness from PowerShell and verify `harness.exe`'s timestamp changed, the same way Task 2's `RemoteThreadProbe` addition was built.
+
+- [ ] **Step 4: Write the stub-builder**
 
 In `native/src/mono_call.cc`, add (before the Napi entry points):
 
@@ -577,19 +594,34 @@ namespace {
 // is — the byte layout here is exactly what matters, so it is written
 // directly rather than through Zydis's encoder. Windows x64 calling
 // convention: the first four integer/pointer arguments go in RCX, RDX, R8,
-// R9. The stub loads up to 4 args, aligns the stack (CreateRemoteThread's
-// start-of-thread stack alignment is not something to assume), calls the
-// target function, writes its 8-byte return value (RAX) to resultAddress,
-// and returns 0 as the thread's exit code.
+// R9. The stub loads up to 4 args, calls the target function, writes its
+// 8-byte return value (RAX) to resultAddress, and returns 0 as the
+// thread's exit code.
+//
+// Stack alignment: CreateRemoteThread invokes this stub as a real thread
+// entry point, through Windows' own thread-start trampoline — which,
+// like any function call, leaves RSP ≡ 8 (mod 16) at our entry (a `call`
+// pushes an 8-byte return address, so a callee always sees that parity).
+// A `call` we make ourselves needs RSP ≡ 0 (mod 16) immediately before
+// it. `sub rsp, 0x28` (40 ≡ 8 mod 16) is the standard fix: it both
+// flips the parity to 0 mod 16 and provides the required 0x20 shadow-space
+// bytes in one instruction — the idiom used by essentially every
+// hand-written stub that calls into the Win64 ABI from a raw entry point.
+// `add rsp, 0x28` after the call is its exact inverse (unlike an `and`,
+// which would lose bits and make the adjustment irreversible), so RSP is
+// back to its true entry value before this stub's own `ret` — otherwise
+// that `ret` pops garbage instead of the address the OS's trampoline
+// expects, corrupting the thread (and, empirically, taking the whole
+// target process down with it).
 //
 //   mov rcx, args[0]      48 B9 <imm64>   (10 bytes, 0 if unused)
 //   mov rdx, args[1]      48 BA <imm64>   (10 bytes)
 //   mov r8,  args[2]      49 B8 <imm64>   (10 bytes)
 //   mov r9,  args[3]      49 B9 <imm64>   (10 bytes)
 //   mov rax, function     48 B8 <imm64>   (10 bytes)
-//   and rsp, -16          48 83 E4 F0     (4 bytes)  -- force 16-alignment
-//   sub rsp, 0x20         48 83 EC 20     (4 bytes)  -- shadow space
+//   sub rsp, 0x28         48 83 EC 28     (4 bytes)
 //   call rax              FF D0           (2 bytes)
+//   add rsp, 0x28         48 83 C4 28     (4 bytes)
 //   mov rcx, resultAddr   48 B9 <imm64>   (10 bytes)
 //   mov [rcx], rax        48 89 01        (3 bytes)
 //   xor eax, eax          31 C0           (2 bytes)
@@ -615,9 +647,9 @@ std::vector<uint8_t> BuildCallStub(uintptr_t function,
   emitMovImm64(0xB9, true, a3);        // mov r9,  a3
   emitMovImm64(0xB8, false, function); // mov rax, function
 
-  out.insert(out.end(), {0x48, 0x83, 0xE4, 0xF0}); // and rsp, -16
-  out.insert(out.end(), {0x48, 0x83, 0xEC, 0x20}); // sub rsp, 0x20
+  out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28}); // sub rsp, 0x28
   out.insert(out.end(), {0xFF, 0xD0});             // call rax
+  out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28}); // add rsp, 0x28 (exact inverse)
 
   emitMovImm64(0xB9, false, resultAddress); // mov rcx, resultAddress
   out.insert(out.end(), {0x48, 0x89, 0x01}); // mov [rcx], rax
@@ -699,7 +731,7 @@ class RemoteCallWorker : public Napi::AsyncWorker {
 };
 ```
 
-- [ ] **Step 4: Add the Napi entry point**
+- [ ] **Step 5: Add the Napi entry point**
 
 In `native/src/mono_call.h`, add:
 
@@ -737,16 +769,16 @@ In `native/src/addon.cc`, add `#include <cstring>` if not already present (for `
   exports.Set("callRemoteFunction", Napi::Function::New(env, CallRemoteFunction));
 ```
 
-- [ ] **Step 5: Rebuild and run**
+- [ ] **Step 6: Rebuild and run**
 
 ```powershell
 cd native; npx node-gyp build; cd ..
 ```
 
 Run: `npx vitest run tests/native/mono_call.test.ts`
-Expected: PASS, 9 tests total.
+Expected: PASS, 10 tests total (7 from Tasks 1-2 plus this task's 3).
 
-- [ ] **Step 6: Add the typed wrapper**
+- [ ] **Step 7: Add the typed wrapper**
 
 In `src/main/nativeAddon.ts`:
 
@@ -763,12 +795,12 @@ In `src/main/nativeAddon.ts`:
   ): Promise<string | null> => addon.callRemoteFunction(handle, functionAddress, args),
 ```
 
-- [ ] **Step 7: Typecheck and commit**
+- [ ] **Step 8: Typecheck and commit**
 
 Run: `npx tsc --noEmit`
 
 ```bash
-git add native/src/mono_call.cc native/src/mono_call.h native/src/addon.cc src/main/nativeAddon.ts tests/native/mono_call.test.ts
+git add native/src/mono_call.cc native/src/mono_call.h native/src/addon.cc test-harness/harness.c test-harness/harness.exe src/main/nativeAddon.ts tests/native/mono_call.test.ts
 git commit -m "Make the target call its own exported functions on our behalf"
 ```
 
