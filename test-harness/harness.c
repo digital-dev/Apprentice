@@ -232,6 +232,16 @@ static unsigned __stdcall drain_thread(void* arg) {
 }
 #pragma optimize("", on)
 
+// Matches LPTHREAD_START_ROUTINE's exact ABI (one pointer arg, arriving in
+// RCX per the Windows x64 convention) so CreateRemoteThread can start a
+// thread here directly, with no stub needed — this proves the raw
+// mechanism works before Task 3 builds a stub for functions that need
+// MORE than one argument.
+__declspec(dllexport) unsigned long __stdcall RemoteThreadProbe(void* param) {
+  *(int*)param = 0x1337;
+  return 0;
+}
+
 int main(void) {
   DWORD pid = GetCurrentProcessId();
   printf("PID %lu\n", (unsigned long)pid);

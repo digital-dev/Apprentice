@@ -46,6 +46,18 @@ bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out);
 // forwarder chain is not attempted.
 uintptr_t ResolveExport(ProcessHandle handle, uintptr_t moduleBase, const std::string& name);
 
+using ThreadHandle = uintptr_t;
+
+// Starts a thread in the target at `startAddress`, passing `param` as its
+// single argument (matching LPTHREAD_START_ROUTINE's ABI: one pointer,
+// arriving in RCX). Returns 0 on failure.
+ThreadHandle CreateRemoteThread(ProcessHandle handle, uintptr_t startAddress, uintptr_t param);
+// Waits up to timeoutMs for the thread to exit. False on timeout OR error
+// — the caller must not free anything the thread could still be running
+// inside when this returns false; see the never-free-a-live-cave rule.
+bool WaitForRemoteThread(ThreadHandle thread, uint32_t timeoutMs);
+void CloseRemoteThread(ThreadHandle thread);
+
 bool IsSupported();
 const char* Name();
 

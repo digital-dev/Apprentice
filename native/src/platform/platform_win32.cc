@@ -324,4 +324,22 @@ uintptr_t ResolveExport(ProcessHandle handle, uintptr_t moduleBase, const std::s
   return 0;
 }
 
+platform::ThreadHandle CreateRemoteThread(ProcessHandle handle, uintptr_t startAddress, uintptr_t param) {
+  HANDLE h = reinterpret_cast<HANDLE>(handle);
+  HANDLE thread = ::CreateRemoteThread(
+      h, nullptr, 0,
+      reinterpret_cast<LPTHREAD_START_ROUTINE>(startAddress),
+      reinterpret_cast<LPVOID>(param), 0, nullptr);
+  return reinterpret_cast<uintptr_t>(thread);
+}
+
+bool WaitForRemoteThread(ThreadHandle thread, uint32_t timeoutMs) {
+  HANDLE h = reinterpret_cast<HANDLE>(thread);
+  return WaitForSingleObject(h, timeoutMs) == WAIT_OBJECT_0;
+}
+
+void CloseRemoteThread(ThreadHandle thread) {
+  CloseHandle(reinterpret_cast<HANDLE>(thread));
+}
+
 } // namespace platform

@@ -35,5 +35,8 @@ bool ListModules(ProcessHandle, std::vector<ModuleInfo>& out) {
 uintptr_t ResolveExport(ProcessHandle, uintptr_t, const std::string&) {
   return 0;
 }
+ThreadHandle CreateRemoteThread(ProcessHandle, uintptr_t, uintptr_t) { return 0; }
+bool WaitForRemoteThread(ThreadHandle, uint32_t) { return false; }
+void CloseRemoteThread(ThreadHandle) {}
 
 } // namespace platform
