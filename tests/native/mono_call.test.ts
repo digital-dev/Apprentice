@@ -61,4 +61,10 @@ describe('resolveExport', () => {
     const addr = (addon as any).resolveExport(handle, '0x1', 'anything')
     expect(addr).toBeNull()
   })
+
+  it('throws cleanly on a malformed call instead of aborting', () => {
+    expect(() => (addon as any).resolveExport(handle, '0x1')).toThrow()
+    expect(() => (addon as any).resolveExport('not-a-number', '0x1', 'anything')).toThrow()
+    expect(() => (addon as any).resolveExport(handle, 12345, 'anything')).toThrow()
+  })
 })

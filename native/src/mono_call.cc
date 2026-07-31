@@ -16,6 +16,11 @@ std::string ToHex(uintptr_t v) {
 
 Napi::Value ResolveExport(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsString() || !info[2].IsString()) {
+    Napi::TypeError::New(env, "resolveExport(handle, moduleBase, name) expects (number, string, string)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
   auto handle = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   uintptr_t moduleBase = ParseHex(info[1].As<Napi::String>().Utf8Value());
