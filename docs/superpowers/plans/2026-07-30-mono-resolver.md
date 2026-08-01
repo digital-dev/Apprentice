@@ -2125,7 +2125,7 @@ describe('resolveMonoTargetAddress', () => {
     ops.classes.set('Player', '0xc2')
     ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
     ops.staticAddresses.set('0xc2.m_godMode', '1681') // offset, per store.ts's field-offset shape
-    ops.memory.set('0x9100', '0050300000000000') // little-endian pointer 0x3050
+    ops.memory.set('0x9100', '5030000000000000') // little-endian pointer 0x3050
 
     const addr = await resolveMonoTargetAddress(godModeTarget, 1, '0x400000', ops)
     expect(addr).toBe('0x' + (0x3050 + 1681).toString(16))

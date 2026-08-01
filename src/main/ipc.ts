@@ -8,6 +8,8 @@ import {
   ChainTarget,
   AnchorTarget,
   isAnchorTarget,
+  isMonoTarget,
+  MonoTarget,
   StoredCheat,
   PatchCheat,
   patchMode,
@@ -15,6 +17,8 @@ import {
 } from './store'
 import { PatchEngine, PatchOps } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
+import { monoResolver } from './monoResolver'
+import { resolveMonoTargetAddress, MonoResolverOps } from './monoTargetResolve'
 import {
   loadProfile,
   recordModuleFingerprint,
@@ -88,6 +92,42 @@ function resolveAnchor(handle: number, target: AnchorTarget): string | null {
   return '0x' + (pointer + BigInt(target.offset)).toString(16)
 }
 
+// Finds mono.dll's (or the embedded-runtime variant's) base among the
+// modules refreshModuleContext already recorded for the current attach —
+// resolved once per attach, the same way every other module lookup here
+// reuses that map rather than re-listing modules per cheat.
+function monoDllBase(): string | null {
+  const mono = loadedModules.get('mono.dll') ?? loadedModules.get('mono-2.0-bdwgc.dll')
+  return mono ? mono.base : null
+}
+
+const monoOps: MonoResolverOps = {
+  resolveClass: (h, base, ns, cls) => monoResolver.resolveClass(h, base, ns, cls),
+  resolveField: (h, base, cls, field) => monoResolver.resolveField(h, base, cls, field),
+  staticFieldAddress: (h, base, cls, field) => monoResolver.staticFieldAddress(h, base, cls, field),
+  readBytes: (address, length) =>
+    attachedHandle === null ? null : nativeAddon.tryReadBytes(attachedHandle, address, length)
+}
+
+// Resolves a MonoTarget's live address, or null if it can't right now (Mono
+// runtime not loaded, class/field not found, or the object pointer hasn't
+// been set yet this session — all routine, not errors). monoResolver's
+// underlying native calls are documented to resolve to null on every
+// failure rather than reject, but this is defended anyway: writeCheat and
+// verifyCheat must never reject (see freezeLoop.ts's WriteFn contract —
+// tick() awaits every active cheat's write together via Promise.all, so one
+// rejected promise would take every OTHER cheat's result down with it).
+async function resolveMonoTarget(handle: number, target: MonoTarget): Promise<string | null> {
+  const base = monoDllBase()
+  if (base === null) return null
+  try {
+    return await resolveMonoTargetAddress(target, handle, base, monoOps)
+  } catch (err) {
+    console.warn(`[mono] target resolution failed: ${String(err)}`)
+    return null
+  }
+}
+
 // A cheat writes to every one of its targets on each call, not just the
 // first. Naive memory scanning sometimes resolves a chain that only looks
 // static and stops working after a few seconds even though other
@@ -101,11 +141,21 @@ function resolveAnchor(handle: number, target: AnchorTarget): string | null {
 // happened to report first — so each target's base must be looked up by
 // name, fresh, rather than reusing the single attachedBase captured at
 // attach time.
-function writeCheat(handle: number, cheat: CheatDefinition): boolean {
+//
+// Async because the Mono branch awaits two resolver round-trips; every
+// other branch stays synchronous under the hood and resolves immediately.
+async function writeCheat(handle: number, cheat: CheatDefinition): Promise<boolean> {
   let anySucceeded = false
   for (const target of cheat.targets) {
     if (isAnchorTarget(target)) {
       const resolved = resolveAnchor(handle, target)
+      if (resolved === null) continue
+      const ok = nativeAddon.writeValue(handle, resolved, [], cheat.dataType, cheat.value)
+      if (ok) anySucceeded = true
+      continue
+    }
+    if (isMonoTarget(target)) {
+      const resolved = await resolveMonoTarget(handle, target)
       if (resolved === null) continue
       const ok = nativeAddon.writeValue(handle, resolved, [], cheat.dataType, cheat.value)
       if (ok) anySucceeded = true
@@ -142,35 +192,51 @@ function valueMatches(read: number, expected: number, dataType: string): boolean
   return read === expected
 }
 
-function verifyCheat(
+// Async for the same reason writeCheat is: the Mono branch awaits
+// resolveMonoTarget. Targets are checked concurrently (Promise.all over an
+// async map) rather than one at a time — nothing here depends on one
+// target's result to check the next, and this keeps a slow Mono resolve
+// from delaying every other target's read, the same reasoning behind
+// tick()'s concurrent dispatch in freezeLoop.ts.
+async function verifyCheat(
   handle: number,
   cheat: CheatDefinition,
   expectedValue: number | null
-): TargetStatus[] {
-  return cheat.targets.map((target) => {
-    if (isAnchorTarget(target)) {
-      const resolved = resolveAnchor(handle, target)
-      if (resolved === null) return { alive: false, value: null }
-      const value = nativeAddon.tryReadValue(handle, resolved, [], cheat.dataType)
+): Promise<TargetStatus[]> {
+  return Promise.all(
+    cheat.targets.map(async (target): Promise<TargetStatus> => {
+      if (isAnchorTarget(target)) {
+        const resolved = resolveAnchor(handle, target)
+        if (resolved === null) return { alive: false, value: null }
+        const value = nativeAddon.tryReadValue(handle, resolved, [], cheat.dataType)
+        if (value === null) return { alive: false, value: null }
+        const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
+        return { alive, value }
+      }
+      if (isMonoTarget(target)) {
+        const resolved = await resolveMonoTarget(handle, target)
+        if (resolved === null) return { alive: false, value: null }
+        const value = nativeAddon.tryReadValue(handle, resolved, [], cheat.dataType)
+        if (value === null) return { alive: false, value: null }
+        const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
+        return { alive, value }
+      }
+      const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
+      if (moduleBase === null) return { alive: false, value: null }
+      const value = nativeAddon.tryReadValue(
+        handle,
+        moduleBase,
+        fullOffsets(target),
+        cheat.dataType
+      )
       if (value === null) return { alive: false, value: null }
       const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
       return { alive, value }
-    }
-    const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
-    if (moduleBase === null) return { alive: false, value: null }
-    const value = nativeAddon.tryReadValue(
-      handle,
-      moduleBase,
-      fullOffsets(target),
-      cheat.dataType
-    )
-    if (value === null) return { alive: false, value: null }
-    const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
-    return { alive, value }
-  })
+    })
+  )
 }
 
-const freezeLoop = new FreezeLoop((cheat) => {
+const freezeLoop = new FreezeLoop(async (cheat) => {
   if (attachedHandle === null) return false
   return writeCheat(attachedHandle, cheat)
 })
@@ -492,14 +558,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     else freezeLoop.disable(cheat.id)
   })
 
-  ipcMain.handle('cheats:oneShot', (_e, cheat: CheatDefinition) => {
+  ipcMain.handle('cheats:oneShot', async (_e, cheat: CheatDefinition) => {
     if (attachedHandle === null) return false
     return writeCheat(attachedHandle, cheat)
   })
 
   ipcMain.handle(
     'cheats:verify',
-    (_e, cheat: CheatDefinition, expectedValue: number | null): TargetStatus[] => {
+    async (_e, cheat: CheatDefinition, expectedValue: number | null): Promise<TargetStatus[]> => {
       if (attachedHandle === null) throw new Error('not attached')
       return verifyCheat(attachedHandle, cheat, expectedValue)
     }

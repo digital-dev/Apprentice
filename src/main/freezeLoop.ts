@@ -1,6 +1,12 @@
 import type { CheatDefinition } from './store'
 
-export type WriteFn = (cheat: CheatDefinition) => boolean
+// Must never reject — a write attempt that failed has to surface as
+// `false`, the same as it always has, not as a thrown/rejected promise.
+// tick() dispatches every active cheat's write in the same tick and awaits
+// them together (see tick()'s Promise.all): one rejected write would take
+// the whole batch down with it, breaking every OTHER cheat's result that
+// tick too.
+export type WriteFn = (cheat: CheatDefinition) => Promise<boolean>
 
 // ~2 seconds at the default 100ms tick. A cheat's write can legitimately
 // fail for a moment — during a load screen, a respawn, or a map transition
@@ -56,7 +62,12 @@ export class FreezeLoop {
 
   start(): void {
     if (this.timer) return
-    this.timer = setInterval(() => this.tick(), this.intervalMs)
+    this.timer = setInterval(() => {
+      // WriteFn is contractually non-rejecting (see its doc comment), so
+      // this catch only guards against something slipping through that
+      // contract — it must never take the interval down.
+      void this.tick().catch((err) => console.warn(`[freezeLoop] tick failed: ${String(err)}`))
+    }, this.intervalMs)
   }
 
   stop(): void {
@@ -64,9 +75,21 @@ export class FreezeLoop {
     this.timer = null
   }
 
-  private tick(): void {
-    for (const cheat of Array.from(this.active.values())) {
-      const ok = this.writeFn(cheat)
+  // Every active cheat's write is STARTED in the same synchronous pass
+  // (calling writeFn for each cheat before awaiting any of them), matching
+  // the old dispatch-all-at-once-per-tick behavior, then awaited together.
+  // Awaiting them one at a time instead would let one slow-resolving write
+  // (e.g. a Mono target's two-hop resolve) push out every other cheat's
+  // write that tick, degrading the effective tick rate for everyone the
+  // moment any slow target is in the mix — this keeps the tick bounded by
+  // the slowest single write, not the sum of all of them.
+  private async tick(): Promise<void> {
+    const cheats = Array.from(this.active.values())
+    const pending = cheats.map((cheat) => this.writeFn(cheat))
+    const results = await Promise.all(pending)
+
+    cheats.forEach((cheat, i) => {
+      const ok = results[i]
       if (ok) {
         this.failCounts.set(cheat.id, 0)
         if (this.degraded.delete(cheat.id)) {
@@ -82,6 +105,6 @@ export class FreezeLoop {
         // Note: the cheat is intentionally NOT removed from `active`. It
         // keeps being retried every tick so it can self-heal.
       }
-    }
+    })
   }
 }
