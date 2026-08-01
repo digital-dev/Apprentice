@@ -602,9 +602,17 @@ export default function CheatList({
         <div className="banner" style={{ flexWrap: 'wrap' }}>
           <p style={{ flexBasis: '100%' }}>
             From Mono Explorer: {pendingMonoSelection.className}.{pendingMonoSelection.methodName} —
-            manual entry, since Mono Explorer doesn't capture instruction bytes (only
+            manual entry, since Mono Explorer doesn&apos;t capture instruction bytes (only
             Scanner&apos;s find-what-writes does). Creates a NOP patch anchored to this class+method
             instead of a module or a signature.
+          </p>
+          <p style={{ flexBasis: '100%', color: 'var(--error)', fontWeight: 'bold' }}>
+            ⚠ These bytes are NOT verified against real disassembly. This patch installs at the
+            method&apos;s ENTRY point, which runs on every call. If Length doesn&apos;t span exactly
+            whole instructions, installing writes 0x90 mid-instruction — nothing here catches
+            that, and it will corrupt the method every time it runs. Only fill this in if
+            you&apos;ve confirmed the instruction boundaries yourself (e.g. with an external
+            disassembler) — do not guess a length.
           </p>
           <input
             placeholder="Patch name"
