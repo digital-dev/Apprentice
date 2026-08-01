@@ -92,6 +92,22 @@ declare global {
       monoResolveClass: (namespaceName: string, className: string) => Promise<string | null>
       monoListFields: (classHandle: string) => Promise<string[]>
       monoListMethods: (classHandle: string) => Promise<string[]>
+      // Resolves a live object pointer from a named class's static field —
+      // e.g. ('Player', 'm_localPlayer') — for an immune patch's armValue.
+      // Null if the runtime isn't attached, the class/field isn't found, or
+      // the field hasn't been set yet (no local player this session).
+      monoResolvePlayerPointer: (className: string, fieldName: string) => Promise<string | null>
+      // Reads `length` bytes from the method's CURRENT live entry address,
+      // for auto-filling a Mono-anchored patch's originalBytes/length
+      // instead of requiring an external disassembler. Null on the same
+      // conditions monoResolveClass returns null for, or if the method
+      // hasn't been JIT-compiled yet and can't be forced to (see
+      // monoResolver.compileMethod's safety-rule comment).
+      monoResolveMethodBytes: (
+        className: string,
+        methodName: string,
+        length: number
+      ) => Promise<{ bytes: string; length: number } | null>
     }
   }
 }

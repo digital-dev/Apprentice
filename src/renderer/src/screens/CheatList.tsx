@@ -165,9 +165,89 @@ export default function CheatList({
   const [monoValueDataType, setMonoValueDataType] = useState<DataType>('float')
   const [monoValueMode, setMonoValueMode] = useState<CheatDefinition['mode']>('freeze')
   const [monoValueValue, setMonoValueValue] = useState('')
+  // Whether the field Mono Explorer handed over belongs to an OBJECT
+  // (m_godMode lives on a Player instance) rather than being itself a
+  // static field. Defaults to true because that's the common, interesting
+  // case — most fields worth cheating are per-instance — and getting this
+  // wrong silently writes into Mono's OWN field-metadata structure instead
+  // of the game object (see resolveMonoTargetAddress's staticFieldName vs
+  // instanceFieldName split), not into anything the game reads, which is
+  // exactly the bug this replaced: m_godMode saved as a bare staticFieldName
+  // installed with no visible effect and no error either.
+  const [monoValueIsInstance, setMonoValueIsInstance] = useState(true)
+  const [monoValueInstanceHolder, setMonoValueInstanceHolder] = useState('m_localPlayer')
   const [monoAnchorName, setMonoAnchorName] = useState('')
   const [monoAnchorBytes, setMonoAnchorBytes] = useState('')
   const [monoAnchorLength, setMonoAnchorLength] = useState('')
+  // immune-only fields, hidden until monoAnchorMode === 'immune'. rcx is the
+  // default baseRegister because that's where a Mono-JIT instance method's
+  // "this" argument lands under the Windows x64 calling convention — right
+  // in the overwhelming majority of cases, but left editable for the rare
+  // method that doesn't follow it. armValue is resolved via a button rather
+  // than typed, since it's a live pointer value nobody types by hand — it
+  // comes from reading a static field (className/fieldName below), not
+  // guessing.
+  const [monoAnchorMode, setMonoAnchorMode] = useState<'nop' | 'immune'>('nop')
+  const [monoAnchorBaseRegister, setMonoAnchorBaseRegister] = useState('rcx')
+  const [monoAnchorPlayerClass, setMonoAnchorPlayerClass] = useState('Player')
+  const [monoAnchorPlayerField, setMonoAnchorPlayerField] = useState('m_localPlayer')
+  const [monoAnchorArmValue, setMonoAnchorArmValue] = useState<string | null>(null)
+  const [monoAnchorResolvingArm, setMonoAnchorResolvingArm] = useState(false)
+  const [monoAnchorArmError, setMonoAnchorArmError] = useState<string | null>(null)
+  const [monoAnchorResolvingBytes, setMonoAnchorResolvingBytes] = useState(false)
+  const [monoAnchorBytesError, setMonoAnchorBytesError] = useState<string | null>(null)
+
+  // 16 bytes is a generous, fixed snapshot of the method's live entry —
+  // there's no need to hit an exact instruction boundary here (unlike nop
+  // mode's direct overwrite): this only ever feeds locate()'s byte-for-byte
+  // "did something else change this code" check, and every non-nop mode's
+  // actual install finds its own real boundary via decodeRun regardless of
+  // what length is recorded here.
+  const MONO_ANCHOR_SNAPSHOT_LENGTH = 16
+
+  async function resolveMonoAnchorBytes() {
+    if (pendingMonoSelection?.kind !== 'anchor') return
+    setMonoAnchorBytesError(null)
+    setMonoAnchorResolvingBytes(true)
+    try {
+      const result = await window.tamper.monoResolveMethodBytes(
+        pendingMonoSelection.className,
+        pendingMonoSelection.methodName,
+        MONO_ANCHOR_SNAPSHOT_LENGTH
+      )
+      if (result === null) {
+        setMonoAnchorBytesError(
+          `Could not read live bytes for ${pendingMonoSelection.className}.${pendingMonoSelection.methodName} — is the runtime attached and this method compiled yet?`
+        )
+        return
+      }
+      setMonoAnchorBytes(result.bytes)
+      setMonoAnchorLength(String(result.length))
+    } finally {
+      setMonoAnchorResolvingBytes(false)
+    }
+  }
+
+  async function resolveMonoAnchorArmValue() {
+    setMonoAnchorArmError(null)
+    setMonoAnchorResolvingArm(true)
+    try {
+      const pointer = await window.tamper.monoResolvePlayerPointer(
+        monoAnchorPlayerClass,
+        monoAnchorPlayerField
+      )
+      if (pointer === null) {
+        setMonoAnchorArmValue(null)
+        setMonoAnchorArmError(
+          `Could not resolve ${monoAnchorPlayerClass}.${monoAnchorPlayerField} — is the runtime attached and has a local player loaded yet?`
+        )
+        return
+      }
+      setMonoAnchorArmValue(pointer)
+    } finally {
+      setMonoAnchorResolvingArm(false)
+    }
+  }
 
   useEffect(() => {
     window.tamper.onCheatState(({ cheatId, status }) => {
@@ -486,25 +566,34 @@ export default function CheatList({
   }
 
   // Saves a value cheat that reads through Mono metadata by name instead of
-  // a scanned chain — the [ClassName].[staticFieldName] shape a plain
-  // static field resolves to on its own (no instanceFieldName: see
-  // store.ts's MonoTarget doc). This is the "existing cheat-creation form"
-  // Mono Explorer's "use as value target" hands its selection to; there was
-  // no such form for a Mono target before this screen existed, so this is
-  // new but deliberately as small as Scanner's own save().
+  // a scanned chain. Two shapes, both on store.ts's MonoTarget: a plain
+  // static field (no instanceFieldName — the field Explorer resolved IS the
+  // target) or, more commonly, an instance field reached via a static field
+  // that holds the owning object (the [LocalPlayer]+Player.m_godMode shape:
+  // instanceFieldName set, and staticFieldName names whatever static field
+  // holds that object — className must own BOTH fields, since
+  // resolveMonoTargetAddress resolves them against the same classHandle).
   async function saveMonoValueCheat() {
     if (pendingMonoSelection?.kind !== 'value' || !monoValueName) return
+    if (monoValueIsInstance && !monoValueInstanceHolder.trim()) return
     const cheat: CheatDefinition = {
       id: monoValueName.toLowerCase().replace(/\s+/g, '-'),
       name: monoValueName,
       dataType: monoValueDataType,
       mode: monoValueMode,
       targets: [
-        {
-          kind: 'mono',
-          className: pendingMonoSelection.className,
-          staticFieldName: pendingMonoSelection.fieldName
-        }
+        monoValueIsInstance
+          ? {
+              kind: 'mono',
+              className: pendingMonoSelection.className,
+              staticFieldName: monoValueInstanceHolder.trim(),
+              instanceFieldName: pendingMonoSelection.fieldName
+            }
+          : {
+              kind: 'mono',
+              className: pendingMonoSelection.className,
+              staticFieldName: pendingMonoSelection.fieldName
+            }
       ],
       value: Number(monoValueValue)
     }
@@ -520,17 +609,22 @@ export default function CheatList({
   // resolves the method's compiled entry address by name, but never
   // captures the instruction bytes there is to NOP — that only happens via
   // Scanner's find-what-writes capture — so originalBytes/length are
-  // manual/advanced entry here rather than pre-filled. Deliberately scoped
-  // to mode 'nop' (needs nothing beyond the bytes to NOP); force/capture/
-  // guard need a base register and a captured object address that this
-  // screen has no way to supply.
+  // manual/advanced entry here rather than pre-filled, in both modes this
+  // form supports: locate() verifies them against live memory regardless of
+  // mode (see patchEngine.ts's locate — the mismatch check isn't nop-only).
+  // 'immune' additionally needs baseRegister and armValue — the live player
+  // pointer resolved above — since immune has no self-arming moment to fall
+  // back to (see PatchCheat.armValue's comment). force/capture/guard still
+  // have no path here: they need a captured object address this screen has
+  // no way to supply outside of Scanner's find-what-writes flow.
   async function saveMonoAnchorPatch() {
     if (pendingMonoSelection?.kind !== 'anchor' || !monoAnchorName) return
     const length = Number(monoAnchorLength)
     if (!Number.isInteger(length) || length <= 0 || monoAnchorBytes.trim() === '') return
+    if (monoAnchorMode === 'immune' && !monoAnchorArmValue) return
     const patch: PatchCheat = {
       kind: 'patch',
-      mode: 'nop',
+      mode: monoAnchorMode,
       id: `patch-${monoAnchorName.toLowerCase().replace(/\s+/g, '-')}`,
       name: monoAnchorName,
       originalBytes: monoAnchorBytes.trim().toLowerCase(),
@@ -539,13 +633,31 @@ export default function CheatList({
       moduleName: null,
       moduleOffset: null,
       monoClass: pendingMonoSelection.className,
-      monoMethod: pendingMonoSelection.methodName
+      monoMethod: pendingMonoSelection.methodName,
+      ...(monoAnchorMode === 'immune'
+        ? {
+            baseRegister: monoAnchorBaseRegister.trim().toLowerCase(),
+            // armValue is this session's resolved snapshot — kept as a
+            // fallback for a future install attempt that can't re-resolve.
+            // armPointerClassName/armPointerFieldName are the SOURCE
+            // (Player.m_localPlayer, not the resolved value), so the
+            // engine can re-resolve a fresh pointer on every install —
+            // required after a game restart, when armValue alone would be
+            // a dead pointer from the previous process instance.
+            armValue: monoAnchorArmValue as string,
+            armPointerClassName: monoAnchorPlayerClass.trim(),
+            armPointerFieldName: monoAnchorPlayerField.trim()
+          }
+        : {})
     }
     await window.tamper.saveCheat(exeName, patch)
     setPatches((prev) => [...prev.filter((p) => p.id !== patch.id), patch])
     setMonoAnchorName('')
     setMonoAnchorBytes('')
     setMonoAnchorLength('')
+    setMonoAnchorMode('nop')
+    setMonoAnchorArmValue(null)
+    setMonoAnchorArmError(null)
     onConsumePendingMonoSelection?.()
   }
 
@@ -578,6 +690,7 @@ export default function CheatList({
           >
             <option value="float">Float</option>
             <option value="int32">Whole number</option>
+            <option value="byte">Byte (bool, e.g. a Mono bool field)</option>
           </select>
           <select
             value={monoValueMode}
@@ -591,7 +704,25 @@ export default function CheatList({
             value={monoValueValue}
             onChange={(e) => setMonoValueValue(e.target.value)}
           />
-          <button onClick={saveMonoValueCheat} disabled={!monoValueName}>
+          <label style={{ flexBasis: '100%' }}>
+            <input
+              type="checkbox"
+              checked={monoValueIsInstance}
+              onChange={(e) => setMonoValueIsInstance(e.target.checked)}
+            />{' '}
+            This field belongs to an object (e.g. the local player), not itself static
+          </label>
+          {monoValueIsInstance && (
+            <input
+              placeholder="Static field holding that object, e.g. m_localPlayer"
+              value={monoValueInstanceHolder}
+              onChange={(e) => setMonoValueInstanceHolder(e.target.value)}
+            />
+          )}
+          <button
+            onClick={saveMonoValueCheat}
+            disabled={!monoValueName || (monoValueIsInstance && !monoValueInstanceHolder.trim())}
+          >
             Save
           </button>
           <button onClick={() => onConsumePendingMonoSelection?.()}>Dismiss</button>
@@ -603,17 +734,36 @@ export default function CheatList({
           <p style={{ flexBasis: '100%' }}>
             From Mono Explorer: {pendingMonoSelection.className}.{pendingMonoSelection.methodName} —
             manual entry, since Mono Explorer doesn&apos;t capture instruction bytes (only
-            Scanner&apos;s find-what-writes does). Creates a NOP patch anchored to this class+method
+            Scanner&apos;s find-what-writes does). Creates a patch anchored to this class+method
             instead of a module or a signature.
           </p>
-          <p style={{ flexBasis: '100%', color: 'var(--error)', fontWeight: 'bold' }}>
-            ⚠ These bytes are NOT verified against real disassembly. This patch installs at the
-            method&apos;s ENTRY point, which runs on every call. If Length doesn&apos;t span exactly
-            whole instructions, installing writes 0x90 mid-instruction — nothing here catches
-            that, and it will corrupt the method every time it runs. Only fill this in if
-            you&apos;ve confirmed the instruction boundaries yourself (e.g. with an external
-            disassembler) — do not guess a length.
+          <p style={{ flexBasis: '100%' }}>
+            These bytes only need to match what&apos;s actually there right now — they&apos;re a
+            snapshot used to detect &quot;something else changed this code&quot; before installing,
+            not the bytes that get overwritten. Click Read to fill them in from the method&apos;s
+            live entry instead of guessing.
           </p>
+          <button
+            onClick={resolveMonoAnchorBytes}
+            disabled={monoAnchorResolvingBytes}
+            style={{ flexBasis: '100%' }}
+          >
+            {monoAnchorResolvingBytes ? 'Reading…' : `Read current bytes (${MONO_ANCHOR_SNAPSHOT_LENGTH})`}
+          </button>
+          {monoAnchorBytesError && (
+            <p style={{ flexBasis: '100%', color: 'var(--error)' }}>{monoAnchorBytesError}</p>
+          )}
+          {monoAnchorMode === 'nop' && (
+            <p style={{ flexBasis: '100%', color: 'var(--error)', fontWeight: 'bold' }}>
+              ⚠ NOP mode overwrites exactly Length bytes at the method&apos;s ENTRY point with 0x90,
+              which runs on every call. If Length doesn&apos;t span exactly whole instructions,
+              installing writes over part of the next instruction — nothing here catches that, and
+              it will corrupt the method every time it runs. The auto-filled snapshot above is
+              NOT instruction-aligned; only use it as a starting point, and trim Length to a real
+              instruction boundary yourself (e.g. with an external disassembler) before saving a
+              NOP patch.
+            </p>
+          )}
           <input
             placeholder="Patch name"
             value={monoAnchorName}
@@ -629,9 +779,66 @@ export default function CheatList({
             value={monoAnchorLength}
             onChange={(e) => setMonoAnchorLength(e.target.value)}
           />
+          <select
+            value={monoAnchorMode}
+            onChange={(e) => setMonoAnchorMode(e.target.value as 'nop' | 'immune')}
+          >
+            <option value="nop">NOP (disable this instruction)</option>
+            <option value="immune">Immune (skip the whole method for one object)</option>
+          </select>
+          {monoAnchorMode === 'immune' && (
+            <>
+              <p style={{ flexBasis: '100%' }}>
+                Immune returns from the whole method immediately whenever it&apos;s called with a
+                specific object as <code>this</code> — e.g. the local player, so damage aimed at
+                you never applies. It needs the register holding <code>this</code> at entry, and
+                that object&apos;s live pointer.
+              </p>
+              <input
+                placeholder="This register (usually rcx)"
+                value={monoAnchorBaseRegister}
+                onChange={(e) => setMonoAnchorBaseRegister(e.target.value)}
+              />
+              <input
+                placeholder="Class holding the static field, e.g. Player"
+                value={monoAnchorPlayerClass}
+                onChange={(e) => {
+                  setMonoAnchorPlayerClass(e.target.value)
+                  setMonoAnchorArmValue(null)
+                }}
+              />
+              <input
+                placeholder="Static field, e.g. m_localPlayer"
+                value={monoAnchorPlayerField}
+                onChange={(e) => {
+                  setMonoAnchorPlayerField(e.target.value)
+                  setMonoAnchorArmValue(null)
+                }}
+              />
+              <button
+                onClick={resolveMonoAnchorArmValue}
+                disabled={!monoAnchorPlayerClass || !monoAnchorPlayerField || monoAnchorResolvingArm}
+              >
+                {monoAnchorResolvingArm ? 'Resolving…' : 'Resolve player pointer'}
+              </button>
+              {monoAnchorArmValue && (
+                <p style={{ flexBasis: '100%' }}>
+                  Resolved: <AddressChip label={monoAnchorArmValue} pulsing={false} />
+                </p>
+              )}
+              {monoAnchorArmError && (
+                <p style={{ flexBasis: '100%', color: 'var(--error)' }}>{monoAnchorArmError}</p>
+              )}
+            </>
+          )}
           <button
             onClick={saveMonoAnchorPatch}
-            disabled={!monoAnchorName || !monoAnchorBytes || !monoAnchorLength}
+            disabled={
+              !monoAnchorName ||
+              !monoAnchorBytes ||
+              !monoAnchorLength ||
+              (monoAnchorMode === 'immune' && !monoAnchorArmValue)
+            }
           >
             Save
           </button>

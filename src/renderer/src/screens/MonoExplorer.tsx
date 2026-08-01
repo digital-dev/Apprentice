@@ -19,6 +19,8 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
   const [methods, setMethods] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
+  const [fieldFilter, setFieldFilter] = useState('')
+  const [methodFilter, setMethodFilter] = useState('')
 
   async function resolve() {
     setError(null)
@@ -35,12 +37,17 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
         return
       }
       setClassHandle(handle)
-      setFields(await window.tamper.monoListFields(handle))
-      setMethods(await window.tamper.monoListMethods(handle))
+      setFields((await window.tamper.monoListFields(handle)).sort((a, b) => a.localeCompare(b)))
+      setMethods((await window.tamper.monoListMethods(handle)).sort((a, b) => a.localeCompare(b)))
+      setFieldFilter('')
+      setMethodFilter('')
     } finally {
       setResolving(false)
     }
   }
+
+  const visibleFields = fields.filter((f) => f.toLowerCase().includes(fieldFilter.toLowerCase()))
+  const visibleMethods = methods.filter((m) => m.toLowerCase().includes(methodFilter.toLowerCase()))
 
   return (
     <div>
@@ -68,25 +75,46 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
       {error && <p style={{ color: 'var(--error)' }}>{error}</p>}
       {classHandle && (
         <>
-          <h3>Fields</h3>
+          <h3>Fields ({visibleFields.length}/{fields.length})</h3>
+          <input
+            placeholder="Filter fields…"
+            value={fieldFilter}
+            onChange={(e) => setFieldFilter(e.target.value)}
+          />
           <ul>
-            {fields.map((f) => (
-              <li key={f}>
+            {visibleFields.map((f, i) => (
+              <li key={`${f}-${i}`}>
                 {f}
                 <button onClick={() => onUseAsValueTarget(className, f)}>Use as value target</button>
               </li>
             ))}
             {fields.length === 0 && <li className="muted">No fields found.</li>}
+            {fields.length > 0 && visibleFields.length === 0 && (
+              <li className="muted">No fields match &quot;{fieldFilter}&quot;.</li>
+            )}
           </ul>
-          <h3>Methods</h3>
+          <h3>Methods ({visibleMethods.length}/{methods.length})</h3>
+          <input
+            placeholder="Filter methods…"
+            value={methodFilter}
+            onChange={(e) => setMethodFilter(e.target.value)}
+          />
           <ul>
-            {methods.map((m) => (
-              <li key={m}>
+            {visibleMethods.map((m, i) => (
+              // Mono only gives us the method name, not its overload
+              // signature — Player.IsPlayerInRange appears multiple times
+              // for real, so `m` alone isn't a unique key. Without the
+              // index, duplicate keys break React's reconciliation when
+              // the filtered list shrinks, leaving stale rows on screen.
+              <li key={`${m}-${i}`}>
                 {m}
                 <button onClick={() => onUseAsPatchAnchor(className, m)}>Use as patch anchor</button>
               </li>
             ))}
             {methods.length === 0 && <li className="muted">No methods found.</li>}
+            {methods.length > 0 && visibleMethods.length === 0 && (
+              <li className="muted">No methods match &quot;{methodFilter}&quot;.</li>
+            )}
           </ul>
         </>
       )}

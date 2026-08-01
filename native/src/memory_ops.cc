@@ -58,6 +58,13 @@ Napi::Value ReadValue(const Napi::CallbackInfo& info) {
       return env.Null();
     }
     return Napi::Number::New(env, v);
+  } else if (dataType == "byte") {
+    uint8_t v;
+    if (!ReadProcessMemory(h, (LPCVOID)*addr, &v, sizeof(v), &read) || read != sizeof(v)) {
+      Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    return Napi::Number::New(env, v);
   } else {
     float v;
     if (!ReadProcessMemory(h, (LPCVOID)*addr, &v, sizeof(v), &read) || read != sizeof(v)) {
@@ -84,6 +91,9 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
   bool ok;
   if (dataType == "int32") {
     int32_t v = (int32_t)value;
+    ok = WriteProcessMemory(h, (LPVOID)*addr, &v, sizeof(v), &written) && written == sizeof(v);
+  } else if (dataType == "byte") {
+    uint8_t v = (uint8_t)value;
     ok = WriteProcessMemory(h, (LPVOID)*addr, &v, sizeof(v), &written) && written == sizeof(v);
   } else {
     float v = (float)value;

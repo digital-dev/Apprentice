@@ -94,10 +94,25 @@ describe('monoCompileMethod', () => {
 })
 
 describe('monoListAssemblies', () => {
-  it('finds the one fake assembly', async () => {
+  it('finds both fake assemblies', async () => {
     const assemblies = await (addon as any).monoListAssemblies(handle, monoBase)
-    expect(assemblies.length).toBe(1)
+    expect(assemblies.length).toBe(2)
     expect(assemblies[0]).toMatch(/^0x[0-9a-f]+$/)
+    expect(assemblies[1]).toMatch(/^0x[0-9a-f]+$/)
+  })
+})
+
+describe('monoResolveClass cross-assembly scoping', () => {
+  it('skips a non-matching assembly and finds the class in the next one', async () => {
+    // Player lives only in the first fake assembly's image, Character only
+    // in the second's — mono_class_from_name is scoped per-image in the
+    // fixture, so finding both proves the search walks past a miss instead
+    // of getting stuck on (or wrongly matching against) the wrong image.
+    const player = await (addon as any).monoResolveClass(handle, monoBase, '', 'Player')
+    const character = await (addon as any).monoResolveClass(handle, monoBase, '', 'Character')
+    expect(player).toMatch(/^0x[0-9a-f]+$/)
+    expect(character).toMatch(/^0x[0-9a-f]+$/)
+    expect(character).not.toBe(player)
   })
 })
 

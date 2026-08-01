@@ -5,6 +5,30 @@ interface ProcessInfo {
   name: string
 }
 
+// Windows session/security infrastructure that is never a game and whose
+// attach can range from useless to destabilizing (csrss/wininit/winlogon
+// crash the session; services/lsass hold access tokens the OS is fussy
+// about). Hiding them keeps the picker to processes worth attaching to.
+const HIDDEN_PROCESSES = new Set([
+  'system',
+  'system idle process',
+  'registry',
+  'memcompression',
+  'csrss.exe',
+  'smss.exe',
+  'wininit.exe',
+  'winlogon.exe',
+  'services.exe',
+  'lsass.exe',
+  'lsaiso.exe',
+  'svchost.exe',
+  'dwm.exe',
+  'fontdrvhost.exe',
+  'sihost.exe',
+  'taskhostw.exe',
+  'wudfhost.exe'
+])
+
 export default function ProcessPicker({
   onAttached
 }: {
@@ -28,8 +52,10 @@ export default function ProcessPicker({
     }
   }
 
-  const filtered = processes.filter((p) =>
-    p.name.toLowerCase().includes(query.toLowerCase())
+  const filtered = processes.filter(
+    (p) =>
+      !HIDDEN_PROCESSES.has(p.name.toLowerCase()) &&
+      p.name.toLowerCase().includes(query.toLowerCase())
   )
 
   return (

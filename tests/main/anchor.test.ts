@@ -239,15 +239,33 @@ describe('resolvePatchAddress — mono path', () => {
     expect(result.reason).toBe('mono-assembly-not-loaded')
   })
 
-  it('reports bytes-differ when the compiled address does not verify', async () => {
+  // Mono JIT output is not a stable cross-session signature (a fresh game
+  // launch reliably recompiles to different bytes — embedded addresses,
+  // register allocation, code layout can all vary), so unlike every other
+  // path, the mono path trusts the resolved address on its own rather than
+  // gating success on a byte-snapshot comparison. Comparing against
+  // patch.originalBytes here made every Mono-anchored patch fail to
+  // relocate after every single game restart in practice — the exact
+  // "capture once, use once" bug this whole sub-project exists to avoid.
+  it('trusts the resolved address even when its bytes differ from the captured snapshot', async () => {
     const ops = new FakeOps()
     ops.memory.set('0x700000', 'cccccccccc')
     const monoOps = new FakeMonoOps()
     monoOps.methodAddress = '0x700000'
 
     const result = await resolvePatchAddress(monoPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBe('0x700000')
+    expect(result.reason).toBeNull()
+  })
+
+  it('reports not-yet-compiled when the class resolves but the method has no compiled address', async () => {
+    const ops = new FakeOps()
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = null
+
+    const result = await resolvePatchAddress(monoPatch, modules, verified, ops, monoOps as any)
     expect(result.address).toBeNull()
-    expect(result.reason).toBe('bytes-differ')
+    expect(result.reason).toBe('not-yet-compiled')
   })
 
   it('does not attempt the mono path for a patch that names a module', async () => {

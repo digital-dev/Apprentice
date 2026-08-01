@@ -1004,3 +1004,84 @@ describe('PatchEngine — immune injection', () => {
     expect(engine.isApplied('patch-immune')).toBe(false)
   })
 })
+
+// A minimal MonoOps: only what apply()'s fresh-arm-pointer resolution and
+// resolveAddress's mono path need.
+class FakeMonoOps {
+  monoDllBaseValue: string | null = '0x500000'
+  methodAddress: string | null = '0x400100'
+  pointerValue: string | null = null
+  resolvePointerCalls: { className: string; fieldName: string }[] = []
+
+  monoDllBase(): string | null {
+    return this.monoDllBaseValue
+  }
+  async resolveClass(): Promise<string | null> {
+    return '0xc9'
+  }
+  async compileMethod(): Promise<string | null> {
+    return this.methodAddress
+  }
+  async resolvePointer(_base: string, className: string, fieldName: string): Promise<string | null> {
+    this.resolvePointerCalls.push({ className, fieldName })
+    return this.pointerValue
+  }
+}
+
+describe('PatchEngine — immune injection, Mono-anchored re-arming', () => {
+  // A game restart gives the player a brand-new object at a brand-new
+  // address — a stored armValue from a PREVIOUS process instance is a dead
+  // pointer. armPointerClassName/armPointerFieldName tell apply() how to
+  // resolve a fresh one for THIS install, exactly like monoClass/monoMethod
+  // already let the ADDRESS be re-resolved fresh every session.
+  const monoImmunePatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'immune',
+    id: 'patch-immune-mono',
+    name: 'Damage Immunity',
+    originalBytes: ORIGINAL,
+    length: 5,
+    signature: '',
+    moduleName: null,
+    moduleOffset: null,
+    monoClass: 'Character',
+    monoMethod: 'ApplyDamage',
+    baseRegister: 'rcx',
+    // A stale snapshot from a previous process instance — must NOT be what
+    // ends up armed once a fresh resolvePointer value is available.
+    armValue: '0xdeaddeaddead',
+    armPointerClassName: 'Player',
+    armPointerFieldName: 'm_localPlayer'
+  }
+
+  it('arms the freshly-resolved pointer, not the stored armValue snapshot', async () => {
+    ops.memory.set('0x400100', ORIGINAL)
+    engine.setAnchorContext(new Map(), new Set()) // gates resolveAddress onto resolvePatchAddress/monoOps — see its comment
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = '0x1c6986d75e4' // deliberately the SAME value immunePatch's slot test above expects
+    engine.setMonoOps(monoOps as any)
+
+    const result = await engine.apply(monoImmunePatch)
+    expect(result.ok).toBe(true)
+    expect(monoOps.resolvePointerCalls).toEqual([{ className: 'Player', fieldName: 'm_localPlayer' }])
+
+    const slot = ops.memory.get(ops.caves[0]) as string
+    expect(slot).toBe('e4756d98c6010000') // little-endian 0x1c6986d75e4 — the FRESH value
+    expect(slot).not.toBe('addeaddeadde0000') // NOT the stale armValue
+  })
+
+  it('falls back to the stored armValue when resolvePointer fails this attempt', async () => {
+    ops.memory.set('0x400100', ORIGINAL)
+    engine.setAnchorContext(new Map(), new Set())
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = null // e.g. no local player loaded yet
+    engine.setMonoOps(monoOps as any)
+
+    const result = await engine.apply(monoImmunePatch)
+    expect(result.ok).toBe(true)
+
+    const slot = ops.memory.get(ops.caves[0]) as string
+    // little-endian 0xdeaddeaddead — the fallback armValue, better than refusing outright
+    expect(slot).toBe('addeaddeadde0000')
+  })
+})

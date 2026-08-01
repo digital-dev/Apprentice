@@ -234,6 +234,10 @@ void ResumeAll() {
   g_suspended.clear();
 }
 
+void SleepMs(uint32_t ms) {
+  ::Sleep(ms);
+}
+
 bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
   out.clear();
   HANDLE h = reinterpret_cast<HANDLE>(handle);

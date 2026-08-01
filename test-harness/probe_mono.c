@@ -11,8 +11,6 @@
 
 typedef struct { int dummy; } FakeDomain;
 typedef struct { int dummy; } FakeThread;
-typedef struct { int dummy; } FakeAssembly;
-typedef struct { int dummy; } FakeImage;
 
 typedef struct {
   const char* name;
@@ -32,23 +30,46 @@ typedef struct {
   int methodCount;
 } FakeClass;
 
+// An image owns its own class list — mono_class_from_name searches only
+// within it, not a single global table. This is load-bearing for testing
+// the real resolver's multi-assembly search: with two assemblies, each
+// holding a DIFFERENT class, a search has to genuinely skip the
+// non-matching assembly's image and keep going to find the other one. A
+// single shared image (this fixture's original shape) could never
+// exercise that path — every lookup trivially "succeeded" on the first
+// assembly regardless of which image was actually passed in, which is
+// exactly the kind of gap that let an image-handling bug ship unnoticed
+// until this fixture was tested against a real game with ~100 real
+// assemblies instead of one fake one.
+typedef struct {
+  FakeClass* classes;
+  int classCount;
+} FakeImage;
+
+typedef struct {
+  FakeImage* image;
+} FakeAssembly;
+
 static FakeDomain g_domain;
 static FakeThread g_thread;
-static FakeAssembly g_assembly;
-static FakeImage g_image;
 
-// "Player" with one static-ish field the tests treat as m_godMode, and one
-// method standing in for ApplyDamage. "Character" is a second class purely
-// to prove class-name lookup actually discriminates between two classes
-// rather than always returning the first one defined.
-static FakeClass g_classes[2] = {
+// "Player" lives in the first assembly's image; "Character" lives in the
+// second. Two assemblies, not one.
+static FakeClass g_classesA[1] = {
   { "", "Player",
     { { "m_godMode", 0x691 }, { "m_localPlayer", 0x10 } }, 2,
     { { "UseStamina" }, { "TakeDamage" } }, 2 },
+};
+static FakeClass g_classesB[1] = {
   { "", "Character",
     { { "m_health", 0x20 } }, 1,
     { { "ApplyDamage" } }, 1 },
 };
+
+static FakeImage g_imageA = { g_classesA, 1 };
+static FakeImage g_imageB = { g_classesB, 1 };
+static FakeAssembly g_assemblyA = { &g_imageA };
+static FakeAssembly g_assemblyB = { &g_imageB };
 
 __declspec(dllexport) FakeDomain* __stdcall mono_get_root_domain(void) {
   return &g_domain;
@@ -64,17 +85,15 @@ __declspec(dllexport) void __stdcall mono_thread_detach(FakeThread* thread) {
 }
 
 __declspec(dllexport) FakeImage* __stdcall mono_assembly_get_image(FakeAssembly* assembly) {
-  (void)assembly;
-  return &g_image;
+  return assembly->image;
 }
 
 __declspec(dllexport) FakeClass* __stdcall mono_class_from_name(
     FakeImage* image, const char* nameSpace, const char* name) {
-  (void)image;
-  for (int i = 0; i < 2; i++) {
-    if (strcmp(g_classes[i].namespaceName, nameSpace) == 0 &&
-        strcmp(g_classes[i].className, name) == 0) {
-      return &g_classes[i];
+  for (int i = 0; i < image->classCount; i++) {
+    if (strcmp(image->classes[i].namespaceName, nameSpace) == 0 &&
+        strcmp(image->classes[i].className, name) == 0) {
+      return &image->classes[i];
     }
   }
   return NULL;
@@ -121,7 +140,8 @@ __declspec(dllexport) void* __stdcall mono_compile_method(FakeMethod* method) {
 typedef void (__stdcall *ForeachCallback)(void* data, void* userData);
 
 __declspec(dllexport) void __stdcall mono_assembly_foreach(ForeachCallback callback, void* userData) {
-  callback(&g_assembly, userData);
+  callback(&g_assemblyA, userData);
+  callback(&g_assemblyB, userData);
 }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved) {

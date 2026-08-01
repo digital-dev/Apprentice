@@ -168,6 +168,21 @@ export function pointerToSlotHex(address: string): string {
   return out
 }
 
+// The inverse of pointerToSlotHex: 8 little-endian bytes read back from a
+// static field's storage address, as the pointer value they encode. Used
+// to resolve a live object (e.g. the local player instance behind a
+// Player.m_localPlayer static field) into an immune patch's armValue —
+// staticFieldAddress alone only gives the field's storage location, not
+// what it currently points at.
+export function slotHexToPointer(hex: string): string {
+  let value = 0n
+  for (let i = 7; i >= 0; i--) {
+    const byte = hex.slice(i * 2, i * 2 + 2) || '00'
+    value = (value << 8n) | BigInt(parseInt(byte, 16))
+  }
+  return '0x' + value.toString(16)
+}
+
 function addHex(address: string, delta: number): string {
   return '0x' + (BigInt(address) + BigInt(delta)).toString(16)
 }
@@ -273,9 +288,6 @@ export class PatchEngine {
     // which look identical to a user staring at one error message.
     if (current === null) return { address, state: 'unreadable', applicable: false, matchCount }
 
-    const original = patch.originalBytes.toLowerCase()
-    if (current.toLowerCase() === original)
-      return { address, state: 'original', applicable: true, matchCount }
     if (current.toLowerCase() === nopHex(patch.length))
       return { address, state: 'applied', applicable: true, matchCount }
     // A jmp trampoline this engine instance isn't tracking: an injection
@@ -286,6 +298,17 @@ export class PatchEngine {
     // generic message.
     if (patchMode(patch) !== 'nop' && !this.applied.has(patch.id) && current.toLowerCase().startsWith('e9')) {
       return { address, state: 'foreign-injection', applicable: false, matchCount }
+    }
+    // Mono-anchored patches have no meaningful stored byte signature to
+    // verify against across sessions — see resolvePatchAddress's Path 0
+    // comment in anchor.ts, which skips the same check for the same reason.
+    // Mono's own class+method resolution already proved this is the right
+    // method; whatever is actually there (once it's ruled out as already
+    // NOP'd or a foreign jmp, above) is trusted as 'original' rather than
+    // compared against a snapshot from a different process instance.
+    const isMonoAnchored = patch.monoClass !== undefined && patch.monoMethod !== undefined
+    if (isMonoAnchored || current.toLowerCase() === patch.originalBytes.toLowerCase()) {
+      return { address, state: 'original', applicable: true, matchCount }
     }
     // Something else lives there now — another trainer, an update, or a
     // wrong relocation. Never overwrite it.
@@ -332,10 +355,33 @@ export class PatchEngine {
     let displacedBytes = patch.originalBytes.toLowerCase()
     if (status.state === 'original') {
       const mode = patchMode(patch)
+      // Re-resolve the arm pointer fresh for THIS install, rather than
+      // trusting patch.armValue — which may be a snapshot from a previous
+      // process instance (a prior game launch's player object, now gone).
+      // Falls back to patch.armValue when the dynamic pair isn't set, or
+      // this particular resolve fails (better to try a stale-but-present
+      // value than refuse outright).
+      let armValueOverride: string | undefined
+      if (
+        mode === 'immune' &&
+        patch.armPointerClassName !== undefined &&
+        patch.armPointerFieldName !== undefined &&
+        this.monoOps?.resolvePointer
+      ) {
+        const monoDllBase = this.monoOps.monoDllBase()
+        if (monoDllBase !== null) {
+          const resolved = await this.monoOps.resolvePointer(
+            monoDllBase,
+            patch.armPointerClassName,
+            patch.armPointerFieldName
+          )
+          if (resolved !== null) armValueOverride = resolved
+        }
+      }
       const installed =
         mode === 'nop'
           ? this.installNop(patch, status.address)
-          : this.installInjection(patch, status.address)
+          : this.installInjection(patch, status.address, armValueOverride)
       if (!installed.ok) return { ok: false, error: installed.error }
       caveAddress = installed.caveAddress
       // An injection's displaced run is frequently longer than patch.length
@@ -430,7 +476,11 @@ export class PatchEngine {
   // Build the cave first, while nothing is redirected into it, then swap the
   // site under suspension. Ordering matters: a jump installed before its
   // cave holds valid code sends the game into garbage.
-  private installInjection(patch: PatchCheat, address: string): InstallResult {
+  //
+  // `armValueOverride`, when provided, is used in place of patch.armValue —
+  // the caller's freshly-resolved pointer for THIS install, see apply()'s
+  // comment on why a stored armValue alone goes stale across game restarts.
+  private installInjection(patch: PatchCheat, address: string, armValueOverride?: string): InstallResult {
     const run = this.ops.decodeRun(address, JUMP_LENGTH)
     if (!run.decodable) {
       return {
@@ -501,8 +551,10 @@ export class PatchEngine {
     // player, so there is no safe self-arming moment to fall back to. An
     // immune patch must already carry the resolved player pointer (from the
     // Mono anchor this whole sub-project exists to reach), or refuse rather
-    // than guess.
-    if (mode === 'immune' && patch.armValue === undefined) {
+    // than guess. armValueOverride — apply()'s fresh-this-install resolve —
+    // takes priority over the patch's own possibly-stale armValue.
+    const effectiveArmValue = armValueOverride ?? patch.armValue
+    if (mode === 'immune' && effectiveArmValue === undefined) {
       return {
         ok: false,
         error: 'This immune patch has no player pointer recorded — re-capture it.',
@@ -628,10 +680,11 @@ export class PatchEngine {
     // the player — a real session watched it lock onto a stranger three
     // times running. The capture already recorded the register's value at
     // the moment it wrote the address the user was watching, which is by
-    // construction theirs. immune has already refused above if armValue is
-    // missing, so this always fires for it once installation gets here.
-    if ((mode === 'guard' || mode === 'immune') && patch.armValue) {
-      if (!this.ops.writeBytes(cave, pointerToSlotHex(patch.armValue))) {
+    // construction theirs. immune has already refused above if
+    // effectiveArmValue is missing, so this always fires for it once
+    // installation gets here.
+    if ((mode === 'guard' || mode === 'immune') && effectiveArmValue) {
+      if (!this.ops.writeBytes(cave, pointerToSlotHex(effectiveArmValue))) {
         return {
           ok: false,
           error: mode === 'immune' ? 'Failed to arm the immune check.' : 'Failed to arm the guard.',

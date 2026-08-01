@@ -15,7 +15,7 @@ import {
   patchMode,
   isPatchCheat
 } from './store'
-import { PatchEngine, PatchOps } from './patchEngine'
+import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
 import { monoResolver } from './monoResolver'
 import { resolveMonoTargetAddress, MonoResolverOps } from './monoTargetResolve'
@@ -107,6 +107,32 @@ const monoOps: MonoResolverOps = {
   staticFieldAddress: (h, base, cls, field) => monoResolver.staticFieldAddress(h, base, cls, field),
   readBytes: (address, length) =>
     attachedHandle === null ? null : nativeAddon.tryReadBytes(attachedHandle, address, length)
+}
+
+// Resolves a live object pointer from a named class's static field — e.g.
+// Player.m_localPlayer — for an immune patch's armValue. staticFieldAddress
+// alone only gives the field's storage location, not what it currently
+// points at, so this reads the 8 bytes stored there and decodes them as a
+// pointer. Scoped to exactly this one purpose (a named class + static
+// field, not an arbitrary address) rather than exposing a general memory
+// read to the renderer, matching this sub-project's existing safety rule
+// against unscoped capabilities. Shared by the mono:resolvePlayerPointer
+// IPC handler (one-off UI resolution) and monoPatchOps.resolvePointer
+// (fresh-every-install resolution for an immune patch's armPointerClassName/
+// armPointerFieldName pair) — same operation, two callers.
+async function resolveMonoPointer(
+  handle: number,
+  base: string,
+  className: string,
+  fieldName: string
+): Promise<string | null> {
+  const classHandle = await monoResolver.resolveClass(handle, base, '', className)
+  if (classHandle === null) return null
+  const slotAddress = await monoResolver.staticFieldAddress(handle, base, classHandle, fieldName)
+  if (slotAddress === null) return null
+  const bytes = nativeAddon.tryReadBytes(handle, slotAddress, 8)
+  if (bytes === null) return null
+  return slotHexToPointer(bytes)
 }
 
 // Resolves a MonoTarget's live address, or null if it can't right now (Mono
@@ -300,7 +326,9 @@ const monoPatchOps: MonoOps = {
   resolveClass: (base, cls) =>
     attachedHandle === null ? Promise.resolve(null) : monoResolver.resolveClass(attachedHandle, base, '', cls),
   compileMethod: (base, cls, method) =>
-    attachedHandle === null ? Promise.resolve(null) : monoResolver.compileMethod(attachedHandle, base, cls, method)
+    attachedHandle === null ? Promise.resolve(null) : monoResolver.compileMethod(attachedHandle, base, cls, method),
+  resolvePointer: (base, cls, field) =>
+    attachedHandle === null ? Promise.resolve(null) : resolveMonoPointer(attachedHandle, base, cls, field)
 }
 patchEngine.setMonoOps(monoPatchOps)
 
@@ -708,6 +736,48 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (base === null) return []
     return monoResolver.listMethodNames(attachedHandle, base, classHandle)
   })
+
+  ipcMain.handle(
+    'mono:resolvePlayerPointer',
+    async (_e, className: string, fieldName: string): Promise<string | null> => {
+      if (attachedHandle === null) return null
+      const base = monoDllBase()
+      if (base === null) return null
+      return resolveMonoPointer(attachedHandle, base, className, fieldName)
+    }
+  )
+
+  // Auto-fills a Mono-anchored patch's originalBytes/length from the
+  // method's actual live entry bytes, instead of making the user guess
+  // instruction boundaries with an external disassembler. Safe as a
+  // fixed-length snapshot regardless of mode: locate()'s mismatch check
+  // only ever compares these bytes byte-for-byte against what's there now
+  // (detecting "something else changed this code"), and installInjection
+  // (every mode but nop) independently finds its own real instruction
+  // boundary via decodeRun — patch.length never governs how many bytes get
+  // overwritten there. nop mode is the one exception: its length directly
+  // becomes the NOP run, so a nop-mode patch must still have its length
+  // trimmed to a whole-instruction boundary by hand before saving.
+  ipcMain.handle(
+    'mono:resolveMethodBytes',
+    async (
+      _e,
+      className: string,
+      methodName: string,
+      length: number
+    ): Promise<{ bytes: string; length: number } | null> => {
+      if (attachedHandle === null) return null
+      const base = monoDllBase()
+      if (base === null) return null
+      const classHandle = await monoResolver.resolveClass(attachedHandle, base, '', className)
+      if (classHandle === null) return null
+      const address = await monoResolver.compileMethod(attachedHandle, base, classHandle, methodName)
+      if (address === null) return null
+      const bytes = nativeAddon.tryReadBytes(attachedHandle, address, length)
+      if (bytes === null) return null
+      return { bytes, length }
+    }
+  )
 
   startWatching(getWindow)
 }

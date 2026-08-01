@@ -83,4 +83,16 @@ uintptr_t AllocateNear(ProcessHandle handle, uintptr_t nearAddr, size_t size);
 bool SuspendAll(ProcessHandle handle, uint32_t pid);
 void ResumeAll();
 
+// A calling-thread sleep, not a target-process operation — exists so
+// callers that create-and-tear-down many throwaway remote threads in quick
+// succession (RunRemoteCall's per-call thread, invoked in a loop by
+// anything that walks Mono metadata one item at a time) can space them
+// out. Found necessary empirically: a burst of on the order of a hundred
+// CreateRemoteThread/CloseHandle cycles within a couple of seconds against
+// a real game correlated with the target process crashing shortly after,
+// even though no single call was ever pointed at bad data — the executable-
+// region guard in RunRemoteCall already rules that out. Throttling the rate
+// of thread churn, not the total call count, is the target of this.
+void SleepMs(uint32_t ms);
+
 } // namespace platform

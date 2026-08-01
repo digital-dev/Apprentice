@@ -43,6 +43,13 @@ export interface MonoOps {
   monoDllBase(): string | null
   resolveClass(monoDllBase: string, className: string): Promise<string | null>
   compileMethod(monoDllBase: string, classHandle: string, methodName: string): Promise<string | null>
+  // Resolves a live object pointer from a named class's static field (e.g.
+  // Player.m_localPlayer) — for re-arming an immune patch's guard fresh on
+  // every install, instead of trusting a pointer captured in a previous
+  // process instance. Optional: only patches using the dynamic
+  // armPointerClassName/armPointerFieldName pair need it, and older
+  // MonoOps implementations (tests, etc.) don't have to supply it.
+  resolvePointer?(monoDllBase: string, className: string, fieldName: string): Promise<string | null>
 }
 
 export interface LoadedModule {
@@ -93,9 +100,22 @@ export async function resolvePatchAddress(
       }
     }
     const address = await monoOps.compileMethod(monoDllBase, classHandle, patch.monoMethod)
-    if (address === null || !bytesMatch(ops, address, patch)) {
-      return { address: null, matchCount: null, reason: 'bytes-differ', relearnedOffset: null, scanned: false }
+    if (address === null) {
+      return { address: null, matchCount: null, reason: 'not-yet-compiled', relearnedOffset: null, scanned: false }
     }
+    // Deliberately no bytesMatch() gate here, unlike every other path below.
+    // Mono JIT output is not a stable cross-session signature — a fresh
+    // launch reliably recompiles this method to different bytes (embedded
+    // absolute addresses, register allocation, code layout can all differ),
+    // so comparing against a byte snapshot captured in an EARLIER session
+    // would make every Mono-anchored patch fail to relocate after every
+    // single game restart — exactly the "capture once, use once" bug this
+    // whole sub-project exists to avoid. Mono's own class+method resolution
+    // IS the verification here: if it resolved to a real, currently-loaded
+    // method, that address is trustworthy on its own. locate() still checks
+    // the bytes actually AT this address for its own purposes (detecting
+    // "already applied" / a foreign injection), just not against a stored
+    // snapshot from a different process instance.
     return { address, matchCount: 1, reason: null, relearnedOffset: null, scanned: false }
   }
 

@@ -1,7 +1,14 @@
 import { loadProfile, saveProfile, setProfileDir } from './profile'
 
 export type CheatMode = 'freeze' | 'oneshot'
-export type DataType = 'int32' | 'float'
+// 'byte' is a 1-byte write/read — the width a Mono bool field (e.g.
+// Player.m_godMode) actually occupies. int32/float always write 4 bytes;
+// using either of those on a 1-byte field overwrites 3 bytes of whatever
+// field follows it in the object's layout. Scanning (scanner.cc) does not
+// support 'byte' — this exists for the Mono value-target write path only,
+// where the field's real width is already known from its resolution, not
+// discovered by scanning.
+export type DataType = 'int32' | 'float' | 'byte'
 
 // A cheat can write to more than one resolved pointer chain at once. Naive
 // memory scanning sometimes finds a chain that only looks static (a false
@@ -111,8 +118,23 @@ export interface PatchCheat {
   // whichever entity the game happens to touch first. For guard, absent
   // means fall back to self-arming; immune has no per-call self-arming
   // moment to fall back to (it guards a method's entry, not a shared
-  // write), so an immune patch without armValue refuses to install.
+  // write), so an immune patch without armValue (or armPointerClassName/
+  // armPointerFieldName, below) refuses to install. Used as a fallback
+  // when the dynamic pair below isn't set, and always as the last-known
+  // value shown in the UI.
   armValue?: string
+  // The live-resolved alternative to a frozen armValue: re-resolves the
+  // object pointer fresh on every install (className's static field
+  // fieldName, e.g. Player.m_localPlayer) instead of trusting a value
+  // captured in a PREVIOUS process instance. armValue alone goes stale the
+  // moment the game restarts — a new process means a new player object at
+  // a new address — defeating the point of resolving everything else
+  // (class, method) fresh by name each session. When both are present,
+  // this pair wins; armValue is the fallback if resolution fails this
+  // particular install attempt (better to try the last-known value than
+  // refuse outright).
+  armPointerClassName?: string
+  armPointerFieldName?: string
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
   fieldOffset?: string

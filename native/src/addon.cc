@@ -83,6 +83,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("resolveExport", Napi::Function::New(env, ResolveExport));
   exports.Set("createRemoteThread", Napi::Function::New(env, CreateRemoteThread));
   exports.Set("callRemoteFunction", Napi::Function::New(env, CallRemoteFunction));
+  exports.Set("callRemoteFunctionFloat", Napi::Function::New(env, CallRemoteFunctionFloat));
   exports.Set("monoResolveClass", Napi::Function::New(env, MonoResolveClass));
   exports.Set("monoResolveField", Napi::Function::New(env, MonoResolveField));
   exports.Set("monoStaticFieldAddress", Napi::Function::New(env, MonoStaticFieldAddress));
