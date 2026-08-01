@@ -2544,9 +2544,19 @@ describe('encodeImmuneGuard', () => {
     // displacement). returnAddress: where a non-matching call falls
     // through to, skipping straight past the (displaced) method body only
     // when the compare matches.
-    const cave = (addon as any).allocateCave(handle, baseAddress)
+    //
+    // returnAddress must be reachable from caveCodeAddress within a rel32
+    // jump — this file's harness loads under ASLR at a high, unpredictable
+    // address, so a fixed literal like 0x140000200 can land outside that
+    // range and correctly trip EncodeImmuneGuard's own range check. Every
+    // real caller (patchEngine.apply) always passes a cave-relative
+    // address, never an arbitrary literal, so the test does the same:
+    // pick a small offset from the cave itself.
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave = (addon as any).allocateCave(handle, near)
     expect(cave).not.toBeNull()
-    const bytes = (addon as any).encodeImmuneGuard('0x50000000', 'rcx', cave, '0x140000200')
+    const returnAddress = '0x' + (BigInt(cave) + 0x200n).toString(16)
+    const bytes = (addon as any).encodeImmuneGuard('0x50000000', 'rcx', cave, returnAddress)
     expect(typeof bytes).toBe('string')
     expect(bytes.length).toBeGreaterThan(0)
     // Decodable by the existing decodeRun machinery — same safety bar
