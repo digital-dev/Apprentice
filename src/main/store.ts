@@ -28,10 +28,27 @@ export interface AnchorTarget {
   offset: string
 }
 
-export type CheatTarget = ChainTarget | AnchorTarget
+// A value reached through Mono-resolved metadata by name, instead of a
+// scanned chain or a captured pointer. staticFieldName's ADDRESS is the
+// base; when instanceFieldName is absent, that address's own VALUE is the
+// target (a plain static field). When present, the static field's value is
+// dereferenced once (it holds an object pointer) and instanceFieldName's
+// offset is added — the [LocalPlayer]+Player.m_godMode shape exactly.
+export interface MonoTarget {
+  kind: 'mono'
+  className: string
+  staticFieldName: string
+  instanceFieldName?: string
+}
+
+export type CheatTarget = ChainTarget | AnchorTarget | MonoTarget
 
 export function isAnchorTarget(target: CheatTarget): target is AnchorTarget {
   return (target as AnchorTarget).kind === 'anchor'
+}
+
+export function isMonoTarget(target: CheatTarget): target is MonoTarget {
+  return (target as MonoTarget).kind === 'mono'
 }
 
 export interface CheatDefinition {

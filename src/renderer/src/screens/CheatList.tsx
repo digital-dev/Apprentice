@@ -21,14 +21,25 @@ function isAnchor(target: CheatTarget): target is Extract<CheatTarget, { kind: '
   return (target as { kind?: string }).kind === 'anchor'
 }
 
+// Same reasoning as isAnchor above: a local guard rather than importing
+// store.ts's isMonoTarget.
+function isMono(target: CheatTarget): target is Extract<CheatTarget, { kind: 'mono' }> {
+  return (target as { kind?: string }).kind === 'mono'
+}
+
 function targetLabel(target: CheatTarget): string {
-  return isAnchor(target) ? `${target.patchId} +${target.offset}` : target.baseOffset
+  if (isAnchor(target)) return `${target.patchId} +${target.offset}`
+  if (isMono(target))
+    return target.instanceFieldName
+      ? `${target.className}.${target.staticFieldName}+${target.instanceFieldName}`
+      : `${target.className}.${target.staticFieldName}`
+  return target.baseOffset
 }
 
 function targetKey(target: CheatTarget, index: number): string {
-  return isAnchor(target)
-    ? `anchor-${target.patchId}-${index}`
-    : `${target.moduleName}-${target.baseOffset}-${index}`
+  if (isAnchor(target)) return `anchor-${target.patchId}-${index}`
+  if (isMono(target)) return `mono-${target.className}-${target.staticFieldName}-${index}`
+  return `${target.moduleName}-${target.baseOffset}-${index}`
 }
 
 // A patch can fail to locate for opposite reasons that need opposite
