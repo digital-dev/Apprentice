@@ -35,6 +35,18 @@ export interface PatchOps {
     slotAddress: string,
     returnAddress: string
   ): string
+  // The entry-point guard behind `immune` mode: compares argRegister (the
+  // hooked method's "this") against the pointer stored at
+  // playerPointerAddress, returning from the WHOLE method on a match and
+  // falling through to returnAddress — where the replayed prologue sits —
+  // on no match. Unlike encodeGuardedSkip's early exit, a match here never
+  // falls back into the function.
+  encodeImmuneGuard(
+    playerPointerAddress: string,
+    argRegister: string,
+    caveCodeAddress: string,
+    returnAddress: string
+  ): string
   encodeJump(from: string, to: string): string
   suspendThreads(): boolean
   resumeThreads(): void
@@ -113,7 +125,7 @@ interface AppliedPatch {
   caveAddress: string | null
   // Only a capture patch has a readable slot; recorded so slotAddress can
   // tell a capture cave from a force cave without re-deriving the mode.
-  mode: 'nop' | 'force' | 'capture' | 'guard'
+  mode: 'nop' | 'force' | 'capture' | 'guard' | 'immune'
 }
 
 // A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
@@ -482,6 +494,23 @@ export class PatchEngine {
       }
     }
 
+    // guard's slot self-arms: the first entity through fills it, because
+    // guard sits on a per-object shared write that runs once per entity, and
+    // any entity reaching it is a legitimate candidate to arm on. immune sits
+    // on a method's ENTRY — the first call through is essentially never the
+    // player, so there is no safe self-arming moment to fall back to. An
+    // immune patch must already carry the resolved player pointer (from the
+    // Mono anchor this whole sub-project exists to reach), or refuse rather
+    // than guess.
+    if (mode === 'immune' && patch.armValue === undefined) {
+      return {
+        ok: false,
+        error: 'This immune patch has no player pointer recorded — re-capture it.',
+        caveAddress: null,
+        displaced: null
+      }
+    }
+
     const cave = this.ops.allocateCave(address)
     if (cave === null) {
       return {
@@ -523,46 +552,89 @@ export class PatchEngine {
     //           whole displaced run is replayed after the effect.
     // guard replays everything, like capture: it does not replace the write,
     // it decides per-object whether to run it.
-    const replay =
-      mode === 'capture' || mode === 'guard' ? displaced : displaced.slice(patch.length * 2)
-
-    // The capture store is RIP-relative, so it must be encoded for the
-    // address it actually executes at — codeAddress, now that it runs
-    // first. Encoding it for anywhere else silently corrupts whatever the
-    // wrong RIP-relative target happens to be.
     const returnTo = addHex(address, run.length)
-    const effect =
-      mode === 'capture'
-        ? this.ops.encodeCaptureOnce(patch.baseRegister as string, codeAddress, cave)
-        : mode === 'guard'
-          ? // The guard needs the return address up front: its whole point is
-            // an early exit that skips the replayed write, so one of its two
-            // paths jumps straight back rather than falling through.
-            this.ops.encodeGuardedSkip(
-              patch.baseRegister as string,
-              codeAddress,
-              cave,
-              returnTo
-            )
-          : this.ops.encodeStore(
-              patch.baseRegister as string,
-              Number(BigInt(patch.fieldOffset as string)),
-              valueBits(patch.value as number, patch.dataType as DataType)
-            )
-    const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
-    const body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
 
-    // Pre-arm the guard before anything can reach the cave. Self-arming
-    // takes whichever entity the game touches first, and at a site that runs
-    // for every loaded creature that is essentially never the player — a
-    // real session watched it lock onto a stranger three times running. The
-    // capture already recorded the register's value at the moment it wrote
-    // the address the user was watching, which is by construction theirs.
-    if (mode === 'guard' && patch.armValue) {
+    // immune gets its own clearly-separated assembly rather than folding
+    // into the replay/effect ternaries above: its "match" path does not
+    // rejoin this replay/jumpBack shape at all — it returns from the WHOLE
+    // METHOD (xor eax,eax; ret) the instant the this-pointer matches, never
+    // touching the displaced bytes or the site at all. Only the NON-match
+    // path behaves like every other mode's cave: replay the displaced run,
+    // then jump back into the function's continuation. That is a real
+    // structural difference from guard's early exit (which always re-enters
+    // the function, on both of its paths), not just a naming difference —
+    // reusing guard's branch here by adding `|| mode === 'immune'` would
+    // silently give immune guard's "skip one write and continue" semantics
+    // instead of "skip the whole method".
+    let body: string
+    if (mode === 'immune') {
+      // encodeImmuneGuard's own returnAddress parameter is where its
+      // NON-matching path falls through to — the replayed run that follows
+      // it in the cave, not returnTo (which points back into the original
+      // function; only the jump at the very end of this cave does that).
+      // That fall-through address is codeAddress + the guard blob's own
+      // length, which is only known once the blob exists — but the blob's
+      // length does not depend on the VALUE given for returnAddress (only
+      // the trailing jne's 4 immediate bytes do), so encode once with a
+      // placeholder to learn the length, then again with the real address.
+      const probe = this.ops.encodeImmuneGuard(
+        cave,
+        patch.baseRegister as string,
+        codeAddress,
+        codeAddress
+      )
+      const replayAddress = addHex(codeAddress, probe.length / 2)
+      const guardBytes = this.ops.encodeImmuneGuard(
+        cave,
+        patch.baseRegister as string,
+        codeAddress,
+        replayAddress
+      )
+      const jumpBackFrom = addHex(replayAddress, displaced.length / 2)
+      body = guardBytes + displaced + this.ops.encodeJump(jumpBackFrom, returnTo)
+    } else {
+      const replay =
+        mode === 'capture' || mode === 'guard' ? displaced : displaced.slice(patch.length * 2)
+
+      // The capture store is RIP-relative, so it must be encoded for the
+      // address it actually executes at — codeAddress, now that it runs
+      // first. Encoding it for anywhere else silently corrupts whatever the
+      // wrong RIP-relative target happens to be.
+      const effect =
+        mode === 'capture'
+          ? this.ops.encodeCaptureOnce(patch.baseRegister as string, codeAddress, cave)
+          : mode === 'guard'
+            ? // The guard needs the return address up front: its whole point is
+              // an early exit that skips the replayed write, so one of its two
+              // paths jumps straight back rather than falling through.
+              this.ops.encodeGuardedSkip(
+                patch.baseRegister as string,
+                codeAddress,
+                cave,
+                returnTo
+              )
+            : this.ops.encodeStore(
+                patch.baseRegister as string,
+                Number(BigInt(patch.fieldOffset as string)),
+                valueBits(patch.value as number, patch.dataType as DataType)
+              )
+      const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
+      body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
+    }
+
+    // Pre-arm the guard/immune-check before anything can reach the cave.
+    // Self-arming takes whichever entity the game touches first, and at a
+    // site that runs for every loaded creature that is essentially never
+    // the player — a real session watched it lock onto a stranger three
+    // times running. The capture already recorded the register's value at
+    // the moment it wrote the address the user was watching, which is by
+    // construction theirs. immune has already refused above if armValue is
+    // missing, so this always fires for it once installation gets here.
+    if ((mode === 'guard' || mode === 'immune') && patch.armValue) {
       if (!this.ops.writeBytes(cave, pointerToSlotHex(patch.armValue))) {
         return {
           ok: false,
-          error: 'Failed to arm the guard.',
+          error: mode === 'immune' ? 'Failed to arm the immune check.' : 'Failed to arm the guard.',
           caveAddress: null,
           displaced: null
         }

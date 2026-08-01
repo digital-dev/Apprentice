@@ -70,7 +70,7 @@ export interface PatchCheat {
   kind: 'patch'
   // How this patch changes the game. Absent means 'nop': every patch saved
   // before injection existed keeps working through the same code path.
-  mode?: 'nop' | 'force' | 'capture' | 'guard'
+  mode?: 'nop' | 'force' | 'capture' | 'guard' | 'immune'
   id: string
   name: string
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
@@ -99,13 +99,19 @@ export interface PatchCheat {
   // existing patch keeps resolving exactly as before.
   monoClass?: string
   monoMethod?: string
-  // force, capture and guard: which register held the object at capture time.
+  // force, capture, guard and immune: which register held the object at
+  // capture time (for immune: which register the hooked method's entry
+  // point receives its "this" argument in — rcx for a Mono-JIT instance
+  // method).
   baseRegister?: string
-  // guard only: the value that register held when the capture caught it
-  // writing the watched address — i.e. the object that is actually yours.
-  // Written into the slot at install so the guard protects the right thing
-  // immediately, instead of self-arming on whichever entity the game happens
-  // to touch first. Absent means fall back to self-arming.
+  // guard and immune: the value that register held when the capture caught
+  // it writing the watched address — i.e. the object that is actually
+  // yours. Written into the slot at install so the guard/immune-check
+  // protects the right thing immediately, instead of self-arming on
+  // whichever entity the game happens to touch first. For guard, absent
+  // means fall back to self-arming; immune has no per-call self-arming
+  // moment to fall back to (it guards a method's entry, not a shared
+  // write), so an immune patch without armValue refuses to install.
   armValue?: string
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
@@ -120,7 +126,7 @@ export function isPatchCheat(cheat: StoredCheat): cheat is PatchCheat {
   return cheat.kind === 'patch'
 }
 
-export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'guard' {
+export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'guard' | 'immune' {
   return patch.mode ?? 'nop'
 }
 

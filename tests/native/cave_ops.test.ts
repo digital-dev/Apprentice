@@ -542,3 +542,36 @@ describe('encodeGuardedSkip', () => {
     expect(() => (addon as any).encodeGuardedSkip('r11', '0x1000', '0x2000', '0x3000')).toThrow()
   })
 })
+
+describe('encodeImmuneGuard', () => {
+  it('produces bytes that compare the arg register, skip on match, and fall through otherwise', () => {
+    // playerPointerAddress: a memory location holding the address to
+    // compare against. argRegister: which register holds "this" at the
+    // hooked method's entry. caveCodeAddress: where this blob will be
+    // written (needed to compute the internal jne's relative
+    // displacement). returnAddress: where a non-matching call falls
+    // through to, skipping straight past the (displaced) method body only
+    // when the compare matches.
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave = (addon as any).allocateCave(handle, near)
+    expect(cave).not.toBeNull()
+    // Cave-relative, not a fixed literal: a real caller (patchEngine.apply)
+    // always computes returnAddress from the cave it just allocated, which
+    // is guaranteed to be within rel32 range of itself. A fixed literal like
+    // 0x140000200 only works when the target happens to load near that
+    // address (no ASLR) — this harness does not, so a literal here fails the
+    // encoder's own (correct) out-of-range check for reasons that have
+    // nothing to do with the encoding itself.
+    const returnAddress = '0x' + (BigInt(cave) + 0x200n).toString(16)
+    const bytes = (addon as any).encodeImmuneGuard('0x50000000', 'rcx', cave, returnAddress)
+    expect(typeof bytes).toBe('string')
+    expect(bytes.length).toBeGreaterThan(0)
+    // Decodable by the existing decodeRun machinery — same safety bar
+    // every other cave body meets. Write it into the cave at the SAME
+    // address encodeImmuneGuard was told it would live at, so the
+    // internal jne's relative displacement is actually correct here.
+    expect((addon as any).writeBytes(handle, cave, bytes)).toBe(true)
+    const decoded = (addon as any).decodeRun(handle, cave, bytes.length / 2)
+    expect(decoded.decodable).toBe(true)
+  })
+})

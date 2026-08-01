@@ -455,6 +455,85 @@ Napi::Value EncodeGuardedSkip(const Napi::CallbackInfo& info) {
   return Napi::String::New(env, BytesToHex(b, kTotal));
 }
 
+// Emits the entry-point guard behind `immune` mode: compares a hooked
+// method's first argument (its "this" pointer, per the Windows x64 calling
+// convention — rcx for a Mono-JIT instance method) against the pointer
+// stored AT playerPointerAddress, and on match returns 0 from the WHOLE
+// METHOD immediately — the CT table's own damage-immunity pattern
+// (`cmp rax,rcx; jne short @f; ret; @@: <original>`), generalized. Unlike
+// EncodeGuardedSkip's early exit — which skips one displaced write and
+// continues into the rest of the function — this never falls back into the
+// function on a match at all: it is the whole method's return, full stop.
+// Only on a NON-match does it fall through, to returnAddress, where the
+// caller is expected to place the method's replayed original prologue
+// followed by a jump back into the method's continuation — the same
+// "cave holds displaced + jmpBack" shape every other patch mode uses, minus
+// any effect, since immune's guard-and-return IS the whole effect.
+//
+//   mov rax, [playerPointerAddress]   48 A1 <imm64>   (10 bytes) — moffs
+//                                                       form: loads
+//                                                       [absolute imm64]
+//                                                       into rax directly
+//   cmp argRegister, rax               <REX> 39 <ModRM> (3-4 bytes)
+//   jne returnAddress                  0F 85 <rel32>   (6 bytes)
+//   xor eax, eax                       31 C0            (2 bytes)
+//   ret                                C3               (1 byte)
+Napi::Value EncodeImmuneGuard(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  uintptr_t playerPointerAddress = ParseHex(info[0].As<Napi::String>().Utf8Value());
+  std::string argRegName = info[1].As<Napi::String>().Utf8Value();
+  uintptr_t caveCodeAddress = ParseHex(info[2].As<Napi::String>().Utf8Value());
+  uintptr_t returnAddress = ParseHex(info[3].As<Napi::String>().Utf8Value());
+
+  ZydisRegister argReg = RegisterByName(argRegName);
+  if (argReg == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown arg register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  std::vector<uint8_t> out;
+  out.push_back(0x48);
+  out.push_back(0xA1);
+  for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(playerPointerAddress >> (i * 8)));
+  // 10 bytes so far (mov rax, moffs64)
+
+  ZydisEncoderRequest cmpReq;
+  memset(&cmpReq, 0, sizeof(cmpReq));
+  cmpReq.mnemonic = ZYDIS_MNEMONIC_CMP;
+  cmpReq.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+  cmpReq.operand_count = 2;
+  cmpReq.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
+  cmpReq.operands[0].reg.value = argReg;
+  cmpReq.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
+  cmpReq.operands[1].reg.value = ZYDIS_REGISTER_RAX;
+  uint8_t cmpBuf[16];
+  ZyanUSize cmpLen = sizeof(cmpBuf);
+  if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&cmpReq, cmpBuf, &cmpLen))) {
+    Napi::Error::New(env, "failed to encode cmp").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  out.insert(out.end(), cmpBuf, cmpBuf + cmpLen);
+  // out.size() now = 10 + cmpLen
+
+  // jne rel32: 6 bytes (0F 85 + imm32). Its own address, for the relative
+  // calculation, is caveCodeAddress + out.size() (right after mov+cmp).
+  uintptr_t jneAddress = caveCodeAddress + out.size();
+  int64_t rel = (int64_t)returnAddress - (int64_t)(jneAddress + 6);
+  if (rel > INT32_MAX || rel < INT32_MIN) {
+    Napi::Error::New(env, "return address out of rel32 range").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  int32_t rel32 = (int32_t)rel;
+  out.push_back(0x0F);
+  out.push_back(0x85);
+  for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>(rel32 >> (i * 8)));
+
+  out.push_back(0x31); out.push_back(0xC0); // xor eax, eax
+  out.push_back(0xC3);                       // ret
+
+  return Napi::String::New(env, BytesToHex(out.data(), out.size()));
+}
+
 // Thin N-API wrapper over platform::SuspendAll/ResumeAll (Task 2). No OS
 // calls of their own: everything goes through platform::.
 Napi::Value SuspendThreads(const Napi::CallbackInfo& info) {

@@ -98,6 +98,28 @@ class FakeOps implements PatchOps {
     this.encodeGuardedSkipCalls.push({ baseRegister, atAddress, slotAddress, returnAddress })
     return 'aa'.repeat(41)
   }
+  encodeImmuneGuardCalls: {
+    playerPointerAddress: string
+    argRegister: string
+    caveCodeAddress: string
+    returnAddress: string
+  }[] = []
+  // A fixed 22-byte stand-in (10 mov + 3 cmp + 6 jne + 2 xor + 1 ret), same
+  // length on every call regardless of returnAddress — mirroring the real
+  // encoder, whose length never depends on the VALUE passed for
+  // returnAddress (only the jne's trailing 4 immediate bytes do). apply()'s
+  // two-pass probe relies on that invariant to compute the real fall-through
+  // address, so the fake must honor it too or the test would pass for the
+  // wrong reason.
+  encodeImmuneGuard(
+    playerPointerAddress: string,
+    argRegister: string,
+    caveCodeAddress: string,
+    returnAddress: string
+  ): string {
+    this.encodeImmuneGuardCalls.push({ playerPointerAddress, argRegister, caveCodeAddress, returnAddress })
+    return 'bb'.repeat(22)
+  }
   encodeJump(from: string, to: string): string {
     this.encodeJumpCalls.push({ from, to })
     return 'e900000000'
@@ -868,5 +890,117 @@ describe('PatchEngine — arming a guard', () => {
     // No slot write — the injected code arms itself at runtime instead.
     const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
     expect(ops.writes.map((w) => w.address)).toEqual([codeAddress, '0x400100'])
+  })
+})
+
+describe('PatchEngine — immune injection', () => {
+  // Unlike guard, which self-arms on whichever entity reaches its shared
+  // write first, immune hooks a method's ENTRY — the first call through is
+  // essentially never the player — so it must already carry the resolved
+  // player pointer, the same field guard's arming uses.
+  const immunePatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'immune',
+    id: 'patch-immune',
+    name: 'Damage Immunity',
+    originalBytes: ORIGINAL,
+    length: 5,
+    signature: 'f3 0f 11 41 10',
+    moduleName: 'game.exe',
+    moduleOffset: '0x100',
+    baseRegister: 'rcx',
+    armValue: '0x1c6986d75e4'
+  }
+
+  it('refuses without a recorded player pointer, since it has nothing to compare against and no self-arming moment', async () => {
+    const noArm = { ...immunePatch, id: 'patch-immune-noarm', armValue: undefined } as PatchCheat
+    const result = await engine.apply(noArm)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('player pointer')
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses without a base register, since it has nothing to compare the this-pointer against', async () => {
+    const noReg = { ...immunePatch, id: 'patch-immune-noreg', baseRegister: undefined } as PatchCheat
+    const result = await engine.apply(noReg)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  // The structural distinction from guard: guard's cave is
+  // `guard + displaced + jmpBack`, where BOTH of the guard's own exits loop
+  // back into the function. immune's match path (inside the 'bb'-repeat
+  // stand-in here) never reaches the displaced bytes or the jmpBack at
+  // all — it returns from the whole method by itself. Only the non-match
+  // path falls through to the replayed run that follows it in the cave,
+  // which is exactly what this asserts: displaced bytes and a jump back to
+  // the site's continuation still sit right after the guard blob, for the
+  // benefit of a call that did NOT match.
+  it('lays out the cave as guard-bytes, then the replayed prologue, then a jump back to the continuation', async () => {
+    const result = await engine.apply(immunePatch)
+    expect(result.ok).toBe(true)
+
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const guardBytes = 'bb'.repeat(22)
+    expect(ops.memory.get(codeAddress)).toBe(guardBytes + ORIGINAL + 'e900000000')
+  })
+
+  it("gives encodeImmuneGuard the slot, the arg register, its own cave address, and a returnAddress that is its own fall-through point in the cave — not back in the game's code", async () => {
+    await engine.apply(immunePatch)
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    // 22 bytes: the fixed length FakeOps.encodeImmuneGuard reports,
+    // regardless of what returnAddress it was given — the same invariant
+    // the real native encoder holds (only the jne's trailing 4 bytes vary).
+    const replayAddress = '0x' + (BigInt(codeAddress) + 22n).toString(16)
+    expect(ops.encodeImmuneGuardCalls).toEqual([
+      // Pass 1: a placeholder returnAddress, used only to learn the blob's
+      // own length.
+      { playerPointerAddress: ops.caves[0], argRegister: 'rcx', caveCodeAddress: codeAddress, returnAddress: codeAddress },
+      // Pass 2: the real fall-through — where the replayed prologue starts
+      // in the cave, NOT returnTo (0x400105, back in the original
+      // function) — that address is only reachable via the trailing jmp
+      // this test's sibling below checks.
+      { playerPointerAddress: ops.caves[0], argRegister: 'rcx', caveCodeAddress: codeAddress, returnAddress: replayAddress }
+    ])
+  })
+
+  it('jumps from the end of the replayed run back to the site\'s continuation, not to the site itself', async () => {
+    await engine.apply(immunePatch)
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const jumpBackFrom = '0x' + (BigInt(codeAddress) + 22n + BigInt(ORIGINAL.length / 2)).toString(16)
+    expect(ops.encodeJumpCalls).toEqual([
+      { from: jumpBackFrom, to: '0x400105' }, // the non-match fall-through's back-jump
+      { from: '0x400100', to: codeAddress } // the site's redirect into the cave
+    ])
+  })
+
+  it('arms the player-pointer slot, little-endian, before the code or the site is written', async () => {
+    const result = await engine.apply(immunePatch)
+    expect(result.ok).toBe(true)
+
+    const slot = ops.memory.get(ops.caves[0]) as string
+    expect(slot).toBe('e4756d98c6010000')
+
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const addresses = ops.writes.map((w) => w.address)
+    expect(addresses).toEqual([ops.caves[0], codeAddress, '0x400100'])
+  })
+
+  it('installs without a value, field offset or data type, which it never writes', async () => {
+    expect(immunePatch.value).toBeUndefined()
+    expect(immunePatch.fieldOffset).toBeUndefined()
+    expect(immunePatch.dataType).toBeUndefined()
+    const result = await engine.apply(immunePatch)
+    expect(result.ok).toBe(true)
+  })
+
+  it('refuses the site write, without leaving threads suspended, when suspension fails', async () => {
+    ops.suspendShouldFail = true
+    const result = await engine.apply(immunePatch)
+    expect(result.ok).toBe(false)
+    expect(ops.resumed).toBe(1)
+    expect(engine.isApplied('patch-immune')).toBe(false)
   })
 })

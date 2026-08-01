@@ -270,6 +270,8 @@ const patchOps: PatchOps = {
     nativeAddon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   encodeGuardedSkip: (baseRegister, atAddress, slotAddress, returnAddress) =>
     nativeAddon.encodeGuardedSkip(baseRegister, atAddress, slotAddress, returnAddress),
+  encodeImmuneGuard: (playerPointerAddress, argRegister, caveCodeAddress, returnAddress) =>
+    nativeAddon.encodeImmuneGuard(playerPointerAddress, argRegister, caveCodeAddress, returnAddress),
   encodeJump: (from, to) => nativeAddon.encodeJump(from, to),
   // The native call throws on failure (after resuming whatever it already
   // suspended) rather than returning false — PatchOps promises a plain

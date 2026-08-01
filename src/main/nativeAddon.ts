@@ -140,6 +140,18 @@ export const nativeAddon = {
     slotAddress: string,
     returnAddress: string
   ): string => addon.encodeGuardedSkip(baseRegister, atAddress, slotAddress, returnAddress),
+  // The entry-point guard for `immune` mode: compares argRegister (the
+  // hooked method's "this") against the pointer stored at
+  // playerPointerAddress and returns from the whole method on match; falls
+  // through to returnAddress — where the caller places the replayed run —
+  // on no match. Distinct from encodeGuardedSkip: a match here never falls
+  // back into the function at all.
+  encodeImmuneGuard: (
+    playerPointerAddress: string,
+    argRegister: string,
+    caveCodeAddress: string,
+    returnAddress: string
+  ): string => addon.encodeImmuneGuard(playerPointerAddress, argRegister, caveCodeAddress, returnAddress),
   encodeJump: (from: string, to: string): string => addon.encodeJump(from, to),
   // Which backend the addon was built with, and whether injection works on
   // it. The Linux stub loads and reports false rather than failing at some
