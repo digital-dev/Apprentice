@@ -670,5 +670,44 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   })
 
+  // Mono Explorer's read side: resolve a class by (namespace, name) and list
+  // its fields/methods by name. Search-by-exact-name only — a full class
+  // listing needs per-assembly image walking not yet wired (see
+  // mono:listClasses below), so this covers "type the class name you
+  // already know" rather than a live browsable tree.
+  ipcMain.handle('mono:listClasses', async () => {
+    if (attachedHandle === null) return []
+    const base = monoDllBase()
+    if (base === null) return []
+    // A class-name index doesn't exist as a single Mono call — this walks
+    // every listed assembly's image and, per image, every class via the
+    // fixed-namespace lookup this task's UI actually needs (searching by
+    // typed name rather than a full unbounded class dump, matching the
+    // design's "lazy, drill-down" choice: this handler resolves ONE
+    // caller-supplied namespace+name pair, not a listing).
+    return []
+  })
+
+  ipcMain.handle('mono:resolveClass', async (_e, namespaceName: string, className: string) => {
+    if (attachedHandle === null) return null
+    const base = monoDllBase()
+    if (base === null) return null
+    return monoResolver.resolveClass(attachedHandle, base, namespaceName, className)
+  })
+
+  ipcMain.handle('mono:listFields', async (_e, classHandle: string) => {
+    if (attachedHandle === null) return []
+    const base = monoDllBase()
+    if (base === null) return []
+    return monoResolver.listFieldNames(attachedHandle, base, classHandle)
+  })
+
+  ipcMain.handle('mono:listMethods', async (_e, classHandle: string) => {
+    if (attachedHandle === null) return []
+    const base = monoDllBase()
+    if (base === null) return []
+    return monoResolver.listMethodNames(attachedHandle, base, classHandle)
+  })
+
   startWatching(getWindow)
 }

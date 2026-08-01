@@ -4,12 +4,27 @@ import Sidebar from './components/Sidebar'
 import ProcessPicker from './screens/ProcessPicker'
 import CheatList from './screens/CheatList'
 import Scanner from './screens/Scanner'
+import MonoExplorer from './screens/MonoExplorer'
 
-type Screen = 'picker' | 'cheats' | 'scanner'
+type Screen = 'picker' | 'cheats' | 'scanner' | 'mono'
+
+// A resolved Mono Explorer selection, handed from that screen to the cheat
+// list's creation forms. There is no routing/context layer in this
+// renderer — this is the same lifted-useState-plus-prop pattern App.tsx
+// already uses for exeName/screen, just for a second, smaller piece of
+// cross-screen data. Cleared by CheatList once it's been consumed (saved or
+// dismissed) so it doesn't linger into a later, unrelated visit to the
+// cheat list.
+export type PendingMonoSelection =
+  | { kind: 'value'; className: string; fieldName: string }
+  | { kind: 'anchor'; className: string; methodName: string }
 
 export default function App() {
   const [exeName, setExeName] = useState<string | null>(null)
   const [screen, setScreen] = useState<Screen>('picker')
+  const [pendingMonoSelection, setPendingMonoSelection] = useState<PendingMonoSelection | null>(
+    null
+  )
 
   return (
     <div className="layout">
@@ -27,7 +42,26 @@ export default function App() {
             reloads the saved cheats and re-checks every patch's status
             against the running game. */}
         {screen === 'cheats' && exeName && (
-          <CheatList exeName={exeName} onOpenScanner={() => setScreen('scanner')} />
+          <CheatList
+            exeName={exeName}
+            onOpenScanner={() => setScreen('scanner')}
+            onOpenMonoExplorer={() => setScreen('mono')}
+            pendingMonoSelection={pendingMonoSelection}
+            onConsumePendingMonoSelection={() => setPendingMonoSelection(null)}
+          />
+        )}
+        {screen === 'mono' && exeName && (
+          <MonoExplorer
+            onUseAsValueTarget={(className, fieldName) => {
+              setPendingMonoSelection({ kind: 'value', className, fieldName })
+              setScreen('cheats')
+            }}
+            onUseAsPatchAnchor={(className, methodName) => {
+              setPendingMonoSelection({ kind: 'anchor', className, methodName })
+              setScreen('cheats')
+            }}
+            onDone={() => setScreen('cheats')}
+          />
         )}
         {/* The scanner is the opposite: it stays mounted and is merely
             hidden, because its state is expensive to rebuild. A scan plus a

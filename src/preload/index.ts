@@ -36,5 +36,9 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.on('cheat:state', (_e, payload) => cb(payload)),
   onGameState: (cb: (payload: { exe: string | null; pid: number | null; changedModules: string[] }) => void) =>
     ipcRenderer.on('game:state', (_e, payload) => cb(payload)),
-  currentGame: () => ipcRenderer.invoke('game:current')
+  currentGame: () => ipcRenderer.invoke('game:current'),
+  monoResolveClass: (namespaceName: string, className: string) =>
+    ipcRenderer.invoke('mono:resolveClass', namespaceName, className),
+  monoListFields: (classHandle: string) => ipcRenderer.invoke('mono:listFields', classHandle),
+  monoListMethods: (classHandle: string) => ipcRenderer.invoke('mono:listMethods', classHandle)
 })

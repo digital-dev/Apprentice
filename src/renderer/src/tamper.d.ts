@@ -85,6 +85,13 @@ declare global {
         cb: (payload: { exe: string | null; pid: number | null; changedModules: string[] }) => void
       ) => void
       currentGame: () => Promise<{ exe: string | null; pid: number | null; changedModules: string[] }>
+      // Mono Explorer's read side. Resolve returns a class handle (an
+      // opaque address, encoded as a hex string) or null when the class
+      // isn't loaded yet / the runtime isn't attached; the two list calls
+      // resolve to [] on the same conditions.
+      monoResolveClass: (namespaceName: string, className: string) => Promise<string | null>
+      monoListFields: (classHandle: string) => Promise<string[]>
+      monoListMethods: (classHandle: string) => Promise<string[]>
     }
   }
 }

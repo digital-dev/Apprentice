@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { CheatDefinition, StoredCheat, PatchCheat, CheatTarget } from '../../../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat, CheatTarget, DataType } from '../../../main/store'
 import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
+import type { PendingMonoSelection } from '../App'
 import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
 
@@ -104,10 +105,21 @@ function cheatStateLabel(status: CheatStatus): string {
 
 export default function CheatList({
   exeName,
-  onOpenScanner
+  onOpenScanner,
+  onOpenMonoExplorer,
+  pendingMonoSelection,
+  onConsumePendingMonoSelection
 }: {
   exeName: string
   onOpenScanner: () => void
+  onOpenMonoExplorer?: () => void
+  // A selection handed over from Mono Explorer, if the user just came from
+  // there ("use as value target" / "use as patch anchor"). Pre-fills the
+  // matching mini creation form below; onConsumePendingMonoSelection clears
+  // it once saved or dismissed so it doesn't linger into a later, unrelated
+  // visit to this screen.
+  pendingMonoSelection?: PendingMonoSelection | null
+  onConsumePendingMonoSelection?: () => void
 }) {
   const [cheats, setCheats] = useState<CheatDefinition[]>([])
   const [patches, setPatches] = useState<PatchCheat[]>([])
@@ -144,6 +156,18 @@ export default function CheatList({
   // Modules whose on-disk fingerprint no longer matches what was captured
   // against — drives the "this game has updated" banner.
   const [changedModules, setChangedModules] = useState<string[]>([])
+
+  // The two mini creation forms below Mono Explorer's handoff feeds. Kept
+  // as plain per-field state, matching Scanner.tsx's own creation-form
+  // style, rather than a shared "new cheat" object — the two forms build
+  // different target/cheat shapes and are never open at the same time.
+  const [monoValueName, setMonoValueName] = useState('')
+  const [monoValueDataType, setMonoValueDataType] = useState<DataType>('float')
+  const [monoValueMode, setMonoValueMode] = useState<CheatDefinition['mode']>('freeze')
+  const [monoValueValue, setMonoValueValue] = useState('')
+  const [monoAnchorName, setMonoAnchorName] = useState('')
+  const [monoAnchorBytes, setMonoAnchorBytes] = useState('')
+  const [monoAnchorLength, setMonoAnchorLength] = useState('')
 
   useEffect(() => {
     window.tamper.onCheatState(({ cheatId, status }) => {
@@ -461,6 +485,70 @@ export default function CheatList({
     return result.filter((s) => s.alive).length
   }
 
+  // Saves a value cheat that reads through Mono metadata by name instead of
+  // a scanned chain — the [ClassName].[staticFieldName] shape a plain
+  // static field resolves to on its own (no instanceFieldName: see
+  // store.ts's MonoTarget doc). This is the "existing cheat-creation form"
+  // Mono Explorer's "use as value target" hands its selection to; there was
+  // no such form for a Mono target before this screen existed, so this is
+  // new but deliberately as small as Scanner's own save().
+  async function saveMonoValueCheat() {
+    if (pendingMonoSelection?.kind !== 'value' || !monoValueName) return
+    const cheat: CheatDefinition = {
+      id: monoValueName.toLowerCase().replace(/\s+/g, '-'),
+      name: monoValueName,
+      dataType: monoValueDataType,
+      mode: monoValueMode,
+      targets: [
+        {
+          kind: 'mono',
+          className: pendingMonoSelection.className,
+          staticFieldName: pendingMonoSelection.fieldName
+        }
+      ],
+      value: Number(monoValueValue)
+    }
+    await window.tamper.saveCheat(exeName, cheat)
+    setCheats((prev) => [...prev.filter((c) => c.id !== cheat.id), cheat])
+    setMonoValueName('')
+    setMonoValueValue('')
+    onConsumePendingMonoSelection?.()
+  }
+
+  // Saves a code patch anchored to a Mono class+method instead of a
+  // module+RVA or an AOB signature (see anchor.ts's Path 0). Mono Explorer
+  // resolves the method's compiled entry address by name, but never
+  // captures the instruction bytes there is to NOP — that only happens via
+  // Scanner's find-what-writes capture — so originalBytes/length are
+  // manual/advanced entry here rather than pre-filled. Deliberately scoped
+  // to mode 'nop' (needs nothing beyond the bytes to NOP); force/capture/
+  // guard need a base register and a captured object address that this
+  // screen has no way to supply.
+  async function saveMonoAnchorPatch() {
+    if (pendingMonoSelection?.kind !== 'anchor' || !monoAnchorName) return
+    const length = Number(monoAnchorLength)
+    if (!Number.isInteger(length) || length <= 0 || monoAnchorBytes.trim() === '') return
+    const patch: PatchCheat = {
+      kind: 'patch',
+      mode: 'nop',
+      id: `patch-${monoAnchorName.toLowerCase().replace(/\s+/g, '-')}`,
+      name: monoAnchorName,
+      originalBytes: monoAnchorBytes.trim().toLowerCase(),
+      length,
+      signature: '',
+      moduleName: null,
+      moduleOffset: null,
+      monoClass: pendingMonoSelection.className,
+      monoMethod: pendingMonoSelection.methodName
+    }
+    await window.tamper.saveCheat(exeName, patch)
+    setPatches((prev) => [...prev.filter((p) => p.id !== patch.id), patch])
+    setMonoAnchorName('')
+    setMonoAnchorBytes('')
+    setMonoAnchorLength('')
+    onConsumePendingMonoSelection?.()
+  }
+
   return (
     <div>
       <h2>{exeName}</h2>
@@ -472,6 +560,77 @@ export default function CheatList({
         </div>
       )}
       <button onClick={onOpenScanner}>+ New cheat</button>
+      {onOpenMonoExplorer && <button onClick={onOpenMonoExplorer}>Mono Explorer</button>}
+
+      {pendingMonoSelection?.kind === 'value' && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            From Mono Explorer: {pendingMonoSelection.className}.{pendingMonoSelection.fieldName}
+          </p>
+          <input
+            placeholder="Cheat name"
+            value={monoValueName}
+            onChange={(e) => setMonoValueName(e.target.value)}
+          />
+          <select
+            value={monoValueDataType}
+            onChange={(e) => setMonoValueDataType(e.target.value as DataType)}
+          >
+            <option value="float">Float</option>
+            <option value="int32">Whole number</option>
+          </select>
+          <select
+            value={monoValueMode}
+            onChange={(e) => setMonoValueMode(e.target.value as CheatDefinition['mode'])}
+          >
+            <option value="freeze">Freeze (continuous)</option>
+            <option value="oneshot">One-shot</option>
+          </select>
+          <input
+            placeholder="Value"
+            value={monoValueValue}
+            onChange={(e) => setMonoValueValue(e.target.value)}
+          />
+          <button onClick={saveMonoValueCheat} disabled={!monoValueName}>
+            Save
+          </button>
+          <button onClick={() => onConsumePendingMonoSelection?.()}>Dismiss</button>
+        </div>
+      )}
+
+      {pendingMonoSelection?.kind === 'anchor' && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            From Mono Explorer: {pendingMonoSelection.className}.{pendingMonoSelection.methodName} —
+            manual entry, since Mono Explorer doesn't capture instruction bytes (only
+            Scanner&apos;s find-what-writes does). Creates a NOP patch anchored to this class+method
+            instead of a module or a signature.
+          </p>
+          <input
+            placeholder="Patch name"
+            value={monoAnchorName}
+            onChange={(e) => setMonoAnchorName(e.target.value)}
+          />
+          <input
+            placeholder="Original bytes (unspaced hex, e.g. 894110)"
+            value={monoAnchorBytes}
+            onChange={(e) => setMonoAnchorBytes(e.target.value)}
+          />
+          <input
+            placeholder="Length (bytes)"
+            value={monoAnchorLength}
+            onChange={(e) => setMonoAnchorLength(e.target.value)}
+          />
+          <button
+            onClick={saveMonoAnchorPatch}
+            disabled={!monoAnchorName || !monoAnchorBytes || !monoAnchorLength}
+          >
+            Save
+          </button>
+          <button onClick={() => onConsumePendingMonoSelection?.()}>Dismiss</button>
+        </div>
+      )}
+
       <ul>
         {cheats.map((cheat) => {
           const live = liveCount(cheat)
