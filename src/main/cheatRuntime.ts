@@ -41,7 +41,13 @@ export const BACKOFF_CAP_MS = 5000
 // signature, bytes that are not what we captured — is a fact about the
 // build that will not change by trying again, and retrying it would spin
 // forever behind a chip that says "arming".
-const RETRYABLE: AnchorReason[] = ['not-yet-compiled', 'no-match', 'module-missing']
+const RETRYABLE: AnchorReason[] = [
+  'not-yet-compiled',
+  'no-match',
+  'module-missing',
+  'mono-not-loaded',
+  'mono-assembly-not-loaded'
+]
 
 function idle(): CheatStatus {
   return { state: 'idle', unverified: false, reason: null, address: null, attempts: 0 }

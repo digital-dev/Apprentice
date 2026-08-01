@@ -13,6 +13,11 @@ export type AnchorReason =
   // the game has run the code correctly finds nothing. The caller keeps
   // retrying rather than reporting a failure.
   | 'not-yet-compiled'
+  // mono.dll isn't in the target's module list yet.
+  | 'mono-not-loaded'
+  // The runtime is up but the named class's assembly hasn't loaded yet
+  // (a scene not yet entered, content not yet active).
+  | 'mono-assembly-not-loaded'
 
 export interface AnchorResult {
   address: string | null
@@ -28,6 +33,16 @@ export interface AnchorResult {
 export interface AnchorOps {
   readBytes(address: string, length: number): string | null
   scanAob(signature: string, rangeStart?: string, rangeEnd?: string): Promise<string[]>
+}
+
+// A third way to locate a patch: ask the live Mono runtime for a
+// class+method's compiled entry address, instead of module+RVA arithmetic
+// or an AOB scan. compileMethod is the one call that can force real JIT
+// compilation of a method the game hasn't run yet — see monoResolver.ts.
+export interface MonoOps {
+  monoDllBase(): string | null
+  resolveClass(monoDllBase: string, className: string): Promise<string | null>
+  compileMethod(monoDllBase: string, classHandle: string, methodName: string): Promise<string | null>
 }
 
 export interface LoadedModule {
@@ -55,8 +70,35 @@ export async function resolvePatchAddress(
   patch: PatchCheat,
   modules: Map<string, LoadedModule>,
   verified: Set<string>,
-  ops: AnchorOps
+  ops: AnchorOps,
+  monoOps?: MonoOps
 ): Promise<AnchorResult> {
+  // Path 0: Mono class+method. Only for a patch that names no module — a
+  // class+method-anchored patch has no meaningful AOB signature to fall
+  // back to (it never had one captured), so there is no scan fallback here
+  // the way there is below for a module-anchored/JIT patch.
+  if (patch.monoClass !== undefined && patch.monoMethod !== undefined && monoOps) {
+    const monoDllBase = monoOps.monoDllBase()
+    if (monoDllBase === null) {
+      return { address: null, matchCount: null, reason: 'mono-not-loaded', relearnedOffset: null, scanned: false }
+    }
+    const classHandle = await monoOps.resolveClass(monoDllBase, patch.monoClass)
+    if (classHandle === null) {
+      return {
+        address: null,
+        matchCount: null,
+        reason: 'mono-assembly-not-loaded',
+        relearnedOffset: null,
+        scanned: false
+      }
+    }
+    const address = await monoOps.compileMethod(monoDllBase, classHandle, patch.monoMethod)
+    if (address === null || !bytesMatch(ops, address, patch)) {
+      return { address: null, matchCount: null, reason: 'bytes-differ', relearnedOffset: null, scanned: false }
+    }
+    return { address, matchCount: 1, reason: null, relearnedOffset: null, scanned: false }
+  }
+
   // modules/verified are keyed lowercase by the caller (see ipc.ts's
   // refreshModuleContext), but this function shouldn't assume that — the OS
   // can report a module's casing differently across launches (or the stored

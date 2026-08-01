@@ -1,7 +1,7 @@
 import type { PatchCheat, DataType } from './store'
 import { patchMode } from './store'
 import { resolvePatchAddress } from './anchor'
-import type { AnchorReason, LoadedModule } from './anchor'
+import type { AnchorReason, LoadedModule, MonoOps } from './anchor'
 
 // Everything PatchEngine needs from the target process. Injected rather
 // than imported so the engine's locate/apply/restore logic — the part that
@@ -184,6 +184,11 @@ export class PatchEngine {
   // exactly the two cases resolvePatchAddress's scan-and-relearn fallback is
   // for.
   private contextSet = false
+  // Optional third anchor path, set via setMonoOps: resolvePatchAddress
+  // only uses it once supplied, and only for a patch that names a
+  // monoClass/monoMethod. Passed straight through the same contextSet gate
+  // as everything else in resolveAddress — see the comment there.
+  private monoOps: MonoOps | undefined
   private relearnCb: ((patchId: string, offset: string) => void) | null = null
   // Set fresh on every resolveAddress call; only the anchor path (module
   // verified, or a JIT patch) ever assigns it a real reason. Left undefined
@@ -200,6 +205,10 @@ export class PatchEngine {
     this.modules = modules
     this.verified = verified
     this.contextSet = true
+  }
+
+  setMonoOps(ops: MonoOps): void {
+    this.monoOps = ops
   }
 
   // Fired when a scan relocated a module-anchored patch, so the caller can
@@ -625,7 +634,7 @@ export class PatchEngine {
     this.lastReason = undefined
     if (!this.contextSet) return this.legacyResolveAddress(patch)
 
-    const result = await resolvePatchAddress(patch, this.modules, this.verified, this.ops)
+    const result = await resolvePatchAddress(patch, this.modules, this.verified, this.ops, this.monoOps)
     if (result.relearnedOffset !== null && result.relearnedOffset !== patch.moduleOffset) {
       this.relearnCb?.(patch.id, result.relearnedOffset)
     }

@@ -114,6 +114,19 @@ describe('CheatRuntime', () => {
     }
   })
 
+  it('retries mono-not-loaded and mono-assembly-not-loaded', async () => {
+    for (const reason of ['mono-not-loaded', 'mono-assembly-not-loaded'] as AnchorReason[]) {
+      deps = new FakeDeps()
+      clock = new FakeClock()
+      runtime = new CheatRuntime(deps, clock)
+      deps.located = { address: null, reason }
+      runtime.arm(patch)
+      await settle()
+      expect(runtime.status('p1').state).toBe('arming')
+      expect(clock.pending).toHaveLength(1)
+    }
+  })
+
   it('fails immediately on reasons waiting cannot fix', async () => {
     for (const reason of ['ambiguous', 'bytes-differ'] as AnchorReason[]) {
       deps = new FakeDeps()

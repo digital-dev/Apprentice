@@ -172,3 +172,90 @@ describe('resolvePatchAddress — scan path', () => {
     expect(result.relearnedOffset).toBeNull()
   })
 })
+
+const monoPatch: PatchCheat = {
+  kind: 'patch',
+  id: 'p3',
+  name: 'P3',
+  originalBytes: 'f30f114110',
+  length: 5,
+  signature: 'f3 0f 11 41 10',
+  moduleName: null,
+  moduleOffset: null,
+  monoClass: 'Character',
+  monoMethod: 'ApplyDamage'
+}
+
+class FakeMonoOps {
+  monoDllBaseValue: string | null = '0x500000'
+  classHandle: string | null = '0xc9'
+  methodAddress: string | null = null
+  resolveClassCalls = 0
+  compileMethodCalls = 0
+
+  monoDllBase(): string | null {
+    return this.monoDllBaseValue
+  }
+  async resolveClass(): Promise<string | null> {
+    this.resolveClassCalls++
+    return this.classHandle
+  }
+  async compileMethod(): Promise<string | null> {
+    this.compileMethodCalls++
+    return this.methodAddress
+  }
+}
+
+describe('resolvePatchAddress — mono path', () => {
+  it('resolves via class+method when the patch names no module', async () => {
+    const ops = new FakeOps()
+    ops.memory.set('0x700000', ORIGINAL)
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+
+    const result = await resolvePatchAddress(monoPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBe('0x700000')
+    expect(monoOps.resolveClassCalls).toBe(1)
+    expect(monoOps.compileMethodCalls).toBe(1)
+  })
+
+  it('reports mono-not-loaded when mono.dll is not in the module list', async () => {
+    const ops = new FakeOps()
+    const monoOps = new FakeMonoOps()
+    monoOps.monoDllBaseValue = null
+
+    const result = await resolvePatchAddress(monoPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBeNull()
+    expect(result.reason).toBe('mono-not-loaded')
+  })
+
+  it('reports mono-assembly-not-loaded when the class does not resolve yet', async () => {
+    const ops = new FakeOps()
+    const monoOps = new FakeMonoOps()
+    monoOps.classHandle = null
+
+    const result = await resolvePatchAddress(monoPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBeNull()
+    expect(result.reason).toBe('mono-assembly-not-loaded')
+  })
+
+  it('reports bytes-differ when the compiled address does not verify', async () => {
+    const ops = new FakeOps()
+    ops.memory.set('0x700000', 'cccccccccc')
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+
+    const result = await resolvePatchAddress(monoPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBeNull()
+    expect(result.reason).toBe('bytes-differ')
+  })
+
+  it('does not attempt the mono path for a patch that names a module', async () => {
+    const ops = new FakeOps()
+    ops.memory.set('0x10000100', ORIGINAL)
+    const monoOps = new FakeMonoOps()
+
+    await resolvePatchAddress(modulePatch, modules, verified, ops, monoOps as any)
+    expect(monoOps.resolveClassCalls).toBe(0)
+  })
+})

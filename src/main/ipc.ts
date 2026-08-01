@@ -28,7 +28,7 @@ import {
 } from './profile'
 import { CheatRuntime } from './cheatRuntime'
 import { ProcessWatcher } from './watcher'
-import type { LoadedModule } from './anchor'
+import type { LoadedModule, MonoOps } from './anchor'
 
 let attachedHandle: number | null = null
 let attachedBase: string | null = null
@@ -287,6 +287,20 @@ const patchOps: PatchOps = {
 }
 
 const patchEngine = new PatchEngine(patchOps)
+
+// The third anchor path: resolve a patch by asking the live Mono runtime
+// for a class+method's compiled entry address. Wired once, alongside
+// patchEngine's other ops — reads attachedHandle through the closure the
+// same way patchOps/monoOps above do, rather than capturing one, so it
+// keeps working across a re-attach without being rebuilt.
+const monoPatchOps: MonoOps = {
+  monoDllBase,
+  resolveClass: (base, cls) =>
+    attachedHandle === null ? Promise.resolve(null) : monoResolver.resolveClass(attachedHandle, base, '', cls),
+  compileMethod: (base, cls, method) =>
+    attachedHandle === null ? Promise.resolve(null) : monoResolver.compileMethod(attachedHandle, base, cls, method)
+}
+patchEngine.setMonoOps(monoPatchOps)
 
 // A Linux build loads and runs — scanning and value cheats work through the
 // existing Win32-free paths — but injection has no backend there yet. Say so

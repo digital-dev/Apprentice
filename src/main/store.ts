@@ -93,6 +93,12 @@ export interface PatchCheat {
   internal?: boolean
   moduleName: string | null // named module, or null for JIT/anonymous code
   moduleOffset: string | null // hex offset within that module
+  // An alternative to moduleName/moduleOffset: resolve this patch's
+  // address by asking the live Mono runtime for a class+method, instead of
+  // arithmetic or an AOB scan. Absent means "not Mono-anchored" — every
+  // existing patch keeps resolving exactly as before.
+  monoClass?: string
+  monoMethod?: string
   // force, capture and guard: which register held the object at capture time.
   baseRegister?: string
   // guard only: the value that register held when the capture caught it
