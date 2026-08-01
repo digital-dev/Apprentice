@@ -9,6 +9,7 @@ import {
   setGamesDir,
   isPatchCheat,
   isAnchorTarget,
+  isMonoTarget,
   PatchCheat,
   CheatDefinition,
   patchMode
@@ -195,6 +196,44 @@ describe('store — anchored targets', () => {
       expect(target.patchId).toBe('patch-player')
       expect(target.offset).toBe('0x818')
     }
+  })
+})
+
+describe('store — mono targets', () => {
+  it('round-trips a cheat targeting a Mono-resolved field', () => {
+    saveCheat('valheim.exe', {
+      id: 'godmode',
+      name: 'God Mode',
+      dataType: 'int32',
+      mode: 'freeze',
+      targets: [
+        { kind: 'mono', className: 'Player', staticFieldName: 'm_localPlayer', instanceFieldName: 'm_godMode' }
+      ],
+      value: 1
+    })
+    const cheat = loadCheats('valheim.exe').find((c) => c.id === 'godmode') as CheatDefinition
+    const target = cheat.targets[0]
+    expect(isMonoTarget(target)).toBe(true)
+    if (isMonoTarget(target)) {
+      expect(target.className).toBe('Player')
+      expect(target.staticFieldName).toBe('m_localPlayer')
+      expect(target.instanceFieldName).toBe('m_godMode')
+    }
+  })
+
+  it('isMonoTarget returns false for a ChainTarget or an AnchorTarget', () => {
+    const chain: CheatDefinition['targets'][number] = {
+      moduleName: 'valheim.exe',
+      baseOffset: '0x1000',
+      offsets: ['0x8']
+    }
+    const anchor: CheatDefinition['targets'][number] = {
+      kind: 'anchor',
+      patchId: 'patch-player',
+      offset: '0x818'
+    }
+    expect(isMonoTarget(chain)).toBe(false)
+    expect(isMonoTarget(anchor)).toBe(false)
   })
 })
 
