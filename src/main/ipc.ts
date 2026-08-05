@@ -20,7 +20,7 @@ import { importCheatTable } from './ctImport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
 import { monoResolver } from './monoResolver'
-import { resolveMonoTargetAddress, MonoResolverOps } from './monoTargetResolve'
+import { resolveMonoTargetAddress, resolveMonoPointerChain, MonoResolverOps } from './monoTargetResolve'
 import {
   loadProfile,
   recordModuleFingerprint,
@@ -126,15 +126,10 @@ async function resolveMonoPointer(
   handle: number,
   base: string,
   className: string,
-  fieldName: string
+  fieldName: string,
+  instanceFieldName?: string
 ): Promise<string | null> {
-  const classHandle = await monoResolver.resolveClass(handle, base, '', className)
-  if (classHandle === null) return null
-  const slotAddress = await monoResolver.staticFieldAddress(handle, base, classHandle, fieldName)
-  if (slotAddress === null) return null
-  const bytes = nativeAddon.tryReadBytes(handle, slotAddress, 8)
-  if (bytes === null) return null
-  return slotHexToPointer(bytes)
+  return resolveMonoPointerChain(handle, base, className, fieldName, monoOps, instanceFieldName)
 }
 
 // Resolves a MonoTarget's live address, or null if it can't right now (Mono
@@ -329,8 +324,10 @@ const monoPatchOps: MonoOps = {
     attachedHandle === null ? Promise.resolve(null) : monoResolver.resolveClass(attachedHandle, base, '', cls),
   compileMethod: (base, cls, method) =>
     attachedHandle === null ? Promise.resolve(null) : monoResolver.compileMethod(attachedHandle, base, cls, method),
-  resolvePointer: (base, cls, field) =>
-    attachedHandle === null ? Promise.resolve(null) : resolveMonoPointer(attachedHandle, base, cls, field)
+  resolvePointer: (base, cls, field, instanceField) =>
+    attachedHandle === null
+      ? Promise.resolve(null)
+      : resolveMonoPointer(attachedHandle, base, cls, field, instanceField)
 }
 patchEngine.setMonoOps(monoPatchOps)
 
@@ -755,11 +752,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle(
     'mono:resolvePlayerPointer',
-    async (_e, className: string, fieldName: string): Promise<string | null> => {
+    async (
+      _e,
+      className: string,
+      fieldName: string,
+      instanceFieldName?: string
+    ): Promise<string | null> => {
       if (attachedHandle === null) return null
       const base = monoDllBase()
       if (base === null) return null
-      return resolveMonoPointer(attachedHandle, base, className, fieldName)
+      return resolveMonoPointer(attachedHandle, base, className, fieldName, instanceFieldName)
     }
   )
 

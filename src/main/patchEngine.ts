@@ -373,7 +373,8 @@ export class PatchEngine {
           const resolved = await this.monoOps.resolvePointer(
             monoDllBase,
             patch.armPointerClassName,
-            patch.armPointerFieldName
+            patch.armPointerFieldName,
+            patch.armPointerInstanceFieldName
           )
           if (resolved !== null) armValueOverride = resolved
         }

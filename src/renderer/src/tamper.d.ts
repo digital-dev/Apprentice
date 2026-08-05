@@ -94,9 +94,16 @@ declare global {
       monoListMethods: (classHandle: string) => Promise<string[]>
       // Resolves a live object pointer from a named class's static field —
       // e.g. ('Player', 'm_localPlayer') — for an immune patch's armValue.
-      // Null if the runtime isn't attached, the class/field isn't found, or
-      // the field hasn't been set yet (no local player this session).
-      monoResolvePlayerPointer: (className: string, fieldName: string) => Promise<string | null>
+      // With instanceFieldName set, follows one more instance field on that
+      // SAME class to a second object (Player.m_localPlayer -> .m_skills),
+      // for an armValue that isn't the player itself but something the
+      // player owns. Null if the runtime isn't attached, either field isn't
+      // found, or either hop's pointer hasn't been set yet this session.
+      monoResolvePlayerPointer: (
+        className: string,
+        fieldName: string,
+        instanceFieldName?: string
+      ) => Promise<string | null>
       // Every loaded assembly's image handle paired with a human-readable
       // name (e.g. "assembly_valheim") — for a picker, instead of the
       // opaque handle-only list monoListAssemblies (unused directly by the

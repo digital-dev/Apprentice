@@ -135,6 +135,15 @@ export interface PatchCheat {
   // refuse outright).
   armPointerClassName?: string
   armPointerFieldName?: string
+  // One more instance-field hop past armPointerFieldName's static field, for
+  // an object reached THROUGH the player rather than the player object
+  // itself — e.g. Skills:OnDeath's `this` is the player's Skills instance
+  // (Player.m_localPlayer -> .m_skills), not the Player instance armValue
+  // alone would resolve. Both fields must be declared on armPointerClassName
+  // — see resolveMonoPointerChain's own comment for why. Absent means the
+  // static field's own dereferenced value IS the arm pointer, exactly as
+  // before this field existed.
+  armPointerInstanceFieldName?: string
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
   fieldOffset?: string

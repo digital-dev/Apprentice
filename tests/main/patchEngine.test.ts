@@ -1011,7 +1011,7 @@ class FakeMonoOps {
   monoDllBaseValue: string | null = '0x500000'
   methodAddress: string | null = '0x400100'
   pointerValue: string | null = null
-  resolvePointerCalls: { className: string; fieldName: string }[] = []
+  resolvePointerCalls: { className: string; fieldName: string; instanceFieldName?: string }[] = []
 
   monoDllBase(): string | null {
     return this.monoDllBaseValue
@@ -1022,8 +1022,13 @@ class FakeMonoOps {
   async compileMethod(): Promise<string | null> {
     return this.methodAddress
   }
-  async resolvePointer(_base: string, className: string, fieldName: string): Promise<string | null> {
-    this.resolvePointerCalls.push({ className, fieldName })
+  async resolvePointer(
+    _base: string,
+    className: string,
+    fieldName: string,
+    instanceFieldName?: string
+  ): Promise<string | null> {
+    this.resolvePointerCalls.push({ className, fieldName, instanceFieldName })
     return this.pointerValue
   }
 }
@@ -1068,6 +1073,22 @@ describe('PatchEngine — immune injection, Mono-anchored re-arming', () => {
     const slot = ops.memory.get(ops.caves[0]) as string
     expect(slot).toBe('e4756d98c6010000') // little-endian 0x1c6986d75e4 — the FRESH value
     expect(slot).not.toBe('addeaddeadde0000') // NOT the stale armValue
+  })
+
+  it('passes armPointerInstanceFieldName through to resolvePointer when set', async () => {
+    ops.memory.set('0x400100', ORIGINAL)
+    engine.setAnchorContext(new Map(), new Set())
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = '0x4000'
+    engine.setMonoOps(monoOps as any)
+
+    const patch: PatchCheat = { ...monoImmunePatch, armPointerInstanceFieldName: 'm_skills' }
+    const result = await engine.apply(patch)
+
+    expect(result.ok).toBe(true)
+    expect(monoOps.resolvePointerCalls).toEqual([
+      { className: 'Player', fieldName: 'm_localPlayer', instanceFieldName: 'm_skills' }
+    ])
   })
 
   it('falls back to the stored armValue when resolvePointer fails this attempt', async () => {

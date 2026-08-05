@@ -49,7 +49,12 @@ export interface MonoOps {
   // process instance. Optional: only patches using the dynamic
   // armPointerClassName/armPointerFieldName pair need it, and older
   // MonoOps implementations (tests, etc.) don't have to supply it.
-  resolvePointer?(monoDllBase: string, className: string, fieldName: string): Promise<string | null>
+  resolvePointer?(
+    monoDllBase: string,
+    className: string,
+    fieldName: string,
+    instanceFieldName?: string
+  ): Promise<string | null>
 }
 
 export interface LoadedModule {

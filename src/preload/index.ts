@@ -41,8 +41,8 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('mono:resolveClass', namespaceName, className),
   monoListFields: (classHandle: string) => ipcRenderer.invoke('mono:listFields', classHandle),
   monoListMethods: (classHandle: string) => ipcRenderer.invoke('mono:listMethods', classHandle),
-  monoResolvePlayerPointer: (className: string, fieldName: string) =>
-    ipcRenderer.invoke('mono:resolvePlayerPointer', className, fieldName),
+  monoResolvePlayerPointer: (className: string, fieldName: string, instanceFieldName?: string) =>
+    ipcRenderer.invoke('mono:resolvePlayerPointer', className, fieldName, instanceFieldName),
   monoListAssemblyNames: () => ipcRenderer.invoke('mono:listAssemblyNames'),
   monoListClassesInImage: (imageHandle: string) =>
     ipcRenderer.invoke('mono:listClassesInImage', imageHandle),
