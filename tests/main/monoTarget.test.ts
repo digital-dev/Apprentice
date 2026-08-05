@@ -168,4 +168,14 @@ describe('resolveMonoLiveValue', () => {
     const value = await resolveMonoLiveValue(staticOnlyTarget, 1, '0x400000', ops)
     expect(value).toBeNull()
   })
+
+  it('returns null instead of throwing when fewer than 4 bytes are read', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('GameSettings', '0xc1')
+    ops.staticAddresses.set('0xc1.m_difficulty', '0x9000')
+    ops.memory.set('0x9000', '0500') // only 2 bytes
+
+    const value = await resolveMonoLiveValue(staticOnlyTarget, 1, '0x400000', ops)
+    expect(value).toBeNull()
+  })
 })

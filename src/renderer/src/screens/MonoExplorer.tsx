@@ -40,11 +40,12 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
   const [searchQuery, setSearchQuery] = useState('')
 
   const [watchedField, setWatchedField] = useState<string | null>(null)
+  const [watchIsInstance, setWatchIsInstance] = useState(true)
   const [watchHolderClass, setWatchHolderClass] = useState('')
   const [watchHolderField, setWatchHolderField] = useState('m_localPlayer')
   const [liveValue, setLiveValue] = useState<{ raw: string; int32: number; float: number } | null>(null)
 
-  async function resolve(ns: string, cls: string) {
+  async function resolve(ns: string, cls: string, prefill?: { field?: string; method?: string }) {
     setError(null)
     setResolving(true)
     try {
@@ -61,8 +62,8 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
       setClassHandle(handle)
       setFields((await window.tamper.monoListFields(handle)).sort((a, b) => a.localeCompare(b)))
       setMethods((await window.tamper.monoListMethods(handle)).sort((a, b) => a.localeCompare(b)))
-      setFieldFilter('')
-      setMethodFilter('')
+      setFieldFilter(prefill?.field ?? '')
+      setMethodFilter(prefill?.method ?? '')
     } finally {
       setResolving(false)
     }
@@ -79,6 +80,8 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
       setAssemblies([...result].sort((a, b) => a.name.localeCompare(b.name)))
       setSelectedImage(null)
       setClasses([])
+      setSearchIndex([])
+      setSearchQuery('')
     } finally {
       setLoadingAssemblies(false)
     }
@@ -89,6 +92,8 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
     setClassFilter('')
     setBrowseError(null)
     setLoadingClasses(true)
+    setSearchIndex([])
+    setSearchQuery('')
     try {
       const result = await window.tamper.monoListClassesInImage(imageHandle)
       setClasses([...result].sort((a, b) => a.className.localeCompare(b.className)))
@@ -97,10 +102,10 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
     }
   }
 
-  function pickClass(ns: string, cls: string) {
+  function pickClass(ns: string, cls: string, prefill?: { field?: string; method?: string }) {
     setNamespaceName(ns)
     setClassName(cls)
-    void resolve(ns, cls)
+    void resolve(ns, cls, prefill)
   }
 
   // Walks every class in the currently picked assembly, resolving each one
@@ -114,26 +119,29 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
     if (selectedImage === null) return
     setIndexing(true)
     setIndexProgress('')
-    const entries: SearchIndexEntry[] = []
-    for (let i = 0; i < classes.length; i++) {
-      const c = classes[i]
-      setIndexProgress(`${i + 1}/${classes.length}`)
-      const handle = await window.tamper.monoResolveClass(c.namespaceName, c.className)
-      if (handle === null) continue
-      const [classFields, classMethods] = await Promise.all([
-        window.tamper.monoListFields(handle),
-        window.tamper.monoListMethods(handle)
-      ])
-      for (const f of classFields) {
-        entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'field', name: f })
+    try {
+      const entries: SearchIndexEntry[] = []
+      for (let i = 0; i < classes.length; i++) {
+        const c = classes[i]
+        setIndexProgress(`${i + 1}/${classes.length}`)
+        const handle = await window.tamper.monoResolveClass(c.namespaceName, c.className)
+        if (handle === null) continue
+        const [classFields, classMethods] = await Promise.all([
+          window.tamper.monoListFields(handle),
+          window.tamper.monoListMethods(handle)
+        ])
+        for (const f of classFields) {
+          entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'field', name: f })
+        }
+        for (const m of classMethods) {
+          entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'method', name: m })
+        }
       }
-      for (const m of classMethods) {
-        entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'method', name: m })
-      }
+      setSearchIndex(entries)
+    } finally {
+      setIndexing(false)
+      setIndexProgress('')
     }
-    setSearchIndex(entries)
-    setIndexing(false)
-    setIndexProgress('')
   }
 
   const searchResults = filterSearchIndex(searchIndex, searchQuery)
@@ -144,12 +152,11 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
   // reusing the existing "Use as value target"/"Use as patch anchor"
   // buttons rather than duplicating them here.
   function pickSearchResult(entry: SearchIndexEntry) {
-    pickClass(entry.namespaceName, entry.className)
-    if (entry.kind === 'field') {
-      setFieldFilter(entry.name)
-    } else {
-      setMethodFilter(entry.name)
-    }
+    pickClass(
+      entry.namespaceName,
+      entry.className,
+      entry.kind === 'field' ? { field: entry.name } : { method: entry.name }
+    )
   }
 
   useEffect(() => {
@@ -157,21 +164,25 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
     let cancelled = false
 
     async function poll() {
-      const result = await window.tamper.monoReadLiveValue(
-        watchHolderClass.trim(),
-        watchHolderField.trim(),
-        watchedField ?? undefined
-      )
-      if (!cancelled) setLiveValue(result)
+      try {
+        const result = await window.tamper.monoReadLiveValue(
+          watchHolderClass.trim(),
+          watchHolderField.trim(),
+          watchIsInstance ? (watchedField ?? undefined) : undefined
+        )
+        if (!cancelled) setLiveValue(result)
+      } catch {
+        if (!cancelled) setLiveValue(null)
+      }
     }
 
-    poll()
+    void poll()
     const timer = setInterval(poll, 500)
     return () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [watchedField, watchHolderClass, watchHolderField])
+  }, [watchedField, watchIsInstance, watchHolderClass, watchHolderField])
 
   const visibleFields = fields.filter((f) => f.toLowerCase().includes(fieldFilter.toLowerCase()))
   const visibleMethods = methods.filter((m) => m.toLowerCase().includes(methodFilter.toLowerCase()))
@@ -234,7 +245,7 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
               <ul style={{ maxHeight: 200, overflowY: 'auto' }}>
-                {searchResults.map((entry, i) => (
+                {searchResults.slice(0, 200).map((entry, i) => (
                   <li key={`${entry.className}-${entry.kind}-${entry.name}-${i}`}>
                     <button onClick={() => pickSearchResult(entry)}>
                       {entry.namespaceName ? `${entry.namespaceName}.` : ''}
@@ -245,6 +256,9 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
                 ))}
                 {searchQuery.trim() !== '' && searchResults.length === 0 && (
                   <li className="muted">No matches for &quot;{searchQuery}&quot;.</li>
+                )}
+                {searchResults.length > 200 && (
+                  <li className="muted">{searchResults.length - 200} more matches — refine your search.</li>
                 )}
               </ul>
             </>
@@ -307,6 +321,7 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
                   onClick={() => {
                     setWatchedField(f)
                     setWatchHolderClass(className)
+                    setWatchIsInstance(true)
                     setLiveValue(null)
                   }}
                 >
@@ -322,11 +337,27 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
           {watchedField && (
             <div className="banner" style={{ flexWrap: 'wrap' }}>
               <p style={{ flexBasis: '100%' }}>
-                Watching <code>{watchHolderClass}.{watchHolderField}</code> → <code>{watchedField}</code>.
-                If this field isn&apos;t reached through an object (it&apos;s itself static), set the
-                holder field below to the same name so it dereferences to itself — most fields worth
-                watching belong to an object, so this defaults to the common case.
+                {watchIsInstance ? (
+                  <>
+                    Watching <code>{watchHolderClass}.{watchHolderField}</code> dereferenced to an
+                    object, then reading its <code>{watchedField}</code> field — the common case, for a
+                    field that belongs to an object (e.g. the local player).
+                  </>
+                ) : (
+                  <>
+                    Watching <code>{watchHolderClass}.{watchHolderField}</code> directly, as a plain
+                    static field — no object to dereference.
+                  </>
+                )}
               </p>
+              <label style={{ flexBasis: '100%' }}>
+                <input
+                  type="checkbox"
+                  checked={watchIsInstance}
+                  onChange={(e) => setWatchIsInstance(e.target.checked)}
+                />{' '}
+                This field belongs to an object (e.g. the local player), not itself static
+              </label>
               <input
                 placeholder="Holder class, e.g. Player"
                 value={watchHolderClass}

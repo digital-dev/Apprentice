@@ -111,5 +111,6 @@ export async function resolveMonoLiveValue(
   if (raw === null) return null
 
   const buf = Buffer.from(raw, 'hex')
+  if (buf.length < 4) return null
   return { raw, int32: buf.readInt32LE(0), float: buf.readFloatLE(0) }
 }
