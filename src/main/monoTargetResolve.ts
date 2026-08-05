@@ -85,3 +85,31 @@ export async function resolveMonoPointerChain(
 
   return instancePointer
 }
+
+export interface MonoLiveValue {
+  raw: string
+  int32: number
+  float: number
+}
+
+// Reads whatever is currently stored at a MonoTarget's live address, decoded
+// two ways since Mono Explorer doesn't know a field's real type ahead of
+// time — the user recognizes which decoding looks right by watching it
+// change while playing (e.g. a stamina float sitting near 25.0, or a byte
+// flag reading 0/1 in the int32 view). Returns null on any resolution
+// failure, matching every other resolver in this file.
+export async function resolveMonoLiveValue(
+  target: MonoTarget,
+  handle: number,
+  monoDllBase: string,
+  ops: MonoResolverOps
+): Promise<MonoLiveValue | null> {
+  const address = await resolveMonoTargetAddress(target, handle, monoDllBase, ops)
+  if (address === null) return null
+
+  const raw = ops.readBytes(address, 4)
+  if (raw === null) return null
+
+  const buf = Buffer.from(raw, 'hex')
+  return { raw, int32: buf.readInt32LE(0), float: buf.readFloatLE(0) }
+}

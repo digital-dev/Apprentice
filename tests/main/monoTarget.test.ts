@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveMonoTargetAddress, resolveMonoPointerChain, MonoResolverOps } from '../../src/main/monoTargetResolve'
+import { resolveMonoTargetAddress, resolveMonoPointerChain, resolveMonoLiveValue, MonoResolverOps } from '../../src/main/monoTargetResolve'
 import type { MonoTarget } from '../../src/main/store'
 
 class FakeResolver implements MonoResolverOps {
@@ -136,5 +136,36 @@ describe('resolveMonoPointerChain', () => {
     ops.memory.set('0x' + (0x3000 + 2000).toString(16), '0000000000000000')
     const pointer = await resolveMonoPointerChain(1, '0x400000', 'Player', 'm_localPlayer', ops, 'm_skills')
     expect(pointer).toBeNull()
+  })
+})
+
+describe('resolveMonoLiveValue', () => {
+  it('reads and decodes the 4 bytes at a static field as both int32 and float', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('GameSettings', '0xc1')
+    ops.staticAddresses.set('0xc1.m_difficulty', '0x9000')
+    ops.memory.set('0x9000', '05000000') // int32 5, little-endian
+
+    const value = await resolveMonoLiveValue(staticOnlyTarget, 1, '0x400000', ops)
+    expect(value?.raw).toBe('05000000')
+    expect(value?.int32).toBe(5)
+  })
+
+  it('reads through an instance field the same way resolveMonoTargetAddress does', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.staticAddresses.set('0xc2.m_godMode', '1681')
+    ops.memory.set('0x9100', '5030000000000000')
+    ops.memory.set('0x' + (0x3050 + 1681).toString(16), '01000000')
+
+    const value = await resolveMonoLiveValue(godModeTarget, 1, '0x400000', ops)
+    expect(value?.int32).toBe(1)
+  })
+
+  it('returns null when the address does not resolve', async () => {
+    const ops = new FakeResolver()
+    const value = await resolveMonoLiveValue(staticOnlyTarget, 1, '0x400000', ops)
+    expect(value).toBeNull()
   })
 })
