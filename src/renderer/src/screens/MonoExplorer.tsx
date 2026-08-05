@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { filterSearchIndex, SearchIndexEntry } from '../monoSearchIndex'
 
 interface Props {
   onUseAsValueTarget: (className: string, fieldName: string) => void
@@ -32,6 +33,16 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
   const [classFilter, setClassFilter] = useState('')
   const [loadingClasses, setLoadingClasses] = useState(false)
   const [browseError, setBrowseError] = useState<string | null>(null)
+
+  const [searchIndex, setSearchIndex] = useState<SearchIndexEntry[]>([])
+  const [indexing, setIndexing] = useState(false)
+  const [indexProgress, setIndexProgress] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const [watchedField, setWatchedField] = useState<string | null>(null)
+  const [watchHolderClass, setWatchHolderClass] = useState('')
+  const [watchHolderField, setWatchHolderField] = useState('m_localPlayer')
+  const [liveValue, setLiveValue] = useState<{ raw: string; int32: number; float: number } | null>(null)
 
   async function resolve(ns: string, cls: string) {
     setError(null)
@@ -92,6 +103,76 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
     void resolve(ns, cls)
   }
 
+  // Walks every class in the currently picked assembly, resolving each one
+  // and recording its field/method names — sequential, not Promise.all, so
+  // a large assembly (Assembly-CSharp can have hundreds of classes) doesn't
+  // fire hundreds of concurrent native round-trips against a live process
+  // at once; indexProgress keeps this from looking hung on a big assembly.
+  // A class that fails to resolve (unlikely, since `classes` itself came
+  // from live metadata) is skipped rather than aborting the whole index.
+  async function buildSearchIndex() {
+    if (selectedImage === null) return
+    setIndexing(true)
+    setIndexProgress('')
+    const entries: SearchIndexEntry[] = []
+    for (let i = 0; i < classes.length; i++) {
+      const c = classes[i]
+      setIndexProgress(`${i + 1}/${classes.length}`)
+      const handle = await window.tamper.monoResolveClass(c.namespaceName, c.className)
+      if (handle === null) continue
+      const [classFields, classMethods] = await Promise.all([
+        window.tamper.monoListFields(handle),
+        window.tamper.monoListMethods(handle)
+      ])
+      for (const f of classFields) {
+        entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'field', name: f })
+      }
+      for (const m of classMethods) {
+        entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'method', name: m })
+      }
+    }
+    setSearchIndex(entries)
+    setIndexing(false)
+    setIndexProgress('')
+  }
+
+  const searchResults = filterSearchIndex(searchIndex, searchQuery)
+
+  // Jumps straight to a search hit: resolves its class (same as clicking it
+  // in the class list would) and pre-fills the matching field/method filter
+  // below so the exact hit surfaces first in that already-existing list,
+  // reusing the existing "Use as value target"/"Use as patch anchor"
+  // buttons rather than duplicating them here.
+  function pickSearchResult(entry: SearchIndexEntry) {
+    pickClass(entry.namespaceName, entry.className)
+    if (entry.kind === 'field') {
+      setFieldFilter(entry.name)
+    } else {
+      setMethodFilter(entry.name)
+    }
+  }
+
+  useEffect(() => {
+    if (watchedField === null) return
+    let cancelled = false
+
+    async function poll() {
+      const result = await window.tamper.monoReadLiveValue(
+        watchHolderClass.trim(),
+        watchHolderField.trim(),
+        watchedField ?? undefined
+      )
+      if (!cancelled) setLiveValue(result)
+    }
+
+    poll()
+    const timer = setInterval(poll, 500)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [watchedField, watchHolderClass, watchHolderField])
+
   const visibleFields = fields.filter((f) => f.toLowerCase().includes(fieldFilter.toLowerCase()))
   const visibleMethods = methods.filter((m) => m.toLowerCase().includes(methodFilter.toLowerCase()))
   const visibleAssemblies = assemblies.filter((a) =>
@@ -133,6 +214,41 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
               <li className="muted">No assemblies match &quot;{assemblyFilter}&quot;.</li>
             )}
           </ul>
+        </>
+      )}
+      {selectedImage && (
+        <>
+          <h3>Search this assembly</h3>
+          <button onClick={buildSearchIndex} disabled={indexing}>
+            {indexing
+              ? `Indexing… ${indexProgress}`
+              : searchIndex.length > 0
+                ? 'Rebuild index'
+                : 'Build search index'}
+          </button>
+          {searchIndex.length > 0 && (
+            <>
+              <input
+                placeholder="Search field/method names across every class…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <ul style={{ maxHeight: 200, overflowY: 'auto' }}>
+                {searchResults.map((entry, i) => (
+                  <li key={`${entry.className}-${entry.kind}-${entry.name}-${i}`}>
+                    <button onClick={() => pickSearchResult(entry)}>
+                      {entry.namespaceName ? `${entry.namespaceName}.` : ''}
+                      {entry.className}.{entry.name}
+                      {entry.kind === 'method' ? '()' : ''}
+                    </button>
+                  </li>
+                ))}
+                {searchQuery.trim() !== '' && searchResults.length === 0 && (
+                  <li className="muted">No matches for &quot;{searchQuery}&quot;.</li>
+                )}
+              </ul>
+            </>
+          )}
         </>
       )}
       {loadingClasses && <p className="muted">Loading classes…</p>}
@@ -187,6 +303,15 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
               <li key={`${f}-${i}`}>
                 {f}
                 <button onClick={() => onUseAsValueTarget(className, f)}>Use as value target</button>
+                <button
+                  onClick={() => {
+                    setWatchedField(f)
+                    setWatchHolderClass(className)
+                    setLiveValue(null)
+                  }}
+                >
+                  Watch live value
+                </button>
               </li>
             ))}
             {fields.length === 0 && <li className="muted">No fields found.</li>}
@@ -194,6 +319,37 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
               <li className="muted">No fields match &quot;{fieldFilter}&quot;.</li>
             )}
           </ul>
+          {watchedField && (
+            <div className="banner" style={{ flexWrap: 'wrap' }}>
+              <p style={{ flexBasis: '100%' }}>
+                Watching <code>{watchHolderClass}.{watchHolderField}</code> → <code>{watchedField}</code>.
+                If this field isn&apos;t reached through an object (it&apos;s itself static), set the
+                holder field below to the same name so it dereferences to itself — most fields worth
+                watching belong to an object, so this defaults to the common case.
+              </p>
+              <input
+                placeholder="Holder class, e.g. Player"
+                value={watchHolderClass}
+                onChange={(e) => setWatchHolderClass(e.target.value)}
+              />
+              <input
+                placeholder="Holder's static field, e.g. m_localPlayer"
+                value={watchHolderField}
+                onChange={(e) => setWatchHolderField(e.target.value)}
+              />
+              {liveValue ? (
+                <p style={{ flexBasis: '100%' }}>
+                  int32: <strong>{liveValue.int32}</strong> · float: <strong>{liveValue.float}</strong> ·
+                  raw: <code>{liveValue.raw}</code>
+                </p>
+              ) : (
+                <p style={{ flexBasis: '100%' }} className="muted">
+                  Not resolving yet — check the holder class/field above.
+                </p>
+              )}
+              <button onClick={() => setWatchedField(null)}>Stop watching</button>
+            </div>
+          )}
           <h3>Methods ({visibleMethods.length}/{methods.length})</h3>
           <input
             placeholder="Filter methods…"
