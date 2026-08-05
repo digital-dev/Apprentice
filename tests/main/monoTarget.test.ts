@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveMonoTargetAddress, MonoResolverOps } from '../../src/main/monoTargetResolve'
+import { resolveMonoTargetAddress, resolveMonoPointerChain, MonoResolverOps } from '../../src/main/monoTargetResolve'
 import type { MonoTarget } from '../../src/main/store'
 
 class FakeResolver implements MonoResolverOps {
@@ -76,5 +76,65 @@ describe('resolveMonoTargetAddress', () => {
     ops.memory.set('0x9100', '0000000000000000')
     const addr = await resolveMonoTargetAddress(godModeTarget, 1, '0x400000', ops)
     expect(addr).toBeNull()
+  })
+})
+
+describe('resolveMonoPointerChain', () => {
+  it('resolves a plain static pointer with no instance hop', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.memory.set('0x9100', '0030000000000000') // little-endian pointer 0x3000
+
+    const pointer = await resolveMonoPointerChain(1, '0x400000', 'Player', 'm_localPlayer', ops)
+    expect(pointer).toBe('0x3000')
+  })
+
+  it('follows one more instance field to a second object (the Skills:OnDeath shape)', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.staticAddresses.set('0xc2.m_skills', '2000') // field OFFSET, per store.ts's field-offset shape
+    ops.memory.set('0x9100', '0030000000000000') // Player instance pointer 0x3000
+    ops.memory.set('0x' + (0x3000 + 2000).toString(16), '0040000000000000') // Skills instance pointer 0x4000
+
+    const pointer = await resolveMonoPointerChain(1, '0x400000', 'Player', 'm_localPlayer', ops, 'm_skills')
+    expect(pointer).toBe('0x4000')
+  })
+
+  it('returns null when the class does not resolve', async () => {
+    const ops = new FakeResolver()
+    const pointer = await resolveMonoPointerChain(1, '0x400000', 'Player', 'm_localPlayer', ops, 'm_skills')
+    expect(pointer).toBeNull()
+  })
+
+  it('returns null when the first hop pointer reads as zero', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.memory.set('0x9100', '0000000000000000')
+    const pointer = await resolveMonoPointerChain(1, '0x400000', 'Player', 'm_localPlayer', ops, 'm_skills')
+    expect(pointer).toBeNull()
+  })
+
+  it('returns null when the second hop field is not found', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.memory.set('0x9100', '0030000000000000')
+    // no ops.staticAddresses entry for 0xc2.m_skills -> resolveField returns null
+    const pointer = await resolveMonoPointerChain(1, '0x400000', 'Player', 'm_localPlayer', ops, 'm_skills')
+    expect(pointer).toBeNull()
+  })
+
+  it('returns null when the second hop pointer reads as zero', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.staticAddresses.set('0xc2.m_skills', '2000')
+    ops.memory.set('0x9100', '0030000000000000')
+    ops.memory.set('0x' + (0x3000 + 2000).toString(16), '0000000000000000')
+    const pointer = await resolveMonoPointerChain(1, '0x400000', 'Player', 'm_localPlayer', ops, 'm_skills')
+    expect(pointer).toBeNull()
   })
 })

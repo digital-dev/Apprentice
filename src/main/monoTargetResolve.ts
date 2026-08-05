@@ -1,5 +1,6 @@
 import type { MonoTarget } from './store'
 import { littleEndianToBigInt } from './ipc'
+import { slotHexToPointer } from './patchEngine'
 
 export interface MonoResolverOps {
   resolveClass(handle: number, monoDllBase: string, namespaceName: string, className: string): Promise<string | null>
@@ -41,4 +42,46 @@ export async function resolveMonoTargetAddress(
   if (objectPointer === 0n) return null // the game hasn't set this yet this session
 
   return addHex('0x' + objectPointer.toString(16), BigInt(field.offset))
+}
+
+// Resolves a live object pointer by dereferencing a class's static field,
+// and optionally following ONE more instance field declared on that SAME
+// class to a second object — the Player.m_localPlayer -> .m_skills shape an
+// immune patch's arm value needs when the object it must compare against
+// isn't the player itself, but something the player owns (Skills:OnDeath's
+// `this` is the player's Skills instance, not the Player instance). Both
+// fields must belong to the same classHandle, exactly like
+// resolveMonoTargetAddress's instanceFieldName hop above — every failure
+// mode returns null, matching every other resolver in this file.
+export async function resolveMonoPointerChain(
+  handle: number,
+  monoDllBase: string,
+  className: string,
+  staticFieldName: string,
+  ops: MonoResolverOps,
+  instanceFieldName?: string
+): Promise<string | null> {
+  const classHandle = await ops.resolveClass(handle, monoDllBase, '', className)
+  if (classHandle === null) return null
+
+  const staticAddress = await ops.staticFieldAddress(handle, monoDllBase, classHandle, staticFieldName)
+  if (staticAddress === null) return null
+
+  const bytes = ops.readBytes(staticAddress, 8)
+  if (bytes === null) return null
+  const pointer = slotHexToPointer(bytes)
+  if (BigInt(pointer) === 0n) return null // the game hasn't set this yet this session
+
+  if (instanceFieldName === undefined) return pointer
+
+  const field = await ops.resolveField(handle, monoDllBase, classHandle, instanceFieldName)
+  if (field === null) return null
+
+  const fieldAddress = addHex(pointer, BigInt(field.offset))
+  const fieldBytes = ops.readBytes(fieldAddress, 8)
+  if (fieldBytes === null) return null
+  const instancePointer = slotHexToPointer(fieldBytes)
+  if (BigInt(instancePointer) === 0n) return null
+
+  return instancePointer
 }
