@@ -48,5 +48,7 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('mono:listClassesInImage', imageHandle),
   monoResolveMethodBytes: (className: string, methodName: string, length: number) =>
     ipcRenderer.invoke('mono:resolveMethodBytes', className, methodName, length),
+  monoReadLiveValue: (className: string, staticFieldName: string, instanceFieldName?: string) =>
+    ipcRenderer.invoke('mono:readLiveValue', className, staticFieldName, instanceFieldName),
   importCheatTable: (exeName: string) => ipcRenderer.invoke('ct:import', exeName)
 })

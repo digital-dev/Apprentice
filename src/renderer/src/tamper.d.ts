@@ -126,6 +126,17 @@ declare global {
         methodName: string,
         length: number
       ) => Promise<{ bytes: string; length: number } | null>
+      // Reads the CURRENT value at a Mono-resolved field, decoded as both
+      // int32 and float (Explorer doesn't know the field's real type ahead
+      // of time) — for watching a field change live while playing, to
+      // recognize which one it is. Same static/instance-field shape as a
+      // MonoTarget value cheat (see store.ts's MonoTarget). Null if the
+      // runtime isn't attached or either field doesn't resolve.
+      monoReadLiveValue: (
+        className: string,
+        staticFieldName: string,
+        instanceFieldName?: string
+      ) => Promise<{ raw: string; int32: number; float: number } | null>
       // Opens a native file picker for a .CT file and imports every
       // recognizable entry as a force-mode patch, saving them immediately.
       // Null if the user cancelled the file picker; otherwise a summary of

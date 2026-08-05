@@ -20,7 +20,13 @@ import { importCheatTable } from './ctImport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
 import { monoResolver } from './monoResolver'
-import { resolveMonoTargetAddress, resolveMonoPointerChain, MonoResolverOps } from './monoTargetResolve'
+import {
+  resolveMonoTargetAddress,
+  resolveMonoPointerChain,
+  resolveMonoLiveValue,
+  MonoLiveValue,
+  MonoResolverOps
+} from './monoTargetResolve'
 import {
   loadProfile,
   recordModuleFingerprint,
@@ -762,6 +768,24 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       const base = monoDllBase()
       if (base === null) return null
       return resolveMonoPointer(attachedHandle, base, className, fieldName, instanceFieldName)
+    }
+  )
+
+  ipcMain.handle(
+    'mono:readLiveValue',
+    async (
+      _e,
+      className: string,
+      staticFieldName: string,
+      instanceFieldName?: string
+    ): Promise<MonoLiveValue | null> => {
+      if (attachedHandle === null) return null
+      const base = monoDllBase()
+      if (base === null) return null
+      const target: MonoTarget = instanceFieldName
+        ? { kind: 'mono', className, staticFieldName, instanceFieldName }
+        : { kind: 'mono', className, staticFieldName }
+      return resolveMonoLiveValue(target, attachedHandle, base, monoOps)
     }
   )
 
