@@ -191,6 +191,8 @@ export default function CheatList({
   const [monoAnchorBaseRegister, setMonoAnchorBaseRegister] = useState('rcx')
   const [monoAnchorPlayerClass, setMonoAnchorPlayerClass] = useState('Player')
   const [monoAnchorPlayerField, setMonoAnchorPlayerField] = useState('m_localPlayer')
+  const [monoAnchorUseInstanceField, setMonoAnchorUseInstanceField] = useState(false)
+  const [monoAnchorPlayerInstanceField, setMonoAnchorPlayerInstanceField] = useState('')
   const [monoAnchorArmValue, setMonoAnchorArmValue] = useState<string | null>(null)
   const [monoAnchorResolvingArm, setMonoAnchorResolvingArm] = useState(false)
   const [monoAnchorArmError, setMonoAnchorArmError] = useState<string | null>(null)
@@ -257,14 +259,18 @@ export default function CheatList({
     setMonoAnchorArmError(null)
     setMonoAnchorResolvingArm(true)
     try {
+      const instanceField = monoAnchorUseInstanceField ? monoAnchorPlayerInstanceField.trim() : undefined
       const pointer = await window.tamper.monoResolvePlayerPointer(
         monoAnchorPlayerClass,
-        monoAnchorPlayerField
+        monoAnchorPlayerField,
+        instanceField
       )
       if (pointer === null) {
         setMonoAnchorArmValue(null)
         setMonoAnchorArmError(
-          `Could not resolve ${monoAnchorPlayerClass}.${monoAnchorPlayerField} — is the runtime attached and has a local player loaded yet?`
+          instanceField
+            ? `Could not resolve ${monoAnchorPlayerClass}.${monoAnchorPlayerField} -> .${instanceField} — either the runtime isn't attached yet, ${monoAnchorPlayerClass} has no static field ${monoAnchorPlayerField} or no instance field ${instanceField}, or the local player hasn't loaded this session.`
+            : `Could not resolve ${monoAnchorPlayerClass}.${monoAnchorPlayerField} — is the runtime attached and has a local player loaded yet?`
         )
         return
       }
@@ -671,7 +677,10 @@ export default function CheatList({
             // a dead pointer from the previous process instance.
             armValue: monoAnchorArmValue as string,
             armPointerClassName: monoAnchorPlayerClass.trim(),
-            armPointerFieldName: monoAnchorPlayerField.trim()
+            armPointerFieldName: monoAnchorPlayerField.trim(),
+            ...(monoAnchorUseInstanceField && monoAnchorPlayerInstanceField.trim()
+              ? { armPointerInstanceFieldName: monoAnchorPlayerInstanceField.trim() }
+              : {})
           }
         : {})
     }
@@ -683,6 +692,8 @@ export default function CheatList({
     setMonoAnchorMode('nop')
     setMonoAnchorArmValue(null)
     setMonoAnchorArmError(null)
+    setMonoAnchorUseInstanceField(false)
+    setMonoAnchorPlayerInstanceField('')
     onConsumePendingMonoSelection?.()
   }
 
@@ -872,9 +883,36 @@ export default function CheatList({
                   setMonoAnchorArmValue(null)
                 }}
               />
+              <label style={{ flexBasis: '100%' }}>
+                <input
+                  type="checkbox"
+                  checked={monoAnchorUseInstanceField}
+                  onChange={(e) => {
+                    setMonoAnchorUseInstanceField(e.target.checked)
+                    setMonoAnchorArmValue(null)
+                  }}
+                />{' '}
+                Reached through an instance field on that object (e.g. the local player&apos;s own
+                Skills, not the player itself)
+              </label>
+              {monoAnchorUseInstanceField && (
+                <input
+                  placeholder="Instance field on that same class, e.g. m_skills"
+                  value={monoAnchorPlayerInstanceField}
+                  onChange={(e) => {
+                    setMonoAnchorPlayerInstanceField(e.target.value)
+                    setMonoAnchorArmValue(null)
+                  }}
+                />
+              )}
               <button
                 onClick={resolveMonoAnchorArmValue}
-                disabled={!monoAnchorPlayerClass || !monoAnchorPlayerField || monoAnchorResolvingArm}
+                disabled={
+                  !monoAnchorPlayerClass ||
+                  !monoAnchorPlayerField ||
+                  (monoAnchorUseInstanceField && !monoAnchorPlayerInstanceField.trim()) ||
+                  monoAnchorResolvingArm
+                }
               >
                 {monoAnchorResolvingArm ? 'Resolving…' : 'Resolve player pointer'}
               </button>
