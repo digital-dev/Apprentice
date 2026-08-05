@@ -165,9 +165,14 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
 
     async function poll() {
       try {
+        // Instance mode: watchHolderField is the STATIC field holding the
+        // owning object (e.g. m_localPlayer), watchedField is the instance
+        // field to read off it. Static mode: watchedField itself IS the
+        // static field to read directly — watchHolderField plays no part,
+        // since there's no object to dereference through.
         const result = await window.tamper.monoReadLiveValue(
           watchHolderClass.trim(),
-          watchHolderField.trim(),
+          watchIsInstance ? watchHolderField.trim() : (watchedField ?? ''),
           watchIsInstance ? (watchedField ?? undefined) : undefined
         )
         if (!cancelled) setLiveValue(result)
@@ -345,7 +350,7 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
                   </>
                 ) : (
                   <>
-                    Watching <code>{watchHolderClass}.{watchHolderField}</code> directly, as a plain
+                    Watching <code>{watchHolderClass}.{watchedField}</code> directly, as a plain
                     static field — no object to dereference.
                   </>
                 )}
@@ -363,11 +368,13 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
                 value={watchHolderClass}
                 onChange={(e) => setWatchHolderClass(e.target.value)}
               />
-              <input
-                placeholder="Holder's static field, e.g. m_localPlayer"
-                value={watchHolderField}
-                onChange={(e) => setWatchHolderField(e.target.value)}
-              />
+              {watchIsInstance && (
+                <input
+                  placeholder="Holder's static field, e.g. m_localPlayer"
+                  value={watchHolderField}
+                  onChange={(e) => setWatchHolderField(e.target.value)}
+                />
+              )}
               {liveValue ? (
                 <p style={{ flexBasis: '100%' }}>
                   int32: <strong>{liveValue.int32}</strong> · float: <strong>{liveValue.float}</strong> ·
