@@ -97,6 +97,17 @@ declare global {
       // Null if the runtime isn't attached, the class/field isn't found, or
       // the field hasn't been set yet (no local player this session).
       monoResolvePlayerPointer: (className: string, fieldName: string) => Promise<string | null>
+      // Every loaded assembly's image handle paired with a human-readable
+      // name (e.g. "assembly_valheim") — for a picker, instead of the
+      // opaque handle-only list monoListAssemblies (unused directly by the
+      // UI) would give.
+      monoListAssemblyNames: () => Promise<{ image: string; name: string }[]>
+      // Every (namespace, className) pair in the given image — walks the
+      // assembly's own TypeDef metadata table, not a cached/precomputed
+      // list, so it reflects whatever the runtime actually has loaded.
+      monoListClassesInImage: (
+        imageHandle: string
+      ) => Promise<{ namespaceName: string; className: string }[]>
       // Reads `length` bytes from the method's CURRENT live entry address,
       // for auto-filling a Mono-anchored patch's originalBytes/length
       // instead of requiring an external disassembler. Null on the same
@@ -108,6 +119,13 @@ declare global {
         methodName: string,
         length: number
       ) => Promise<{ bytes: string; length: number } | null>
+      // Opens a native file picker for a .CT file and imports every
+      // recognizable entry as a force-mode patch, saving them immediately.
+      // Null if the user cancelled the file picker; otherwise a summary of
+      // what was imported and what was skipped (with why).
+      importCheatTable: (
+        exeName: string
+      ) => Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | null>
     }
   }
 }

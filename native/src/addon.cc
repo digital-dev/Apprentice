@@ -91,6 +91,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monoListFieldNames", Napi::Function::New(env, MonoListFieldNames));
   exports.Set("monoListMethodNames", Napi::Function::New(env, MonoListMethodNames));
   exports.Set("monoListAssemblies", Napi::Function::New(env, MonoListAssemblies));
+  exports.Set("monoListAssemblyNames", Napi::Function::New(env, MonoListAssemblyNames));
+  exports.Set("monoListClassesInImage", Napi::Function::New(env, MonoListClassesInImage));
+  exports.Set("monoCallAttached", Napi::Function::New(env, MonoCallAttached));
   return exports;
 }
 

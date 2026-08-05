@@ -213,5 +213,15 @@ export const nativeAddon = {
   monoListMethodNames: (handle: number, monoDllBase: string, classHandle: string): Promise<string[]> =>
     addon.monoListMethodNames(handle, monoDllBase, classHandle),
   monoListAssemblies: (handle: number, monoDllBase: string): Promise<string[]> =>
-    addon.monoListAssemblies(handle, monoDllBase)
+    addon.monoListAssemblies(handle, monoDllBase),
+  monoListAssemblyNames: (
+    handle: number,
+    monoDllBase: string
+  ): Promise<{ image: string; name: string }[]> => addon.monoListAssemblyNames(handle, monoDllBase),
+  monoListClassesInImage: (
+    handle: number,
+    monoDllBase: string,
+    imageHandle: string
+  ): Promise<{ namespaceName: string; className: string }[]> =>
+    addon.monoListClassesInImage(handle, monoDllBase, imageHandle)
 }

@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, dialog } from 'electron'
+import fs from 'node:fs'
 import { nativeAddon, Candidate } from './nativeAddon'
 import {
   loadCheats,
@@ -15,6 +16,7 @@ import {
   patchMode,
   isPatchCheat
 } from './store'
+import { importCheatTable } from './ctImport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
 import { monoResolver } from './monoResolver'
@@ -737,6 +739,20 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     return monoResolver.listMethodNames(attachedHandle, base, classHandle)
   })
 
+  ipcMain.handle('mono:listAssemblyNames', async () => {
+    if (attachedHandle === null) return []
+    const base = monoDllBase()
+    if (base === null) return []
+    return monoResolver.listAssemblyNames(attachedHandle, base)
+  })
+
+  ipcMain.handle('mono:listClassesInImage', async (_e, imageHandle: string) => {
+    if (attachedHandle === null) return []
+    const base = monoDllBase()
+    if (base === null) return []
+    return monoResolver.listClassesInImage(attachedHandle, base, imageHandle)
+  })
+
   ipcMain.handle(
     'mono:resolvePlayerPointer',
     async (_e, className: string, fieldName: string): Promise<string | null> => {
@@ -776,6 +792,39 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       const bytes = nativeAddon.tryReadBytes(attachedHandle, address, length)
       if (bytes === null) return null
       return { bytes, length }
+    }
+  )
+
+  // Opens a native file picker for a .CT file, converts every recognizable
+  // entry (see ctImport.ts's module comment for exactly which shape) into
+  // a force-mode PatchCheat, and saves them immediately — matching how
+  // every other bulk write in this app works (no separate "confirm"
+  // step). Returns a summary for the renderer to display, not the full
+  // patch objects; the saved cheats themselves are picked up the normal
+  // way, through cheats:load's existing reactive flow.
+  ipcMain.handle(
+    'ct:import',
+    async (
+      _e,
+      exeName: string
+    ): Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | null> => {
+      const result = await dialog.showOpenDialog(getWindow(), {
+        title: 'Import Cheat Engine table',
+        filters: [{ name: 'Cheat Table', extensions: ['CT', 'ct'] }],
+        properties: ['openFile']
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+
+      let xml: string
+      try {
+        xml = fs.readFileSync(result.filePaths[0], 'utf8')
+      } catch (err) {
+        return { importedNames: [], skipped: [{ description: result.filePaths[0], reason: String(err) }] }
+      }
+
+      const { imported, skipped } = importCheatTable(xml)
+      for (const patch of imported) saveCheat(exeName, patch)
+      return { importedNames: imported.map((p) => p.name), skipped }
     }
   )
 

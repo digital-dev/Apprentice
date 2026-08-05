@@ -197,6 +197,31 @@ export default function CheatList({
   const [monoAnchorResolvingBytes, setMonoAnchorResolvingBytes] = useState(false)
   const [monoAnchorBytesError, setMonoAnchorBytesError] = useState<string | null>(null)
 
+  const [ctImporting, setCtImporting] = useState(false)
+  const [ctImportResult, setCtImportResult] = useState<{
+    importedNames: string[]
+    skipped: { description: string; reason: string }[]
+  } | null>(null)
+
+  async function importCheatTable() {
+    setCtImporting(true)
+    setCtImportResult(null)
+    try {
+      const result = await window.tamper.importCheatTable(exeName)
+      if (result === null) return // user cancelled the file picker
+      setCtImportResult(result)
+      // Saved directly by the main process (see ipc.ts's ct:import) —
+      // reload from disk rather than reconstructing PatchCheat objects
+      // here, so this stays in sync with whatever the save path actually
+      // persisted.
+      const all: StoredCheat[] = await window.tamper.loadCheats(exeName)
+      setCheats(all.filter((c): c is CheatDefinition => !isPatch(c)))
+      setPatches(all.filter(isPatch))
+    } finally {
+      setCtImporting(false)
+    }
+  }
+
   // 16 bytes is a generous, fixed snapshot of the method's live entry —
   // there's no need to hit an exact instruction boundary here (unlike nop
   // mode's direct overwrite): this only ever feeds locate()'s byte-for-byte
@@ -673,6 +698,38 @@ export default function CheatList({
       )}
       <button onClick={onOpenScanner}>+ New cheat</button>
       {onOpenMonoExplorer && <button onClick={onOpenMonoExplorer}>Mono Explorer</button>}
+      <button onClick={importCheatTable} disabled={ctImporting}>
+        {ctImporting ? 'Importing…' : 'Import Cheat Table (.CT)'}
+      </button>
+
+      {ctImportResult && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            Imported {ctImportResult.importedNames.length} cheat
+            {ctImportResult.importedNames.length === 1 ? '' : 's'}
+            {ctImportResult.skipped.length > 0
+              ? `, skipped ${ctImportResult.skipped.length} (not the simple "replace one write with a fixed value" shape this importer supports).`
+              : '.'}
+          </p>
+          {ctImportResult.importedNames.length > 0 && (
+            <ul style={{ flexBasis: '100%' }}>
+              {ctImportResult.importedNames.map((name) => (
+                <li key={name}>✓ {name}</li>
+              ))}
+            </ul>
+          )}
+          {ctImportResult.skipped.length > 0 && (
+            <ul style={{ flexBasis: '100%' }}>
+              {ctImportResult.skipped.map((s, i) => (
+                <li key={`${s.description}-${i}`} className="muted">
+                  {s.description} — {s.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button onClick={() => setCtImportResult(null)}>Dismiss</button>
+        </div>
+      )}
 
       {pendingMonoSelection?.kind === 'value' && (
         <div className="banner" style={{ flexWrap: 'wrap' }}>

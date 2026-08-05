@@ -129,3 +129,67 @@ describe('monoListFieldNames / monoListMethodNames', () => {
     expect(names).toEqual(['ApplyDamage'])
   })
 })
+
+describe('monoCallAttached', () => {
+  it('calls an arbitrary function on an attached thread and captures its float return (XMM0)', async () => {
+    const fn = await (addon as any).resolveExport(handle, monoBase, 'probe_get_float')
+    const result = await (addon as any).monoCallAttached(handle, monoBase, fn, ['0x1234'])
+    expect(result.float).toBeCloseTo(42.5, 5)
+  })
+
+  it('calls an arbitrary function on an attached thread and captures its integer return (RAX)', async () => {
+    const fn = await (addon as any).resolveExport(handle, monoBase, 'probe_get_int')
+    const result = await (addon as any).monoCallAttached(handle, monoBase, fn, ['0x1234'])
+    expect(result.int).toBe('0x1235') // probe_get_int returns obj + 1
+  })
+
+  it('resolves null when the target function address does not exist', async () => {
+    const result = await (addon as any).monoCallAttached(handle, monoBase, '0x1', [])
+    expect(result).toBeNull()
+  })
+
+  it('passes a float argument in the correct positional XMM register (position 2 -> XMM1)', async () => {
+    // probe_set_float(void* obj, float value) doubles and returns value —
+    // proves the float genuinely arrived via XMM1, not garbage from
+    // whatever the args[] placeholder or a stale register held.
+    const fn = await (addon as any).resolveExport(handle, monoBase, 'probe_set_float')
+    const result = await (addon as any).monoCallAttached(handle, monoBase, fn, ['0x1234', '0x0'], 1, 21.5)
+    expect(result.float).toBeCloseTo(43.0, 4)
+  })
+})
+
+describe('monoListAssemblyNames', () => {
+  it('pairs every assembly image handle with a human-readable name', async () => {
+    const results = await (addon as any).monoListAssemblyNames(handle, monoBase)
+    expect(results).toHaveLength(2)
+    const names = results.map((r: any) => r.name).sort()
+    expect(names).toEqual(['FakeAssemblyA', 'FakeAssemblyB'])
+    for (const r of results) {
+      expect(r.image).toMatch(/^0x[0-9a-f]+$/)
+    }
+  })
+})
+
+describe('monoListClassesInImage', () => {
+  it('lists every class in the given image, scoped to that image only', async () => {
+    const assemblies = await (addon as any).monoListAssemblyNames(handle, monoBase)
+    const a = assemblies.find((r: any) => r.name === 'FakeAssemblyA')
+    const classesA = await (addon as any).monoListClassesInImage(handle, monoBase, a.image)
+    expect(classesA).toEqual([{ namespaceName: '', className: 'Player' }])
+
+    const b = assemblies.find((r: any) => r.name === 'FakeAssemblyB')
+    const classesB = await (addon as any).monoListClassesInImage(handle, monoBase, b.image)
+    expect(classesB).toEqual([{ namespaceName: '', className: 'Character' }])
+  })
+
+  it('resolves the same class token->address arithmetic real Mono callers rely on', async () => {
+    // Exercises the row+1 / MONO_TOKEN_TYPE_DEF token math against the
+    // fixture's own decoding of it (see probe_mono.c's mono_class_get) —
+    // a genuinely independent check of the arithmetic, not just "some
+    // class came back".
+    const assemblies = await (addon as any).monoListAssemblyNames(handle, monoBase)
+    const a = assemblies.find((r: any) => r.name === 'FakeAssemblyA')
+    const classes = await (addon as any).monoListClassesInImage(handle, monoBase, a.image)
+    expect(classes.map((c: any) => c.className)).toContain('Player')
+  })
+})
