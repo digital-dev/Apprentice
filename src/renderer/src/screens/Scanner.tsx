@@ -189,8 +189,23 @@ export default function Scanner({
   async function startWatch(address: string) {
     setWatchAddress(address)
     setCaught([])
-    setWatching(true)
-    await window.tamper.startWriteWatch(address)
+    setCaptureError(null)
+    // watching is only set true once the attach actually succeeds — setting
+    // it first (as this used to) leaves the UI showing "Watching..." forever
+    // on a failed attach (bad pid, access denied, or — very commonly, since
+    // Windows allows only one debugger per process — another debugger, like
+    // Cheat Engine, already attached to this same target), with zero
+    // possible catches and no visible error explaining why.
+    try {
+      await window.tamper.startWriteWatch(address)
+      setWatching(true)
+    } catch (err) {
+      setCaptureError(
+        `Could not start watching: ${(err as Error).message}. If Cheat Engine (or any other ` +
+          'debugger) is attached to this process, close it first — Windows only allows one ' +
+          'debugger per process at a time.'
+      )
+    }
   }
 
   useEffect(() => {
@@ -437,6 +452,7 @@ export default function Scanner({
           ) : (
             <button onClick={() => startWatch(watchAddress)}>Re-arm</button>
           )}
+          {captureError && <p style={{ color: 'var(--error)' }}>{captureError}</p>}
           <p>{caught.length} instruction(s) caught</p>
           {caught.length > 0 && (
             <div>
@@ -561,7 +577,6 @@ export default function Scanner({
               onChange={(e) => setCaptureName(e.target.value)}
             />
           )}
-          {captureError && <p style={{ color: 'var(--error)' }}>{captureError}</p>}
         </div>
       )}
 
