@@ -236,10 +236,16 @@ export const nativeAddon = {
     handle: number,
     monoDllBase: string
   ): Promise<{ image: string; name: string }[]> => addon.monoListAssemblyNames(handle, monoDllBase),
+  // classHandle is the class's own resolved MonoClass* — the TypeDef walk
+  // behind this already produces it (mono_class_get, per row) to get the
+  // name/namespace it returns anyway; returning it too means a caller can
+  // use the class directly instead of a second, separate, ambiguous-by-name
+  // monoResolveClass call for it. See mono_bridge.cc's ClassEntry comment
+  // for the bug that silently resolving the wrong same-named class caused.
   monoListClassesInImage: (
     handle: number,
     monoDllBase: string,
     imageHandle: string
-  ): Promise<{ namespaceName: string; className: string }[]> =>
+  ): Promise<{ namespaceName: string; className: string; classHandle: string }[]> =>
     addon.monoListClassesInImage(handle, monoDllBase, imageHandle)
 }

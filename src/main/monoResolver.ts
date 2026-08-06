@@ -55,6 +55,6 @@ export const monoResolver = {
     handle: number,
     monoDllBase: string,
     imageHandle: string
-  ): Promise<{ namespaceName: string; className: string }[]> =>
+  ): Promise<{ namespaceName: string; className: string; classHandle: string }[]> =>
     nativeAddon.monoListClassesInImage(handle, monoDllBase, imageHandle)
 }

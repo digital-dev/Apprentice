@@ -175,11 +175,17 @@ describe('monoListClassesInImage', () => {
     const assemblies = await (addon as any).monoListAssemblyNames(handle, monoBase)
     const a = assemblies.find((r: any) => r.name === 'FakeAssemblyA')
     const classesA = await (addon as any).monoListClassesInImage(handle, monoBase, a.image)
-    expect(classesA).toEqual([{ namespaceName: '', className: 'Player' }])
+    expect(classesA).toHaveLength(1)
+    expect(classesA[0].namespaceName).toBe('')
+    expect(classesA[0].className).toBe('Player')
+    expect(classesA[0].classHandle).toMatch(/^0x[0-9a-f]+$/)
 
     const b = assemblies.find((r: any) => r.name === 'FakeAssemblyB')
     const classesB = await (addon as any).monoListClassesInImage(handle, monoBase, b.image)
-    expect(classesB).toEqual([{ namespaceName: '', className: 'Character' }])
+    expect(classesB).toHaveLength(1)
+    expect(classesB[0].namespaceName).toBe('')
+    expect(classesB[0].className).toBe('Character')
+    expect(classesB[0].classHandle).toMatch(/^0x[0-9a-f]+$/)
   })
 
   it('resolves the same class token->address arithmetic real Mono callers rely on', async () => {
@@ -191,5 +197,21 @@ describe('monoListClassesInImage', () => {
     const a = assemblies.find((r: any) => r.name === 'FakeAssemblyA')
     const classes = await (addon as any).monoListClassesInImage(handle, monoBase, a.image)
     expect(classes.map((c: any) => c.className)).toContain('Player')
+  })
+
+  // The whole point of returning classHandle at all: it must be the SAME
+  // handle a name-only monoResolveClass would produce for that class, so a
+  // caller can use it directly (Explorer's "Use as value target"/"Use as
+  // patch anchor", or search-index building) instead of a second, separate
+  // resolve — the ambiguous-by-name resolve that silently picked the wrong
+  // same-named class over and over while indexing.
+  it('classHandle matches what monoResolveClass produces for the same class', async () => {
+    const assemblies = await (addon as any).monoListAssemblyNames(handle, monoBase)
+    const a = assemblies.find((r: any) => r.name === 'FakeAssemblyA')
+    const classes = await (addon as any).monoListClassesInImage(handle, monoBase, a.image)
+    const player = classes.find((c: any) => c.className === 'Player')
+
+    const resolved = await (addon as any).monoResolveClass(handle, monoBase, '', 'Player')
+    expect(player.classHandle).toBe(resolved)
   })
 })

@@ -29,7 +29,9 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
   const [assemblyFilter, setAssemblyFilter] = useState('')
   const [loadingAssemblies, setLoadingAssemblies] = useState(false)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
-  const [classes, setClasses] = useState<{ namespaceName: string; className: string }[]>([])
+  const [classes, setClasses] = useState<
+    { namespaceName: string; className: string; classHandle: string }[]
+  >([])
   const [classFilter, setClassFilter] = useState('')
   const [loadingClasses, setLoadingClasses] = useState(false)
   const [browseError, setBrowseError] = useState<string | null>(null)
@@ -50,12 +52,24 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
   // monoClassLocations for the real bug this exists to catch).
   const [classAmbiguity, setClassAmbiguity] = useState<string[] | null>(null)
 
-  async function resolve(ns: string, cls: string, prefill?: { field?: string; method?: string }) {
+  // knownHandle: when the caller already has the class's own handle — from
+  // Browse's class list, which the TypeDef walk resolves directly — skip
+  // the ambiguous name-only monoResolveClass call entirely instead of
+  // re-resolving a class we've already unambiguously found. Only "type it
+  // directly" leaves this unset, since typing a name really is ambiguous
+  // (see classAmbiguity below) — that's the one path with nothing better
+  // to go on.
+  async function resolve(
+    ns: string,
+    cls: string,
+    prefill?: { field?: string; method?: string },
+    knownHandle?: string
+  ) {
     setError(null)
     setResolving(true)
     setClassAmbiguity(null)
     try {
-      const handle = await window.tamper.monoResolveClass(ns, cls)
+      const handle = knownHandle ?? (await window.tamper.monoResolveClass(ns, cls))
       if (handle === null) {
         setError(
           `Could not resolve ${ns ? ns + '.' : ''}${cls} — is the runtime attached and this class loaded yet?`
@@ -70,8 +84,13 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
       setMethods((await window.tamper.monoListMethods(handle)).sort((a, b) => a.localeCompare(b)))
       setFieldFilter(prefill?.field ?? '')
       setMethodFilter(prefill?.method ?? '')
-      const locations = await window.tamper.monoClassLocations(cls)
-      if (locations.length > 1) setClassAmbiguity(locations)
+      // A class reached via a known handle was already found in ONE
+      // specific assembly — there's nothing ambiguous about it, regardless
+      // of whether its bare name also exists elsewhere.
+      if (knownHandle === undefined) {
+        const locations = await window.tamper.monoClassLocations(cls)
+        if (locations.length > 1) setClassAmbiguity(locations)
+      }
     } finally {
       setResolving(false)
     }
@@ -110,19 +129,31 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
     }
   }
 
-  function pickClass(ns: string, cls: string, prefill?: { field?: string; method?: string }) {
+  function pickClass(
+    ns: string,
+    cls: string,
+    prefill?: { field?: string; method?: string },
+    knownHandle?: string
+  ) {
     setNamespaceName(ns)
     setClassName(cls)
-    void resolve(ns, cls, prefill)
+    void resolve(ns, cls, prefill, knownHandle)
   }
 
-  // Walks every class in the currently picked assembly, resolving each one
-  // and recording its field/method names — sequential, not Promise.all, so
-  // a large assembly (Assembly-CSharp can have hundreds of classes) doesn't
-  // fire hundreds of concurrent native round-trips against a live process
-  // at once; indexProgress keeps this from looking hung on a big assembly.
-  // A class that fails to resolve (unlikely, since `classes` itself came
-  // from live metadata) is skipped rather than aborting the whole index.
+  // Walks every class in the currently picked assembly, using each one's
+  // OWN handle (already known from Browse's class list — monoListClasses
+  // InImage's TypeDef walk resolves it directly) to record its field/method
+  // names. Deliberately does NOT re-resolve by name: a name-only
+  // monoResolveClass search is ambiguous across every loaded assembly, and
+  // a compiler-generated closure class like "<>c" exists dozens of times
+  // in a real assembly, all sharing that exact name — re-resolving "<>c" by
+  // name for each of those rows would silently return the SAME wrong match
+  // every time, producing a pile of identical, useless index entries
+  // instead of each row's real fields/methods. Sequential, not
+  // Promise.all, so a large assembly (Assembly-CSharp can have hundreds of
+  // classes) doesn't fire hundreds of concurrent native round-trips against
+  // a live process at once; indexProgress keeps this from looking hung on
+  // a big assembly.
   async function buildSearchIndex() {
     if (selectedImage === null) return
     setIndexing(true)
@@ -132,17 +163,28 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
       for (let i = 0; i < classes.length; i++) {
         const c = classes[i]
         setIndexProgress(`${i + 1}/${classes.length}`)
-        const handle = await window.tamper.monoResolveClass(c.namespaceName, c.className)
-        if (handle === null) continue
+        const handle = c.classHandle
         const [classFields, classMethods] = await Promise.all([
           window.tamper.monoListFields(handle),
           window.tamper.monoListMethods(handle)
         ])
         for (const f of classFields) {
-          entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'field', name: f })
+          entries.push({
+            namespaceName: c.namespaceName,
+            className: c.className,
+            classHandle: c.classHandle,
+            kind: 'field',
+            name: f
+          })
         }
         for (const m of classMethods) {
-          entries.push({ namespaceName: c.namespaceName, className: c.className, kind: 'method', name: m })
+          entries.push({
+            namespaceName: c.namespaceName,
+            className: c.className,
+            classHandle: c.classHandle,
+            kind: 'method',
+            name: m
+          })
         }
       }
       setSearchIndex(entries)
@@ -154,16 +196,18 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
 
   const searchResults = filterSearchIndex(searchIndex, searchQuery)
 
-  // Jumps straight to a search hit: resolves its class (same as clicking it
-  // in the class list would) and pre-fills the matching field/method filter
-  // below so the exact hit surfaces first in that already-existing list,
-  // reusing the existing "Use as value target"/"Use as patch anchor"
-  // buttons rather than duplicating them here.
+  // Jumps straight to a search hit using its ALREADY-known classHandle (the
+  // same one buildSearchIndex used to find this field/method — no second,
+  // ambiguous-by-name resolve needed), and pre-fills the matching
+  // field/method filter below so the exact hit surfaces first in that
+  // already-existing list, reusing the existing "Use as value
+  // target"/"Use as patch anchor" buttons rather than duplicating them here.
   function pickSearchResult(entry: SearchIndexEntry) {
     pickClass(
       entry.namespaceName,
       entry.className,
-      entry.kind === 'field' ? { field: entry.name } : { method: entry.name }
+      entry.kind === 'field' ? { field: entry.name } : { method: entry.name },
+      entry.classHandle
     )
   }
 
@@ -281,6 +325,7 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
       {loadingClasses && <p className="muted">Loading classes…</p>}
       {selectedImage && !loadingClasses && (
         <>
+          <h3>Browse this assembly&apos;s classes</h3>
           <input
             placeholder="Filter classes…"
             value={classFilter}
@@ -289,7 +334,7 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
           <ul style={{ maxHeight: 200, overflowY: 'auto' }}>
             {visibleClasses.map((c) => (
               <li key={`${c.namespaceName}.${c.className}`}>
-                <button onClick={() => pickClass(c.namespaceName, c.className)}>
+                <button onClick={() => pickClass(c.namespaceName, c.className, undefined, c.classHandle)}>
                   {c.namespaceName ? `${c.namespaceName}.${c.className}` : c.className}
                 </button>
               </li>

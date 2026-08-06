@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { filterSearchIndex, SearchIndexEntry } from '../../src/renderer/src/monoSearchIndex'
 
 const fixture: SearchIndexEntry[] = [
-  { namespaceName: '', className: 'Player', kind: 'field', name: 'm_ghostMode' },
-  { namespaceName: '', className: 'Player', kind: 'field', name: 'm_maxCarryWeight' },
-  { namespaceName: '', className: 'Character', kind: 'method', name: 'ApplyDamage' },
-  { namespaceName: '', className: 'Skills', kind: 'method', name: 'Raise' }
+  { namespaceName: '', className: 'Player', classHandle: '0x1', kind: 'field', name: 'm_ghostMode' },
+  { namespaceName: '', className: 'Player', classHandle: '0x1', kind: 'field', name: 'm_maxCarryWeight' },
+  { namespaceName: '', className: 'Character', classHandle: '0x2', kind: 'method', name: 'ApplyDamage' },
+  { namespaceName: '', className: 'Skills', classHandle: '0x3', kind: 'method', name: 'Raise' }
 ]
 
 describe('filterSearchIndex', () => {

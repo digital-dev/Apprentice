@@ -109,12 +109,19 @@ declare global {
       // opaque handle-only list monoListAssemblies (unused directly by the
       // UI) would give.
       monoListAssemblyNames: () => Promise<{ image: string; name: string }[]>
-      // Every (namespace, className) pair in the given image — walks the
-      // assembly's own TypeDef metadata table, not a cached/precomputed
-      // list, so it reflects whatever the runtime actually has loaded.
+      // Every (namespace, className) pair in the given image, WITH each
+      // class's own resolved handle — walks the assembly's own TypeDef
+      // metadata table (not a cached/precomputed list, so it reflects
+      // whatever the runtime actually has loaded), and returns the handle
+      // that same walk already produced per class. Use classHandle directly
+      // (monoListFields/monoListMethods take it) instead of a second,
+      // separate monoResolveClass(namespaceName, className) call — a
+      // name-only resolve is ambiguous across every loaded assembly (see
+      // monoClassLocations below), but a class picked from THIS list is
+      // already known to be the one in THIS specific assembly.
       monoListClassesInImage: (
         imageHandle: string
-      ) => Promise<{ namespaceName: string; className: string }[]>
+      ) => Promise<{ namespaceName: string; className: string; classHandle: string }[]>
       // Every assembly that defines a class with this exact name (namespace
       // ignored). A name-only resolve (monoResolveClass with an empty
       // namespace) silently picks whichever loaded assembly's match comes

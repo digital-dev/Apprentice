@@ -133,16 +133,33 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
 std::vector<std::pair<uintptr_t, std::string>> ListAssemblyNamesSingleThread(platform::ProcessHandle handle,
                                                                               uintptr_t monoDllBase);
 
+// One TypeDef row's resolved identity: the class's own name/namespace
+// (a person picks a class by these) AND the classHandle mono_class_get
+// already produced to get them (a caller resolves BY, e.g. Explorer's own
+// "Use as value target"/"Use as patch anchor" hand-off). Returning the
+// handle here means a class found by BROWSING never needs a second,
+// separate, ambiguous name-only resolveClass call to use it — the exact
+// bug that silently resolved the wrong same-named class (e.g. the
+// compiler-generated "<>c" closure class, or an unrelated "Player" in a
+// different assembly) over and over while building a search index or
+// jumping to a browsed class.
+struct ClassEntry {
+  std::string namespaceName;
+  std::string className;
+  uintptr_t classHandle;
+};
+
 // Forward-declared here for the same reason as the others above; defined
 // below alongside BuildListClassesStub. Attach, walk every row of
 // `imageHandle`'s TypeDef metadata table (mono_image_get_table_info +
 // mono_table_info_get_rows + mono_class_get per row — there is no
 // callback-driven "for each class" the way mono_assembly_foreach exists
-// for assemblies), collecting each class's name and namespace, detach —
-// one continuous thread. `imageHandle` must be a real MonoImage* (e.g.
-// from mono_assembly_get_image, as ListAssemblyNamesSingleThread's result
-// already gives).
-std::vector<std::pair<std::string, std::string>> ListClassesInImageSingleThread(
+// for assemblies), collecting each class's name, namespace, AND its own
+// resolved classHandle (mono_class_get's own return value — no separate
+// resolve needed to use it), detach — one continuous thread. `imageHandle`
+// must be a real MonoImage* (e.g. from mono_assembly_get_image, as
+// ListAssemblyNamesSingleThread's result already gives).
+std::vector<ClassEntry> ListClassesInImageSingleThread(
     platform::ProcessHandle handle, uintptr_t monoDllBase, uintptr_t imageHandle);
 
 } // namespace
@@ -1494,6 +1511,9 @@ constexpr uint32_t kMaxClasses = 8192;
 //   r12 — loop index / row number (0..r14)
 //   rdi — &names[0] (output, constant)
 //   r13 — &namespaces[0] (output, constant)
+//   rsi — &classHandles[0] (output, constant) — the resolved MonoClass*
+//         itself, so a caller can use the class without a second, separate,
+//         ambiguous-by-name resolveClass call (see ClassEntry's comment)
 //   rbx — the current row's resolved MonoClass*, held across the
 //         name/namespace calls
 //
@@ -1511,6 +1531,7 @@ constexpr uint32_t kMaxClasses = 8192;
 //   xor r12, r12
 //   mov rdi, namesBufAddr
 //   mov r13, namespacesBufAddr
+//   mov rsi, classHandlesBufAddr
 // loop:
 //   cmp r12, r14
 //   jae done                                                (near)
@@ -1527,6 +1548,7 @@ constexpr uint32_t kMaxClasses = 8192;
 //   test rax, rax
 //   jz skip                                                  (near)
 //   mov rbx, rax
+//   mov [rsi+r12*8], rbx                                       -- classHandles[row] = rbx
 //   mov rcx, rbx
 //   mov rax, classNameFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
 //   mov [rdi+r12*8], rax                                       -- names[row] = namePtr
@@ -1547,7 +1569,7 @@ std::vector<uint8_t> BuildListClassesStub(uintptr_t getRootDomainFn, uintptr_t t
                                            uintptr_t getRowsFn, uintptr_t classGetFn, uintptr_t classNameFn,
                                            uintptr_t classNamespaceFn, uintptr_t imageHandle,
                                            uintptr_t namesBufAddr, uintptr_t namespacesBufAddr,
-                                           uintptr_t countAddress) {
+                                           uintptr_t classHandlesBufAddr, uintptr_t countAddress) {
   std::vector<uint8_t> out;
   auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
     out.push_back(rex);
@@ -1600,6 +1622,7 @@ std::vector<uint8_t> BuildListClassesStub(uintptr_t getRootDomainFn, uintptr_t t
   out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12
   emitMovImm64(0x48, 0xBF, namesBufAddr);              // mov rdi, namesBufAddr
   emitMovImm64(0x49, 0xBD, namespacesBufAddr);         // mov r13, namespacesBufAddr
+  emitMovImm64(0x48, 0xBE, classHandlesBufAddr);       // mov rsi, classHandlesBufAddr
 
   mark(kLoop);
   out.insert(out.end(), {0x4D, 0x39, 0xF4});           // cmp r12, r14
@@ -1615,6 +1638,7 @@ std::vector<uint8_t> BuildListClassesStub(uintptr_t getRootDomainFn, uintptr_t t
   out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
   emitJump(0x74, kSkip);                               // jz skip
   out.insert(out.end(), {0x48, 0x89, 0xC3});           // mov rbx, rax
+  out.insert(out.end(), {0x4A, 0x89, 0x1C, 0xE6});     // mov [rsi+r12*8], rbx
   out.insert(out.end(), {0x48, 0x89, 0xD9});           // mov rcx, rbx
   emitCall(classNameFn);
   out.insert(out.end(), {0x4A, 0x89, 0x04, 0xE7});     // mov [rdi+r12*8], rax
@@ -1648,8 +1672,9 @@ std::vector<uint8_t> BuildListClassesStub(uintptr_t getRootDomainFn, uintptr_t t
 
 // Definition of the function forward-declared near the others. Cave
 // layout: [0..8) output count, [8..8+kMax*8) names array,
-// [that..+kMax*8) namespaces array, then this stub's code.
-std::vector<std::pair<std::string, std::string>> ListClassesInImageSingleThread(
+// [that..+kMax*8) namespaces array, [that..+kMax*8) classHandles array,
+// then this stub's code.
+std::vector<ClassEntry> ListClassesInImageSingleThread(
     platform::ProcessHandle handle, uintptr_t monoDllBase, uintptr_t imageHandle) {
   uintptr_t getRootDomain = platform::ResolveExport(handle, monoDllBase, "mono_get_root_domain");
   uintptr_t threadAttach = platform::ResolveExport(handle, monoDllBase, "mono_thread_attach");
@@ -1664,12 +1689,13 @@ std::vector<std::pair<std::string, std::string>> ListClassesInImageSingleThread(
     return {};
   }
 
-  uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + kMaxClasses * 8 * 2 + 512);
+  uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + kMaxClasses * 8 * 3 + 512);
   if (!cave) return {};
   uintptr_t countAddr = cave;
   uintptr_t namesBufAddr = cave + 8;
   uintptr_t namespacesBufAddr = namesBufAddr + kMaxClasses * 8;
-  uintptr_t stubAddr = namespacesBufAddr + kMaxClasses * 8;
+  uintptr_t classHandlesBufAddr = namespacesBufAddr + kMaxClasses * 8;
+  uintptr_t stubAddr = classHandlesBufAddr + kMaxClasses * 8;
 
   uint64_t zero = 0;
   if (!platform::WriteMemory(handle, countAddr, &zero, sizeof(zero))) return {};
@@ -1677,7 +1703,7 @@ std::vector<std::pair<std::string, std::string>> ListClassesInImageSingleThread(
   std::vector<uint8_t> stub =
       BuildListClassesStub(getRootDomain, threadAttach, threadDetach, getTableInfo, getRows, classGet,
                             classGetName, classGetNamespace, imageHandle, namesBufAddr, namespacesBufAddr,
-                            countAddr);
+                            classHandlesBufAddr, countAddr);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return {};
 
   uint8_t ignored[8];
@@ -1686,13 +1712,14 @@ std::vector<std::pair<std::string, std::string>> ListClassesInImageSingleThread(
   uint64_t count = 0;
   platform::ReadMemory(handle, countAddr, &count, sizeof(count));
   if (count > kMaxClasses) count = kMaxClasses;
-  std::vector<uintptr_t> namePtrs(count), namespacePtrs(count);
+  std::vector<uintptr_t> namePtrs(count), namespacePtrs(count), classHandles(count);
   if (count > 0) {
     platform::ReadMemory(handle, namesBufAddr, namePtrs.data(), count * sizeof(uintptr_t));
     platform::ReadMemory(handle, namespacesBufAddr, namespacePtrs.data(), count * sizeof(uintptr_t));
+    platform::ReadMemory(handle, classHandlesBufAddr, classHandles.data(), count * sizeof(uintptr_t));
   }
 
-  std::vector<std::pair<std::string, std::string>> results;
+  std::vector<ClassEntry> results;
   results.reserve(count);
   for (size_t i = 0; i < count; i++) {
     if (!namePtrs[i]) continue; // a skipped row (mono_class_get returned null)
@@ -1703,7 +1730,7 @@ std::vector<std::pair<std::string, std::string>> ListClassesInImageSingleThread(
     // non-null empty string for it in practice, but this codebase treats
     // an unreadable pointer defensively rather than assuming that).
     if (namespacePtrs[i]) platform::ReadMemory(handle, namespacePtrs[i], nsBuf, sizeof(nsBuf) - 1);
-    results.push_back({std::string(nsBuf), std::string(nameBuf)});
+    results.push_back({std::string(nsBuf), std::string(nameBuf), classHandles[i]});
   }
   return results;
 }
@@ -1828,8 +1855,14 @@ class MonoListClassesInImageWorker : public Napi::AsyncWorker {
     Napi::Array out = Napi::Array::New(env, results_.size());
     for (size_t i = 0; i < results_.size(); i++) {
       Napi::Object entry = Napi::Object::New(env);
-      entry.Set("namespaceName", Napi::String::New(env, results_[i].first));
-      entry.Set("className", Napi::String::New(env, results_[i].second));
+      entry.Set("namespaceName", Napi::String::New(env, results_[i].namespaceName));
+      entry.Set("className", Napi::String::New(env, results_[i].className));
+      // The class's own resolved handle — a caller (Explorer's "Use as
+      // value target"/"Use as patch anchor", or search-index building) can
+      // use this directly instead of a second, separate, ambiguous-by-name
+      // monoResolveClass call. See ClassEntry's own comment for the bug
+      // this exists to eliminate.
+      entry.Set("classHandle", Napi::String::New(env, ToHex(results_[i].classHandle)));
       out.Set(static_cast<uint32_t>(i), entry);
     }
     deferred_.Resolve(out);
@@ -1839,7 +1872,7 @@ class MonoListClassesInImageWorker : public Napi::AsyncWorker {
  private:
   platform::ProcessHandle handle_;
   uintptr_t monoDllBase_, imageHandle_;
-  std::vector<std::pair<std::string, std::string>> results_;
+  std::vector<ClassEntry> results_;
   Napi::Promise::Deferred deferred_;
 };
 
