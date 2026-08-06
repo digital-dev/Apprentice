@@ -333,7 +333,7 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
           />
           <ul style={{ maxHeight: 200, overflowY: 'auto' }}>
             {visibleClasses.map((c) => (
-              <li key={`${c.namespaceName}.${c.className}`}>
+              <li key={c.classHandle}>
                 <button onClick={() => pickClass(c.namespaceName, c.className, undefined, c.classHandle)}>
                   {c.namespaceName ? `${c.namespaceName}.${c.className}` : c.className}
                 </button>
