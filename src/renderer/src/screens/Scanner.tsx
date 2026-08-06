@@ -41,6 +41,15 @@ export default function Scanner({
   const [patchModeChoice, setPatchModeChoice] = useState<'nop' | 'force' | 'capture' | 'guard'>('nop')
   const [forceValue, setForceValue] = useState('')
   const [captureError, setCaptureError] = useState<string | null>(null)
+  // guard's own captured armValue (insn.baseAddress) is a snapshot of
+  // whichever object happened to be touched while scanning — dies the
+  // moment the game restarts, same problem armPointerClassName/
+  // armPointerFieldName already solves for immune mode. Optional here:
+  // guard still works with no class/field pair at all, falling back to
+  // self-arming on whichever object next reaches the guarded write.
+  const [guardUseMonoArm, setGuardUseMonoArm] = useState(false)
+  const [guardArmClassName, setGuardArmClassName] = useState('Player')
+  const [guardArmFieldName, setGuardArmFieldName] = useState('m_localPlayer')
   // Saving used to navigate straight back to the cheat list, which unmounted
   // this screen and threw away the scan and the caught instructions with it.
   // Finding a working cheat normally means trying several of the caught
@@ -282,7 +291,19 @@ export default function Scanner({
       // wrote the address being watched — the user's own object. Seeding the
       // guard with it beats racing every other entity for the slot.
       ...(patchModeChoice === 'guard'
-        ? { baseRegister: insn.baseRegister, armValue: insn.baseAddress }
+        ? {
+            baseRegister: insn.baseRegister,
+            armValue: insn.baseAddress,
+            // The captured object stays as a fallback (see PatchCheat.
+            // armPointerClassName's own comment: armValue alone if this
+            // particular install's resolve fails, or the pair is absent).
+            ...(guardUseMonoArm && guardArmClassName.trim() && guardArmFieldName.trim()
+              ? {
+                  armPointerClassName: guardArmClassName.trim(),
+                  armPointerFieldName: guardArmFieldName.trim()
+                }
+              : {})
+          }
         : {})
     }
     // Saving reads the game's cheat file before rewriting it, so it fails
@@ -442,6 +463,34 @@ export default function Scanner({
                   value={forceValue}
                   onChange={(e) => setForceValue(e.target.value)}
                 />
+              )}
+              {patchModeChoice === 'guard' && (
+                <>
+                  <label style={{ flexBasis: '100%' }}>
+                    <input
+                      type="checkbox"
+                      checked={guardUseMonoArm}
+                      onChange={(e) => setGuardUseMonoArm(e.target.checked)}
+                    />{' '}
+                    Re-resolve the guarded object by name on every install, instead of trusting
+                    this scan's captured pointer (survives a game restart — e.g. Player.
+                    m_localPlayer)
+                  </label>
+                  {guardUseMonoArm && (
+                    <>
+                      <input
+                        placeholder="Class holding the static field, e.g. Player"
+                        value={guardArmClassName}
+                        onChange={(e) => setGuardArmClassName(e.target.value)}
+                      />
+                      <input
+                        placeholder="Static field, e.g. m_localPlayer"
+                        value={guardArmFieldName}
+                        onChange={(e) => setGuardArmFieldName(e.target.value)}
+                      />
+                    </>
+                  )}
+                </>
               )}
             </div>
           )}

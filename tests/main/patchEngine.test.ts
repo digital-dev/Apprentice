@@ -806,6 +806,37 @@ describe('PatchEngine — guard injection', () => {
     expect(ops.caves).toHaveLength(0)
     expect(ops.writes).toHaveLength(0)
   })
+
+  // Scanner's own armValue for a guard patch is a one-time snapshot of
+  // whichever object happened to be touched while capturing — exactly the
+  // stale-after-restart problem armPointerClassName/armPointerFieldName
+  // exists to solve for immune. guard never got that treatment even though
+  // store.ts's own comment on those fields already documented guard falling
+  // back to self-arming with them, i.e. this was always the intent.
+  it('re-resolves the arm pointer fresh via armPointerClassName/armPointerFieldName, like immune does', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = '0x1c6986d75e4'
+    engine.setMonoOps(monoOps as any)
+
+    const patch: PatchCheat = {
+      ...guardPatch,
+      id: 'patch-guard-mono',
+      // A stale snapshot from a previous process instance — must NOT be
+      // what ends up armed once a fresh resolvePointer value is available.
+      armValue: '0xdeaddeaddead',
+      armPointerClassName: 'Player',
+      armPointerFieldName: 'm_localPlayer'
+    }
+    const result = await engine.apply(patch)
+
+    expect(result.ok).toBe(true)
+    expect(monoOps.resolvePointerCalls).toEqual([
+      { className: 'Player', fieldName: 'm_localPlayer', instanceFieldName: undefined }
+    ])
+    const slot = ops.memory.get(ops.caves[0]) as string
+    expect(slot).toBe('e4756d98c6010000') // little-endian 0x1c6986d75e4 — the FRESH value
+    expect(slot).not.toBe('addeaddeadde0000') // NOT the stale armValue
+  })
 })
 
 describe('PatchEngine — locating a patch that is already installed', () => {

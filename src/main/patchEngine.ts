@@ -360,10 +360,15 @@ export class PatchEngine {
       // process instance (a prior game launch's player object, now gone).
       // Falls back to patch.armValue when the dynamic pair isn't set, or
       // this particular resolve fails (better to try a stale-but-present
-      // value than refuse outright).
+      // value than refuse outright). guard patches need this exactly as
+      // much as immune ones do — Scanner's own capture-based armValue is a
+      // one-time snapshot of whichever object happened to be touched during
+      // scanning (store.ts's own comment on armPointerClassName documents
+      // guard falling back to self-arming, i.e. this pair was always meant
+      // to cover it too; this condition just never included it).
       let armValueOverride: string | undefined
       if (
-        mode === 'immune' &&
+        (mode === 'immune' || mode === 'guard') &&
         patch.armPointerClassName !== undefined &&
         patch.armPointerFieldName !== undefined &&
         this.monoOps?.resolvePointer
