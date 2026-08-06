@@ -44,10 +44,16 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
   const [watchHolderClass, setWatchHolderClass] = useState('')
   const [watchHolderField, setWatchHolderField] = useState('m_localPlayer')
   const [liveValue, setLiveValue] = useState<{ raw: string; int32: number; float: number } | null>(null)
+  // A name-only resolve silently picks whichever loaded assembly's match
+  // comes first — this is how a resolve that actually WAS ambiguous gets
+  // caught instead of trusted blindly (see tamper.d.ts's own comment on
+  // monoClassLocations for the real bug this exists to catch).
+  const [classAmbiguity, setClassAmbiguity] = useState<string[] | null>(null)
 
   async function resolve(ns: string, cls: string, prefill?: { field?: string; method?: string }) {
     setError(null)
     setResolving(true)
+    setClassAmbiguity(null)
     try {
       const handle = await window.tamper.monoResolveClass(ns, cls)
       if (handle === null) {
@@ -64,6 +70,8 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
       setMethods((await window.tamper.monoListMethods(handle)).sort((a, b) => a.localeCompare(b)))
       setFieldFilter(prefill?.field ?? '')
       setMethodFilter(prefill?.method ?? '')
+      const locations = await window.tamper.monoClassLocations(cls)
+      if (locations.length > 1) setClassAmbiguity(locations)
     } finally {
       setResolving(false)
     }
@@ -309,6 +317,14 @@ export default function MonoExplorer({ onUseAsValueTarget, onUseAsPatchAnchor, o
         {resolving ? 'Resolving…' : 'Resolve'}
       </button>
       {error && <p style={{ color: 'var(--error)' }}>{error}</p>}
+      {classAmbiguity && (
+        <p style={{ color: 'var(--error)', fontWeight: 'bold' }}>
+          ⚠ &quot;{className}&quot; exists in {classAmbiguity.length} loaded assemblies:{' '}
+          {classAmbiguity.join(', ')}. This resolved to whichever one came first — if that&apos;s
+          not {classAmbiguity[0]} on purpose, use Browse above to pick the right assembly&apos;s
+          class specifically instead of typing the bare name.
+        </p>
+      )}
       {classHandle && (
         <>
           <h3>Fields ({visibleFields.length}/{fields.length})</h3>

@@ -115,6 +115,17 @@ declare global {
       monoListClassesInImage: (
         imageHandle: string
       ) => Promise<{ namespaceName: string; className: string }[]>
+      // Every assembly that defines a class with this exact name (namespace
+      // ignored). A name-only resolve (monoResolveClass with an empty
+      // namespace) silently picks whichever loaded assembly's match comes
+      // first — a real game can load dozens of assemblies, and a common
+      // name like "Player" can exist in more than one of them. Call this
+      // right after a resolve succeeds and warn if it returns more than one
+      // name — that's the only way to tell "resolved the class you meant"
+      // from "resolved A class with that name, silently, maybe the wrong
+      // one" before building a whole cheat around it. Empty array if the
+      // runtime isn't attached or nothing matches.
+      monoClassLocations: (className: string) => Promise<string[]>
       // Reads `length` bytes from the method's CURRENT live entry address,
       // for auto-filling a Mono-anchored patch's originalBytes/length
       // instead of requiring an external disassembler. Null on the same

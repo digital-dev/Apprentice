@@ -196,6 +196,11 @@ export default function CheatList({
   const [monoAnchorArmValue, setMonoAnchorArmValue] = useState<string | null>(null)
   const [monoAnchorResolvingArm, setMonoAnchorResolvingArm] = useState(false)
   const [monoAnchorArmError, setMonoAnchorArmError] = useState<string | null>(null)
+  // A name-only class resolve silently picks whichever loaded assembly's
+  // match comes first — the exact failure mode that armed multiple immune
+  // patches on the wrong object, for hours, with every symptom pointing
+  // everywhere except here. See tamper.d.ts's monoClassLocations comment.
+  const [monoAnchorClassAmbiguity, setMonoAnchorClassAmbiguity] = useState<string[] | null>(null)
   // Force a specific value back from the whole method instead of the
   // default bare-0 skip — the shape a getter like Character:GetHealth needs
   // (the real CT table's own second use of this exact guard-and-return
@@ -266,14 +271,15 @@ export default function CheatList({
 
   async function resolveMonoAnchorArmValue() {
     setMonoAnchorArmError(null)
+    setMonoAnchorClassAmbiguity(null)
     setMonoAnchorResolvingArm(true)
     try {
       const instanceField = monoAnchorUseInstanceField ? monoAnchorPlayerInstanceField.trim() : undefined
-      const pointer = await window.tamper.monoResolvePlayerPointer(
-        monoAnchorPlayerClass,
-        monoAnchorPlayerField,
-        instanceField
-      )
+      const [pointer, locations] = await Promise.all([
+        window.tamper.monoResolvePlayerPointer(monoAnchorPlayerClass, monoAnchorPlayerField, instanceField),
+        window.tamper.monoClassLocations(monoAnchorPlayerClass)
+      ])
+      if (locations.length > 1) setMonoAnchorClassAmbiguity(locations)
       if (pointer === null) {
         setMonoAnchorArmValue(null)
         setMonoAnchorArmError(
@@ -710,6 +716,7 @@ export default function CheatList({
     setMonoAnchorMode('nop')
     setMonoAnchorArmValue(null)
     setMonoAnchorArmError(null)
+    setMonoAnchorClassAmbiguity(null)
     setMonoAnchorUseInstanceField(false)
     setMonoAnchorPlayerInstanceField('')
     setMonoAnchorUseReturnValue(false)
@@ -893,6 +900,7 @@ export default function CheatList({
                 onChange={(e) => {
                   setMonoAnchorPlayerClass(e.target.value)
                   setMonoAnchorArmValue(null)
+                  setMonoAnchorClassAmbiguity(null)
                 }}
               />
               <input
@@ -969,6 +977,16 @@ export default function CheatList({
               )}
               {monoAnchorArmError && (
                 <p style={{ flexBasis: '100%', color: 'var(--error)' }}>{monoAnchorArmError}</p>
+              )}
+              {monoAnchorClassAmbiguity && (
+                <p style={{ flexBasis: '100%', color: 'var(--error)', fontWeight: 'bold' }}>
+                  ⚠ &quot;{monoAnchorPlayerClass}&quot; exists in {monoAnchorClassAmbiguity.length}{' '}
+                  loaded assemblies: {monoAnchorClassAmbiguity.join(', ')}. The pointer above was
+                  resolved from whichever one came first — if that&apos;s not{' '}
+                  {monoAnchorClassAmbiguity[0]} on purpose, check it against a value you already
+                  trust (e.g. Mono Explorer&apos;s live-value watch on a field you know) before
+                  arming a patch on it.
+                </p>
               )}
             </>
           )}

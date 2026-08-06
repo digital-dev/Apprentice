@@ -27,6 +27,7 @@ import {
   MonoLiveValue,
   MonoResolverOps
 } from './monoTargetResolve'
+import { findClassLocations } from './monoClassLocations'
 import {
   loadProfile,
   recordModuleFingerprint,
@@ -761,6 +762,17 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     const base = monoDllBase()
     if (base === null) return []
     return monoResolver.listClassesInImage(attachedHandle, base, imageHandle)
+  })
+
+  ipcMain.handle('mono:classLocations', async (_e, className: string): Promise<string[]> => {
+    if (attachedHandle === null) return []
+    const base = monoDllBase()
+    if (base === null) return []
+    const handle = attachedHandle
+    return findClassLocations(className, {
+      listAssemblyNames: () => monoResolver.listAssemblyNames(handle, base),
+      listClassesInImage: (imageHandle) => monoResolver.listClassesInImage(handle, base, imageHandle)
+    })
   })
 
   ipcMain.handle(
