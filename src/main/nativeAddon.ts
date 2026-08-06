@@ -146,12 +146,30 @@ export const nativeAddon = {
   // through to returnAddress — where the caller places the replayed run —
   // on no match. Distinct from encodeGuardedSkip: a match here never falls
   // back into the function at all.
+  // returnKind/returnBits are optional and both-or-neither: absent means
+  // the original "return bare 0" shape (a skip, for a method like
+  // ApplyDamage whose caller doesn't care what comes back). Set them to
+  // force a SPECIFIC value back instead — the shape a getter like
+  // Character:GetHealth needs, where returning nothing meaningful isn't an
+  // option. returnBits is the raw 32 bits to load — an int32 value as-is,
+  // or a float's IEEE-754 bit pattern (patchEngine.ts's own valueBits()
+  // already produces exactly this for `force` mode; reuse it here too).
   encodeImmuneGuard: (
     playerPointerAddress: string,
     argRegister: string,
     caveCodeAddress: string,
-    returnAddress: string
-  ): string => addon.encodeImmuneGuard(playerPointerAddress, argRegister, caveCodeAddress, returnAddress),
+    returnAddress: string,
+    returnKind?: 'int32' | 'float',
+    returnBits?: number
+  ): string =>
+    addon.encodeImmuneGuard(
+      playerPointerAddress,
+      argRegister,
+      caveCodeAddress,
+      returnAddress,
+      returnKind,
+      returnBits
+    ),
   encodeJump: (from: string, to: string): string => addon.encodeJump(from, to),
   // Which backend the addon was built with, and whether injection works on
   // it. The Linux stub loads and reports false rather than failing at some

@@ -574,4 +574,64 @@ describe('encodeImmuneGuard', () => {
     const decoded = (addon as any).decodeRun(handle, cave, bytes.length / 2)
     expect(decoded.decodable).toBe(true)
   })
+
+  // The forced-return variants exist for a method like Character:GetHealth,
+  // where the real CT table doesn't skip the method (there's no "0 damage
+  // applied" equivalent for a getter) — it forces the VALUE the getter
+  // returns instead. Same guard-and-return shape, only the tail differs.
+  it('ends in mov eax,imm32 / ret for returnKind int32, instead of xor eax,eax', () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave = (addon as any).allocateCave(handle, near)
+    const returnAddress = '0x' + (BigInt(cave) + 0x200n).toString(16)
+    const zeroBytes = (addon as any).encodeImmuneGuard('0x50000000', 'rcx', cave, returnAddress)
+    const intBytes = (addon as any).encodeImmuneGuard(
+      '0x50000000',
+      'rcx',
+      cave,
+      returnAddress,
+      'int32',
+      9999
+    )
+    // Same guard prefix (mov rax,[..]; cmp; jne) — 'zero's tail is 3 bytes
+    // (xor eax,eax; ret), so everything before that is the shared prefix.
+    const guardPrefix = zeroBytes.slice(0, zeroBytes.length - 6)
+    expect(intBytes.startsWith(guardPrefix)).toBe(true)
+    // mov eax, 9999 (0x0000270f, little-endian) -> b8 0f 27 00 00 ; ret -> c3
+    expect(intBytes.slice(guardPrefix.length)).toBe('b80f270000c3')
+    expect((addon as any).writeBytes(handle, cave, intBytes)).toBe(true)
+    const decoded = (addon as any).decodeRun(handle, cave, intBytes.length / 2)
+    expect(decoded.decodable).toBe(true)
+  })
+
+  it('ends in mov eax,imm32 / movd xmm0,eax / ret for returnKind float', () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave = (addon as any).allocateCave(handle, near)
+    const returnAddress = '0x' + (BigInt(cave) + 0x200n).toString(16)
+    // 9999.0's IEEE-754 bits — verified independently via
+    // `new DataView(...).setFloat32(0, 9999.0, true)` rather than trusting
+    // valueBits() to produce the same number this test asserts against.
+    const floatBits = 0x461c3c00 // 9999.0f
+    const bytes = (addon as any).encodeImmuneGuard(
+      '0x50000000',
+      'rcx',
+      cave,
+      returnAddress,
+      'float',
+      floatBits
+    )
+    // mov eax, 0x461c3c00 -> b8 003c1c46 (little-endian) ; movd xmm0,eax -> 660f6ec0 ; ret -> c3
+    expect(bytes.slice(-20)).toBe('b8003c1c46660f6ec0c3')
+    expect((addon as any).writeBytes(handle, cave, bytes)).toBe(true)
+    const decoded = (addon as any).decodeRun(handle, cave, bytes.length / 2)
+    expect(decoded.decodable).toBe(true)
+  })
+
+  it('rejects an unknown returnKind', () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave = (addon as any).allocateCave(handle, near)
+    const returnAddress = '0x' + (BigInt(cave) + 0x200n).toString(16)
+    expect(() =>
+      (addon as any).encodeImmuneGuard('0x50000000', 'rcx', cave, returnAddress, 'bogus', 0)
+    ).toThrow()
+  })
 })

@@ -41,11 +41,17 @@ export interface PatchOps {
   // falling through to returnAddress — where the replayed prologue sits —
   // on no match. Unlike encodeGuardedSkip's early exit, a match here never
   // falls back into the function.
+  // returnKind/returnBits: absent means "return bare 0" (a skip — the
+  // ApplyDamage shape). Set to force a SPECIFIC value back instead — the
+  // GetHealth shape, for a getter where returning nothing meaningful isn't
+  // an option.
   encodeImmuneGuard(
     playerPointerAddress: string,
     argRegister: string,
     caveCodeAddress: string,
-    returnAddress: string
+    returnAddress: string,
+    returnKind?: 'int32' | 'float',
+    returnBits?: number
   ): string
   encodeJump(from: string, to: string): string
   suspendThreads(): boolean
@@ -635,18 +641,34 @@ export class PatchEngine {
       // length does not depend on the VALUE given for returnAddress (only
       // the trailing jne's 4 immediate bytes do), so encode once with a
       // placeholder to learn the length, then again with the real address.
+      // A forced return value (the Character:GetHealth shape, gated the same
+      // way ApplyDamage's skip is) instead of the default bare-0 skip —
+      // reuses `value`/`dataType`, the same fields `force` mode already
+      // means "what to write", rather than inventing parallel ones. 'byte'
+      // rides the same int32 path as any other non-float value: only the
+      // low byte a bool-reading caller would look at differs from a real
+      // byte-width store, and this is a register return, not a memory
+      // write, so there is no wider field to accidentally clobber.
+      const returnKind: 'int32' | 'float' | undefined =
+        patch.value === undefined ? undefined : patch.dataType === 'float' ? 'float' : 'int32'
+      const returnBits =
+        patch.value === undefined ? undefined : valueBits(patch.value, patch.dataType ?? 'int32')
       const probe = this.ops.encodeImmuneGuard(
         cave,
         patch.baseRegister as string,
         codeAddress,
-        codeAddress
+        codeAddress,
+        returnKind,
+        returnBits
       )
       const replayAddress = addHex(codeAddress, probe.length / 2)
       const guardBytes = this.ops.encodeImmuneGuard(
         cave,
         patch.baseRegister as string,
         codeAddress,
-        replayAddress
+        replayAddress,
+        returnKind,
+        returnBits
       )
       const jumpBackFrom = addHex(replayAddress, displaced.length / 2)
       body = guardBytes + displaced + this.ops.encodeJump(jumpBackFrom, returnTo)

@@ -196,6 +196,15 @@ export default function CheatList({
   const [monoAnchorArmValue, setMonoAnchorArmValue] = useState<string | null>(null)
   const [monoAnchorResolvingArm, setMonoAnchorResolvingArm] = useState(false)
   const [monoAnchorArmError, setMonoAnchorArmError] = useState<string | null>(null)
+  // Force a specific value back from the whole method instead of the
+  // default bare-0 skip — the shape a getter like Character:GetHealth needs
+  // (the real CT table's own second use of this exact guard-and-return
+  // primitive), where returning nothing meaningful isn't an option. Reuses
+  // PatchCheat's existing value/dataType fields — the same ones `force`
+  // mode already means "what to write" — rather than a parallel pair.
+  const [monoAnchorUseReturnValue, setMonoAnchorUseReturnValue] = useState(false)
+  const [monoAnchorReturnValue, setMonoAnchorReturnValue] = useState('')
+  const [monoAnchorReturnDataType, setMonoAnchorReturnDataType] = useState<DataType>('float')
   const [monoAnchorResolvingBytes, setMonoAnchorResolvingBytes] = useState(false)
   const [monoAnchorBytesError, setMonoAnchorBytesError] = useState<string | null>(null)
 
@@ -653,6 +662,12 @@ export default function CheatList({
     const length = Number(monoAnchorLength)
     if (!Number.isInteger(length) || length <= 0 || monoAnchorBytes.trim() === '') return
     if (monoAnchorMode === 'immune' && !monoAnchorArmValue) return
+    if (
+      monoAnchorMode === 'immune' &&
+      monoAnchorUseReturnValue &&
+      (monoAnchorReturnValue.trim() === '' || !Number.isFinite(Number(monoAnchorReturnValue)))
+    )
+      return
     const patch: PatchCheat = {
       kind: 'patch',
       mode: monoAnchorMode,
@@ -680,6 +695,9 @@ export default function CheatList({
             armPointerFieldName: monoAnchorPlayerField.trim(),
             ...(monoAnchorUseInstanceField && monoAnchorPlayerInstanceField.trim()
               ? { armPointerInstanceFieldName: monoAnchorPlayerInstanceField.trim() }
+              : {}),
+            ...(monoAnchorUseReturnValue
+              ? { value: Number(monoAnchorReturnValue), dataType: monoAnchorReturnDataType }
               : {})
           }
         : {})
@@ -694,6 +712,8 @@ export default function CheatList({
     setMonoAnchorArmError(null)
     setMonoAnchorUseInstanceField(false)
     setMonoAnchorPlayerInstanceField('')
+    setMonoAnchorUseReturnValue(false)
+    setMonoAnchorReturnValue('')
     onConsumePendingMonoSelection?.()
   }
 
@@ -905,6 +925,32 @@ export default function CheatList({
                   }}
                 />
               )}
+              <label style={{ flexBasis: '100%' }}>
+                <input
+                  type="checkbox"
+                  checked={monoAnchorUseReturnValue}
+                  onChange={(e) => setMonoAnchorUseReturnValue(e.target.checked)}
+                />{' '}
+                Force a specific value back from the matched call, instead of skipping it
+                entirely (for a getter like GetHealth, where returning nothing isn&apos;t an
+                option)
+              </label>
+              {monoAnchorUseReturnValue && (
+                <>
+                  <input
+                    placeholder={`Value to return (${monoAnchorReturnDataType})`}
+                    value={monoAnchorReturnValue}
+                    onChange={(e) => setMonoAnchorReturnValue(e.target.value)}
+                  />
+                  <select
+                    value={monoAnchorReturnDataType}
+                    onChange={(e) => setMonoAnchorReturnDataType(e.target.value as DataType)}
+                  >
+                    <option value="float">float</option>
+                    <option value="int32">int32</option>
+                  </select>
+                </>
+              )}
               <button
                 onClick={resolveMonoAnchorArmValue}
                 disabled={
@@ -932,7 +978,10 @@ export default function CheatList({
               !monoAnchorName ||
               !monoAnchorBytes ||
               !monoAnchorLength ||
-              (monoAnchorMode === 'immune' && !monoAnchorArmValue)
+              (monoAnchorMode === 'immune' && !monoAnchorArmValue) ||
+              (monoAnchorMode === 'immune' &&
+                monoAnchorUseReturnValue &&
+                (monoAnchorReturnValue.trim() === '' || !Number.isFinite(Number(monoAnchorReturnValue))))
             }
           >
             Save

@@ -103,6 +103,8 @@ class FakeOps implements PatchOps {
     argRegister: string
     caveCodeAddress: string
     returnAddress: string
+    returnKind?: 'int32' | 'float'
+    returnBits?: number
   }[] = []
   // A fixed 22-byte stand-in (10 mov + 3 cmp + 6 jne + 2 xor + 1 ret), same
   // length on every call regardless of returnAddress — mirroring the real
@@ -110,14 +112,26 @@ class FakeOps implements PatchOps {
   // returnAddress (only the jne's trailing 4 immediate bytes do). apply()'s
   // two-pass probe relies on that invariant to compute the real fall-through
   // address, so the fake must honor it too or the test would pass for the
-  // wrong reason.
+  // wrong reason. Fixed regardless of returnKind too — this fake exists to
+  // verify patchEngine.ts threads the right arguments through, not to
+  // re-verify the real encoder's byte-level output (tests/native/
+  // cave_ops.test.ts already covers that against a live process).
   encodeImmuneGuard(
     playerPointerAddress: string,
     argRegister: string,
     caveCodeAddress: string,
-    returnAddress: string
+    returnAddress: string,
+    returnKind?: 'int32' | 'float',
+    returnBits?: number
   ): string {
-    this.encodeImmuneGuardCalls.push({ playerPointerAddress, argRegister, caveCodeAddress, returnAddress })
+    this.encodeImmuneGuardCalls.push({
+      playerPointerAddress,
+      argRegister,
+      caveCodeAddress,
+      returnAddress,
+      returnKind,
+      returnBits
+    })
     return 'bb'.repeat(22)
   }
   encodeJump(from: string, to: string): string {
@@ -995,6 +1009,31 @@ describe('PatchEngine — immune injection', () => {
       // this test's sibling below checks.
       { playerPointerAddress: ops.caves[0], argRegister: 'rcx', caveCodeAddress: codeAddress, returnAddress: replayAddress }
     ])
+  })
+
+  // The GetHealth shape: reuses `value`/`dataType` (the same fields `force`
+  // mode means "what to write") rather than a skip, when present — see
+  // patchEngine.ts's own comment on why those fields were reused instead of
+  // a parallel pair.
+  it('derives returnKind/returnBits from value/dataType and threads them through both encodeImmuneGuard passes', async () => {
+    const forceHealthPatch: PatchCheat = { ...immunePatch, id: 'patch-immune-health', value: 9999, dataType: 'float' }
+    await engine.apply(forceHealthPatch)
+    for (const call of ops.encodeImmuneGuardCalls) {
+      expect(call.returnKind).toBe('float')
+      // 9999.0's IEEE-754 bit pattern, the same value valueBits('float')
+      // produces — verified independently in tests/native/cave_ops.test.ts
+      // rather than re-deriving it here.
+      expect(call.returnBits).toBe(0x461c3c00)
+    }
+  })
+
+  it('omits returnKind/returnBits when the patch has no value — the plain skip shape, unchanged', async () => {
+    expect(immunePatch.value).toBeUndefined()
+    await engine.apply(immunePatch)
+    for (const call of ops.encodeImmuneGuardCalls) {
+      expect(call.returnKind).toBeUndefined()
+      expect(call.returnBits).toBeUndefined()
+    }
   })
 
   it('jumps from the end of the replayed run back to the site\'s continuation, not to the site itself', async () => {

@@ -458,7 +458,7 @@ Napi::Value EncodeGuardedSkip(const Napi::CallbackInfo& info) {
 // Emits the entry-point guard behind `immune` mode: compares a hooked
 // method's first argument (its "this" pointer, per the Windows x64 calling
 // convention — rcx for a Mono-JIT instance method) against the pointer
-// stored AT playerPointerAddress, and on match returns 0 from the WHOLE
+// stored AT playerPointerAddress, and on match returns from the WHOLE
 // METHOD immediately — the CT table's own damage-immunity pattern
 // (`cmp rax,rcx; jne short @f; ret; @@: <original>`), generalized. Unlike
 // EncodeGuardedSkip's early exit — which skips one displaced write and
@@ -470,13 +470,33 @@ Napi::Value EncodeGuardedSkip(const Napi::CallbackInfo& info) {
 // "cave holds displaced + jmpBack" shape every other patch mode uses, minus
 // any effect, since immune's guard-and-return IS the whole effect.
 //
+// What actually returns on a match is chosen by returnKind — matching the
+// real CT table's OWN two uses of this shape: `Character:ApplyDamage`
+// returns bare 0 (a skip — the method's own effect never happens), but
+// `Character:GetHealth` forces a specific VALUE back to the caller instead
+// (a lie about what the field holds, not a skip — the caller still gets an
+// answer, just always the same one). Both are the identical guard-and-return
+// shape; only the last few bytes differ:
+//
 //   mov rax, [playerPointerAddress]   48 A1 <imm64>   (10 bytes) — moffs
 //                                                       form: loads
 //                                                       [absolute imm64]
 //                                                       into rax directly
 //   cmp argRegister, rax               <REX> 39 <ModRM> (3-4 bytes)
 //   jne returnAddress                  0F 85 <rel32>   (6 bytes)
+//   -- returnKind 'zero' (ApplyDamage's shape) --
 //   xor eax, eax                       31 C0            (2 bytes)
+//   ret                                C3               (1 byte)
+//   -- returnKind 'int32' --
+//   mov eax, imm32                     B8 <imm32>       (5 bytes)
+//   ret                                C3               (1 byte)
+//   -- returnKind 'float' (GetHealth's shape: an SSE return goes in xmm0,
+//      not eax — there is no `mov xmm0, imm32`, so load the float's raw
+//      IEEE-754 bit pattern into eax first, same as the codebase's own
+//      valueBits() already produces for `force` mode, then move it into
+//      xmm0) --
+//   mov eax, imm32(bits)               B8 <imm32>       (5 bytes)
+//   movd xmm0, eax                     66 0F 6E C0      (4 bytes)
 //   ret                                C3               (1 byte)
 Napi::Value EncodeImmuneGuard(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
@@ -484,6 +504,16 @@ Napi::Value EncodeImmuneGuard(const Napi::CallbackInfo& info) {
   std::string argRegName = info[1].As<Napi::String>().Utf8Value();
   uintptr_t caveCodeAddress = ParseHex(info[2].As<Napi::String>().Utf8Value());
   uintptr_t returnAddress = ParseHex(info[3].As<Napi::String>().Utf8Value());
+  // Both optional and both-or-neither: absent means the original 'zero'
+  // shape, unchanged from before this pair existed — every existing immune
+  // patch (no return value of its own) keeps encoding exactly as it did.
+  std::string returnKind = info[4].IsUndefined() ? "zero" : info[4].As<Napi::String>().Utf8Value();
+  uint32_t returnBits = info[5].IsUndefined() ? 0 : info[5].As<Napi::Number>().Uint32Value();
+  if (returnKind != "zero" && returnKind != "int32" && returnKind != "float") {
+    Napi::Error::New(env, "unknown returnKind — expected zero, int32, or float")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
 
   ZydisRegister argReg = RegisterByName(argRegName);
   if (argReg == ZYDIS_REGISTER_NONE) {
@@ -528,8 +558,16 @@ Napi::Value EncodeImmuneGuard(const Napi::CallbackInfo& info) {
   out.push_back(0x85);
   for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>(rel32 >> (i * 8)));
 
-  out.push_back(0x31); out.push_back(0xC0); // xor eax, eax
-  out.push_back(0xC3);                       // ret
+  if (returnKind == "zero") {
+    out.push_back(0x31); out.push_back(0xC0); // xor eax, eax
+  } else {
+    out.push_back(0xB8);                       // mov eax, imm32
+    for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>(returnBits >> (i * 8)));
+    if (returnKind == "float") {
+      out.push_back(0x66); out.push_back(0x0F); out.push_back(0x6E); out.push_back(0xC0); // movd xmm0, eax
+    }
+  }
+  out.push_back(0xC3); // ret
 
   return Napi::String::New(env, BytesToHex(out.data(), out.size()));
 }
