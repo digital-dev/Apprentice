@@ -1,7 +1,7 @@
 export default function Sidebar() {
   return (
     <div className="sidebar">
-      <h1>TAMPER</h1>
+      <h1>APPRENTICE</h1>
     </div>
   )
 }

@@ -241,7 +241,7 @@ npm run build
   and fails silently):
   `& cmd.exe /c 'call "…\vcvars64.bat" >nul 2>&1 && cl.exe /nologo /Fe:test-harness\harness.exe test-harness\harness.c'`
   then delete `harness.obj` and **verify the timestamp changed**.
-- `Tamper.cmd` at the repo root launches the built app.
+- `Apprentice.cmd` at the repo root launches the built app.
 
 ---
 
