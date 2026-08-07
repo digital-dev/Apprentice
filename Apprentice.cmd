@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem Launches Tamper without a terminal. Resolves the app location at run
+rem Launches Apprentice without a terminal. Resolves the app location at run
 rem time rather than being hardcoded, so this shortcut keeps working both
 rem while the feature branch lives in .worktrees\ and after it is merged
 rem into the repo root and the worktree is removed.
@@ -19,7 +19,7 @@ if exist "%ROOT%\out\main\index.js" (
 )
 
 if not defined APP (
-  echo Tamper is not built yet.
+  echo Apprentice is not built yet.
   echo Run "npm run build" in the project, then try again.
   pause
   exit /b 1
