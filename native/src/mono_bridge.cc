@@ -103,12 +103,27 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
 // "mono_field_get_name" or "mono_method_get_name"; `finishExport` is
 // "mono_field_get_offset" or "mono_compile_method" to call the matched
 // item through one more function before returning its result, or "" to
-// return the matched item's own address unchanged (monoStaticFieldAddress's
-// case). Returns 0 on no match or any resolution failure.
+// return the matched item's own address unchanged — a MonoClassField* or
+// MonoMethod*'s own metadata-descriptor address, NOT where a static
+// field's actual value lives at runtime. A static field's real storage
+// needs the field's OFFSET (finishExport = "mono_field_get_offset") added
+// to its class's static-data blob base (see StaticDataBaseSingleThread,
+// below) — monoStaticFieldAddress composes the two rather than ever
+// asking this function for a field's raw "" address.
 uintptr_t ResolveMemberSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
                                     uintptr_t classHandle, const std::string& getItemsExport,
                                     const std::string& getNameExport, const std::string& finishExport,
                                     const std::string& targetName);
+
+// Forward-declared here for the same reason as the others above; defined
+// below alongside BuildStaticDataBaseStub. mono_class_vtable(domain,
+// classHandle) -> mono_vtable_get_static_field_data(vtable) -> that
+// class's static-data blob base for the current domain — add a static
+// field's own offset (from ResolveMemberSingleThread's "mono_field_get_
+// offset" path) to get where its value actually lives. Returns 0 on any
+// resolution failure.
+uintptr_t StaticDataBaseSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
+                                     uintptr_t classHandle);
 
 // Forward-declared here for the same reason as the others above; defined
 // below alongside BuildMemberListStub. Attach, collect EVERY field/method
@@ -258,22 +273,34 @@ class MonoResolveFieldWorker : public Napi::AsyncWorker {
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
   void Execute() override {
-    // Attach, iterate, and (for offset lookups) call mono_field_get_offset
-    // all on one continuous injected thread, via ResolveMemberSingleThread
-    // — see ResolveClassSingleThread's comment for why per-call throwaway
-    // threads calling Mono metadata functions is unsafe. wantAddress_ asks
-    // for the field's own address (no finish call, "" means that); the
-    // normal case wants mono_field_get_offset called on the match.
+    // Attach, iterate, and call mono_field_get_offset on the match, all on
+    // one continuous injected thread, via ResolveMemberSingleThread — see
+    // ResolveClassSingleThread's comment for why per-call throwaway threads
+    // calling Mono metadata functions is unsafe. Always resolves the
+    // OFFSET now (never the field's own "" metadata address — see
+    // ResolveMemberSingleThread's comment on why that was never the right
+    // answer for a static field's actual storage location).
     uintptr_t item = ResolveMemberSingleThread(
         handle_, monoDllBase_, classHandle_, "mono_class_get_fields", "mono_field_get_name",
-        wantAddress_ ? "" : "mono_field_get_offset", fieldName_);
+        "mono_field_get_offset", fieldName_);
     if (!item) return;
-    ok_ = true;
-    if (wantAddress_) {
-      fieldAddress_ = item; // caller wants the field's own storage location
-    } else {
+    if (!wantAddress_) {
+      ok_ = true;
       offset_ = static_cast<int32_t>(item);
+      return;
     }
+    // wantAddress_: compose the static-data blob base with this offset —
+    // the two-step indirection an actual static field's value needs (see
+    // StaticDataBaseSingleThread's comment). A second attach/detach cycle,
+    // not folded into one stub with the field walk above: the field search
+    // and the vtable/static-data lookup are independent operations sharing
+    // no state, and keeping ResolveMemberSingleThread generic (usable for
+    // methods too, which have no static-data concept at all) matters more
+    // than saving one attach round-trip here.
+    uintptr_t staticBase = StaticDataBaseSingleThread(handle_, monoDllBase_, classHandle_);
+    if (!staticBase) return;
+    ok_ = true;
+    fieldAddress_ = staticBase + static_cast<int32_t>(item);
   }
 
   void OnOK() override {
@@ -1083,6 +1110,109 @@ uintptr_t ResolveMemberSingleThread(platform::ProcessHandle handle, uintptr_t mo
   std::vector<uint8_t> stub = BuildMemberSearchStub(getRootDomain, threadAttach, threadDetach,
                                                      getItems, getName, finishFn, classHandle,
                                                      iterSlotAddr, nameAddr, resultAddr, 256);
+  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return 0;
+
+  uint8_t ignored[8];
+  if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return 0;
+
+  uint64_t result = 0;
+  platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
+  return static_cast<uintptr_t>(result);
+}
+
+// mono_get_root_domain, mono_thread_attach, mono_class_vtable(domain,
+// classHandle) -> vtable, mono_vtable_get_static_field_data(vtable) -> the
+// class's static-data BLOB base for the current domain, mono_thread_detach.
+// One continuous injected thread, same motivation as every other
+// SingleThread function in this file.
+//
+// This is NOT the same address as a MonoClassField*'s own pointer (what a
+// plain field lookup returns) — a MonoClassField describes the field
+// (name, type, offset into this blob), it is not where the field's VALUE
+// lives at runtime. Reading a static field's actual current value needs
+// this blob's base PLUS the field's own offset (mono_field_get_offset,
+// already resolved correctly elsewhere in this file) — the two-step
+// vtable/static-data-blob indirection real Mono embedding requires for any
+// static field, not just this codebase's own invention. Returning the
+// field's own metadata address instead of this (an earlier version of
+// MonoStaticFieldAddress did exactly that) reads back as a real, stable,
+// plausible-looking pointer every time — Mono's own internal MonoType*
+// describing the field's declared type, most likely — while being
+// numerically nothing to do with any actual game object. It never fails
+// or looks wrong on inspection; it is simply answering a different
+// question than the one being asked.
+//
+//   [attach]
+//   mov rcx, domain              -- from mono_get_root_domain, saved earlier
+//   mov rdx, classHandle
+//   mov rax, classVtableFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov rcx, rax                                        -- vtable
+//   mov rax, staticDataFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov r14, rax                                         -- static data base
+//   [detach]
+//   mov rcx, resultAddress
+//   mov [rcx], r14
+//   xor eax, eax
+//   ret
+std::vector<uint8_t> BuildStaticDataBaseStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
+                                              uintptr_t threadDetachFn, uintptr_t classVtableFn,
+                                              uintptr_t staticDataFn, uintptr_t classHandle,
+                                              uintptr_t resultAddress) {
+  std::vector<uint8_t> out;
+  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
+    out.push_back(rex);
+    out.push_back(opcodeByte);
+    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
+  };
+  auto emitCall = [&](uintptr_t fn) {
+    emitMovImm64(0x48, 0xB8, fn);                      // mov rax, fn
+    out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});   // sub rsp, 0x28
+    out.insert(out.end(), {0xFF, 0xD0});               // call rax
+    out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});   // add rsp, 0x28
+  };
+
+  emitCall(getRootDomainFn);
+  out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax  -- domain, survives the next call
+  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+  emitCall(threadAttachFn);
+  out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax  -- attached MonoThread*, survives too
+
+  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15  -- domain
+  emitMovImm64(0x48, 0xBA, classHandle);               // mov rdx, classHandle
+  emitCall(classVtableFn);
+  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax  -- vtable
+  emitCall(staticDataFn);
+  out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax  -- static data base, survives detach
+
+  out.insert(out.end(), {0x4C, 0x89, 0xF1});           // mov rcx, r14  -- attached MonoThread*
+  emitCall(threadDetachFn);
+  emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
+  out.insert(out.end(), {0x4C, 0x89, 0x39});           // mov [rcx], r15
+  out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
+  out.push_back(0xC3);                                 // ret
+
+  return out;
+}
+
+uintptr_t StaticDataBaseSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
+                                      uintptr_t classHandle) {
+  uintptr_t getRootDomain = platform::ResolveExport(handle, monoDllBase, "mono_get_root_domain");
+  uintptr_t threadAttach = platform::ResolveExport(handle, monoDllBase, "mono_thread_attach");
+  uintptr_t threadDetach = platform::ResolveExport(handle, monoDllBase, "mono_thread_detach");
+  uintptr_t classVtable = platform::ResolveExport(handle, monoDllBase, "mono_class_vtable");
+  uintptr_t staticData = platform::ResolveExport(handle, monoDllBase, "mono_vtable_get_static_field_data");
+  if (!getRootDomain || !threadAttach || !threadDetach || !classVtable || !staticData) return 0;
+
+  uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + 256);
+  if (!cave) return 0;
+  uintptr_t resultAddr = cave;
+  uintptr_t stubAddr = cave + 8;
+
+  uint64_t zero = 0;
+  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero))) return 0;
+
+  std::vector<uint8_t> stub = BuildStaticDataBaseStub(getRootDomain, threadAttach, threadDetach,
+                                                        classVtable, staticData, classHandle, resultAddr);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return 0;
 
   uint8_t ignored[8];

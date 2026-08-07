@@ -21,6 +21,17 @@ typedef struct {
   const char* name;
 } FakeMethod;
 
+// Real mono_vtable_get_static_field_data returns a class's static-data
+// BLOB base for the current domain — a static field's actual value lives
+// at blobBase + mono_field_get_offset(field), not at the field's own
+// MonoClassField* address (see mono_bridge.cc's StaticDataBaseSingleThread
+// comment for why those are two different things a caller must not
+// conflate). 2048 bytes is comfortably past every offset any fixture field
+// below uses (the largest, m_godMode, sits at 0x691).
+typedef struct {
+  unsigned char staticData[2048];
+} FakeVTable;
+
 typedef struct {
   const char* namespaceName;
   const char* className;
@@ -28,6 +39,7 @@ typedef struct {
   int fieldCount;
   FakeMethod methods[2];
   int methodCount;
+  FakeVTable vtable; // one per class, matching real Mono's per-domain vtable
 } FakeClass;
 
 // An image owns its own class list — mono_class_from_name searches only
@@ -116,6 +128,24 @@ __declspec(dllexport) const char* __stdcall mono_field_get_name(FakeField* field
 
 __declspec(dllexport) int __stdcall mono_field_get_offset(FakeField* field) {
   return field->offset;
+}
+
+// Real signature: mono_class_vtable(MonoDomain*, MonoClass*) -> MonoVTable*.
+// This fixture has one vtable per class (embedded in FakeClass itself, see
+// its own comment) rather than a separate per-domain table, since there is
+// only ever the one fake domain here — same class in, same vtable out,
+// which is the one invariant a real caller actually depends on.
+__declspec(dllexport) FakeVTable* __stdcall mono_class_vtable(FakeDomain* domain, FakeClass* klass) {
+  (void)domain;
+  return &klass->vtable;
+}
+
+// Real signature: mono_vtable_get_static_field_data(MonoVTable*) -> gpointer,
+// the class's static-data blob base — mono_field_get_offset(field) added to
+// THIS is where a static field's value actually lives, never the field's
+// own MonoClassField* address.
+__declspec(dllexport) void* __stdcall mono_vtable_get_static_field_data(FakeVTable* vtable) {
+  return vtable->staticData;
 }
 
 __declspec(dllexport) FakeMethod* __stdcall mono_class_get_methods(FakeClass* klass, void** iter) {

@@ -65,6 +65,25 @@ describe('monoStaticFieldAddress', () => {
     const addr = await (addon as any).monoStaticFieldAddress(handle, monoBase, klass, 'm_localPlayer')
     expect(addr).toMatch(/^0x[0-9a-f]+$/)
   })
+
+  // The actual bug this whole path exists to not have again: an earlier
+  // version returned the field's own MonoClassField* (Mono's internal
+  // metadata describing the field) instead of mono_class_vtable's
+  // static-data blob base + the field's offset — a real, stable, plausible
+  // -looking pointer that has nothing to do with where the field's value
+  // actually lives. Two fields on the SAME class, at known, DIFFERENT
+  // fixture offsets (probe_mono.c: m_localPlayer=0x10, m_godMode=0x691),
+  // must resolve to addresses that differ by EXACTLY that same delta —
+  // proving this is genuinely `staticDataBase + offset` arithmetic against
+  // one shared blob, not two independent, unrelated-by-construction
+  // pointers that merely both happen to look like valid addresses.
+  it('resolves two static fields on the same class exactly offset.delta apart', async () => {
+    const klass = await (addon as any).monoResolveClass(handle, monoBase, '', 'Player')
+    const localPlayerAddr = await (addon as any).monoStaticFieldAddress(handle, monoBase, klass, 'm_localPlayer')
+    const godModeAddr = await (addon as any).monoStaticFieldAddress(handle, monoBase, klass, 'm_godMode')
+    const delta = BigInt(godModeAddr) - BigInt(localPlayerAddr)
+    expect(delta).toBe(BigInt(0x691 - 0x10))
+  })
 })
 
 describe('monoCompileMethod', () => {
