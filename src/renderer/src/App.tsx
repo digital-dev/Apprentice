@@ -6,7 +6,7 @@ import CheatList from './screens/CheatList'
 import Scanner from './screens/Scanner'
 import MonoExplorer from './screens/MonoExplorer'
 
-type Screen = 'picker' | 'cheats' | 'scanner' | 'mono'
+export type Screen = 'picker' | 'cheats' | 'scanner' | 'mono'
 
 // A resolved Mono Explorer selection, handed from that screen to the cheat
 // list's creation forms. There is no routing/context layer in this
@@ -28,7 +28,7 @@ export default function App() {
 
   return (
     <div className="layout">
-      <Sidebar />
+      <Sidebar screen={screen} exeName={exeName} onNavigate={setScreen} />
       <div className="main">
         {screen === 'picker' && (
           <ProcessPicker
