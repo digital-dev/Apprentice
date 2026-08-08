@@ -44,8 +44,6 @@ export default function App() {
         {screen === 'cheats' && exeName && (
           <CheatList
             exeName={exeName}
-            onOpenScanner={() => setScreen('scanner')}
-            onOpenMonoExplorer={() => setScreen('mono')}
             pendingMonoSelection={pendingMonoSelection}
             onConsumePendingMonoSelection={() => setPendingMonoSelection(null)}
           />

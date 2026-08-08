@@ -105,14 +105,10 @@ function cheatStateLabel(status: CheatStatus): string {
 
 export default function CheatList({
   exeName,
-  onOpenScanner,
-  onOpenMonoExplorer,
   pendingMonoSelection,
   onConsumePendingMonoSelection
 }: {
   exeName: string
-  onOpenScanner: () => void
-  onOpenMonoExplorer?: () => void
   // A selection handed over from Mono Explorer, if the user just came from
   // there ("use as value target" / "use as patch anchor"). Pre-fills the
   // matching mini creation form below; onConsumePendingMonoSelection clears
@@ -734,8 +730,6 @@ export default function CheatList({
           build when you turn them on.
         </div>
       )}
-      <button onClick={onOpenScanner}>+ New cheat</button>
-      {onOpenMonoExplorer && <button onClick={onOpenMonoExplorer}>Mono Explorer</button>}
       <button onClick={importCheatTable} disabled={ctImporting}>
         {ctImporting ? 'Importing…' : 'Import Cheat Table (.CT)'}
       </button>
