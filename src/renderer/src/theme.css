@@ -34,13 +34,57 @@ h1, h2, h3 {
 .sidebar {
   background: var(--panel);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 16px;
+  padding: 16px 12px;
 }
 
 .sidebar h1 {
   font-size: 18px;
   color: var(--accent);
   margin: 0 0 24px;
+}
+
+.exe-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-data);
+  font-size: 12px;
+  margin: 0 0 20px;
+}
+
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #eceee9;
+  cursor: pointer;
+}
+
+.nav-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.nav-item.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 176, 0, 0.08);
+}
+
+.nav-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .main {
@@ -56,6 +100,10 @@ h1, h2, h3 {
   background: rgba(255, 255, 255, 0.04);
   border-radius: 999px;
   padding: 2px 10px;
+}
+
+.muted {
+  color: var(--muted);
 }
 
 input, select {
