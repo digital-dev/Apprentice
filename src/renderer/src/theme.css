@@ -74,6 +74,7 @@ h1, h2, h3 {
 
 .nav-item:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
+  border-left-color: transparent;
 }
 
 .nav-item.active {
@@ -85,6 +86,7 @@ h1, h2, h3 {
 .nav-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+  border-left-color: transparent;
 }
 
 .main {

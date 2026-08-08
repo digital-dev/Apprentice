@@ -70,7 +70,7 @@ export default function App() {
             "Clear scan" is how you throw it away deliberately. */}
         {exeName && (
           <div style={{ display: screen === 'scanner' ? 'block' : 'none' }}>
-            <Scanner exeName={exeName} onDone={() => setScreen('cheats')} />
+            <Scanner key={exeName} exeName={exeName} onDone={() => setScreen('cheats')} />
           </div>
         )}
       </div>
