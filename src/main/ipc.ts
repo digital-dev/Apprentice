@@ -893,7 +893,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
         filters: [{ name: 'Cheat Table', extensions: ['CT'] }]
       })
       if (result.canceled || !result.filePath) return null
-      fs.writeFileSync(result.filePath, xml, 'utf8')
+      try {
+        fs.writeFileSync(result.filePath, xml, 'utf8')
+      } catch (err) {
+        return { exportedNames: [], skipped: [{ name: result.filePath, reason: String(err) }] }
+      }
       return { exportedNames: exported, skipped }
     }
   )
