@@ -97,6 +97,13 @@ export function buildCheatTable(patches: PatchCheat[]): CtExportResult {
       })
       continue
     }
+    if ((patch.value as number) < 0) {
+      skipped.push({
+        name: patch.name,
+        reason: 'Force-mode patch is missing data needed to reconstruct its Auto Assembler script.'
+      })
+      continue
+    }
     counter++
     entries.push(buildEntry(patch, `patch${counter}`))
     exported.push(patch.name)

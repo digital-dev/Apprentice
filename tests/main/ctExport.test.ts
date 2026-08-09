@@ -92,4 +92,16 @@ describe('buildCheatTable', () => {
       }
     ])
   })
+
+  it('skips a force-mode patch with a negative value', () => {
+    const patch = forcePatch({ value: -5, dataType: 'int32', name: 'Negative Health' })
+    const result = buildCheatTable([patch])
+    expect(result.exported).toEqual([])
+    expect(result.skipped).toEqual([
+      {
+        name: 'Negative Health',
+        reason: 'Force-mode patch is missing data needed to reconstruct its Auto Assembler script.'
+      }
+    ])
+  })
 })
