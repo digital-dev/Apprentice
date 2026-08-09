@@ -217,6 +217,12 @@ export default function CheatList({
     skipped: { description: string; reason: string }[]
   } | null>(null)
 
+  const [ctExporting, setCtExporting] = useState(false)
+  const [ctExportResult, setCtExportResult] = useState<{
+    exportedNames: string[]
+    skipped: { name: string; reason: string }[]
+  } | null>(null)
+
   async function importCheatTable() {
     setCtImporting(true)
     setCtImportResult(null)
@@ -233,6 +239,18 @@ export default function CheatList({
       setPatches(all.filter(isPatch))
     } finally {
       setCtImporting(false)
+    }
+  }
+
+  async function exportCheatTable() {
+    setCtExporting(true)
+    setCtExportResult(null)
+    try {
+      const result = await window.tamper.exportCheatTable(exeName)
+      if (result === null) return // user cancelled the save dialog
+      setCtExportResult(result)
+    } finally {
+      setCtExporting(false)
     }
   }
 
@@ -753,6 +771,9 @@ export default function CheatList({
       <button onClick={importCheatTable} disabled={ctImporting}>
         {ctImporting ? 'Importing…' : 'Import Cheat Table (.CT)'}
       </button>
+      <button onClick={exportCheatTable} disabled={ctExporting}>
+        {ctExporting ? 'Exporting…' : 'Export to Cheat Table (.CT)'}
+      </button>
 
       {ctImportResult && (
         <div className="banner" style={{ flexWrap: 'wrap' }}>
@@ -780,6 +801,35 @@ export default function CheatList({
             </ul>
           )}
           <button onClick={() => setCtImportResult(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {ctExportResult && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            Exported {ctExportResult.exportedNames.length} cheat
+            {ctExportResult.exportedNames.length === 1 ? '' : 's'}
+            {ctExportResult.skipped.length > 0
+              ? `, skipped ${ctExportResult.skipped.length} (only 'force'-mode patches can be exported).`
+              : '.'}
+          </p>
+          {ctExportResult.exportedNames.length > 0 && (
+            <ul style={{ flexBasis: '100%' }}>
+              {ctExportResult.exportedNames.map((name) => (
+                <li key={name}>✓ {name}</li>
+              ))}
+            </ul>
+          )}
+          {ctExportResult.skipped.length > 0 && (
+            <ul style={{ flexBasis: '100%' }}>
+              {ctExportResult.skipped.map((s, i) => (
+                <li key={`${s.name}-${i}`} className="muted">
+                  {s.name} — {s.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button onClick={() => setCtExportResult(null)}>Dismiss</button>
         </div>
       )}
 
