@@ -162,6 +162,13 @@ declare global {
       importCheatTable: (
         exeName: string
       ) => Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | null>
+      // Opens a native save dialog and writes every 'force'-mode patch out
+      // as a Cheat Engine .CT table. Null if the user cancelled the save
+      // dialog; otherwise a summary of what was exported and what was
+      // skipped (with why) — see ctExport.ts.
+      exportCheatTable: (
+        exeName: string
+      ) => Promise<{ exportedNames: string[]; skipped: { name: string; reason: string }[] } | null>
     }
   }
 }

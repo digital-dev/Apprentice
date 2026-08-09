@@ -17,6 +17,7 @@ import {
   isPatchCheat
 } from './store'
 import { importCheatTable } from './ctImport'
+import { buildCheatTable } from './ctExport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
 import { monoResolver } from './monoResolver'
@@ -870,6 +871,30 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       const { imported, skipped } = importCheatTable(xml)
       for (const patch of imported) saveCheat(exeName, patch)
       return { importedNames: imported.map((p) => p.name), skipped }
+    }
+  )
+
+  // Opens a native save dialog and writes out every 'force'-mode patch as
+  // a Cheat Engine Auto Assembler entry — the exact reverse of ct:import
+  // above. Everything that mode can't represent (other patch modes, value
+  // cheats) is skipped and reported, not approximated; see ctExport.ts's
+  // module comment for why.
+  ipcMain.handle(
+    'ct:export',
+    async (
+      _e,
+      exeName: string
+    ): Promise<{ exportedNames: string[]; skipped: { name: string; reason: string }[] } | null> => {
+      const patches = loadCheats(exeName).filter(isPatchCheat)
+      const { xml, exported, skipped } = buildCheatTable(patches)
+      const result = await dialog.showSaveDialog(getWindow(), {
+        title: 'Export Cheat Engine table',
+        defaultPath: `${exeName.replace(/\.exe$/i, '')}.CT`,
+        filters: [{ name: 'Cheat Table', extensions: ['CT'] }]
+      })
+      if (result.canceled || !result.filePath) return null
+      fs.writeFileSync(result.filePath, xml, 'utf8')
+      return { exportedNames: exported, skipped }
     }
   )
 
