@@ -807,11 +807,17 @@ export default function CheatList({
       {ctExportResult && (
         <div className="banner" style={{ flexWrap: 'wrap' }}>
           <p style={{ flexBasis: '100%' }}>
-            Exported {ctExportResult.exportedNames.length} cheat
-            {ctExportResult.exportedNames.length === 1 ? '' : 's'}
-            {ctExportResult.skipped.length > 0
-              ? `, skipped ${ctExportResult.skipped.length} (only 'force'-mode patches can be exported).`
-              : '.'}
+            {ctExportResult.exportedNames.length === 0 && ctExportResult.skipped.length === 0 ? (
+              'No force-mode patches to export.'
+            ) : (
+              <>
+                Exported {ctExportResult.exportedNames.length} cheat
+                {ctExportResult.exportedNames.length === 1 ? '' : 's'}
+                {ctExportResult.skipped.length > 0
+                  ? `, skipped ${ctExportResult.skipped.length} (only 'force'-mode patches can be exported).`
+                  : '.'}
+              </>
+            )}
           </p>
           {ctExportResult.exportedNames.length > 0 && (
             <ul style={{ flexBasis: '100%' }}>

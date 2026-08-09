@@ -45,6 +45,19 @@ function formatValue(value: number, dataType: DataType): string {
   return dataType === 'float' ? `(float)${value}` : value.toString(16)
 }
 
+// JS only switches Number#toString to exponential notation at >=1e21 or
+// <1e-6; ctImport.ts's value-capture regex ([0-9A-Fa-f.]+) would treat the
+// "e" as a hex digit and silently mis-parse a value like "1e+21" down to
+// just "1" on reimport. No plausible game-cheat value is ever this
+// large/small, but the guard is cheap and catches the corruption instead of
+// letting it through silently.
+const PLAIN_DECIMAL = /^-?\d+(\.\d+)?$/
+
+const MISSING_DATA_REASON =
+  'Force-mode patch is missing data needed to reconstruct its Auto Assembler script.'
+const UNREPRESENTABLE_REASON =
+  "This value cannot be represented in Cheat Engine's Auto Assembler script format."
+
 const REQUIRED_FIELDS: (keyof PatchCheat)[] = [
   'signature',
   'originalBytes',
@@ -90,18 +103,20 @@ export function buildCheatTable(patches: PatchCheat[]): CtExportResult {
       continue
     }
     const missing = REQUIRED_FIELDS.some((field) => patch[field] === undefined || patch[field] === null)
-    if (missing || patch.dataType === 'byte') {
-      skipped.push({
-        name: patch.name,
-        reason: 'Force-mode patch is missing data needed to reconstruct its Auto Assembler script.'
-      })
+    if (missing) {
+      skipped.push({ name: patch.name, reason: MISSING_DATA_REASON })
+      continue
+    }
+    if (patch.dataType === 'byte') {
+      skipped.push({ name: patch.name, reason: UNREPRESENTABLE_REASON })
       continue
     }
     if ((patch.value as number) < 0) {
-      skipped.push({
-        name: patch.name,
-        reason: 'Force-mode patch is missing data needed to reconstruct its Auto Assembler script.'
-      })
+      skipped.push({ name: patch.name, reason: UNREPRESENTABLE_REASON })
+      continue
+    }
+    if (patch.dataType === 'float' && !PLAIN_DECIMAL.test(String(patch.value))) {
+      skipped.push({ name: patch.name, reason: UNREPRESENTABLE_REASON })
       continue
     }
     counter++

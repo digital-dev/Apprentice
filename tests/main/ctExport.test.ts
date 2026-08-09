@@ -100,7 +100,19 @@ describe('buildCheatTable', () => {
     expect(result.skipped).toEqual([
       {
         name: 'Negative Health',
-        reason: 'Force-mode patch is missing data needed to reconstruct its Auto Assembler script.'
+        reason: "This value cannot be represented in Cheat Engine's Auto Assembler script format."
+      }
+    ])
+  })
+
+  it('skips a force-mode float patch whose value formats as exponential notation', () => {
+    const patch = forcePatch({ value: 1e21, dataType: 'float', name: 'Huge Value' })
+    const result = buildCheatTable([patch])
+    expect(result.exported).toEqual([])
+    expect(result.skipped).toEqual([
+      {
+        name: 'Huge Value',
+        reason: "This value cannot be represented in Cheat Engine's Auto Assembler script format."
       }
     ])
   })

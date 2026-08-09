@@ -885,8 +885,21 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       _e,
       exeName: string
     ): Promise<{ exportedNames: string[]; skipped: { name: string; reason: string }[] } | null> => {
-      const patches = loadCheats(exeName).filter(isPatchCheat)
-      const { xml, exported, skipped } = buildCheatTable(patches)
+      const allCheats = loadCheats(exeName)
+      // internal: true patches are capture-anchored plumbing for value
+      // cheats and are never shown in the cheat list UI (see store.ts's
+      // comment on PatchCheat.internal) — they must not surface as skip
+      // entries for patches the user never saw.
+      const patches = allCheats.filter(isPatchCheat).filter((p) => !p.internal)
+      const valueCheats = allCheats.filter((c) => !isPatchCheat(c))
+      const { xml, exported, skipped: patchSkipped } = buildCheatTable(patches)
+      const skipped = [
+        ...patchSkipped,
+        ...valueCheats.map((cheat) => ({
+          name: cheat.name,
+          reason: "Value cheats have no equivalent Auto Assembler script shape and can't be exported to .CT."
+        }))
+      ]
       const result = await dialog.showSaveDialog(getWindow(), {
         title: 'Export Cheat Engine table',
         defaultPath: `${exeName.replace(/\.exe$/i, '')}.CT`,
