@@ -145,6 +145,8 @@ export default function CheatList({
   // Which cheat's verify panel is expanded, and the value typed into it.
   const [verifyOpen, setVerifyOpen] = useState<string | null>(null)
   const [verifyValue, setVerifyValue] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   // Runtime state pushed by cheatRuntime for each armed patch — keyed by
   // patch id, same as patchStatuses. Populated only once a patch has been
   // toggled on at least once; patchStatusLabel covers the pre-arm readout.
@@ -601,6 +603,24 @@ export default function CheatList({
     })
   }
 
+  async function renameCheat(cheat: CheatDefinition, name: string) {
+    const trimmed = name.trim()
+    if (trimmed === '') return
+    const updated = { ...cheat, name: trimmed }
+    await window.tamper.saveCheat(exeName, updated)
+    setCheats((prev) => prev.map((c) => (c.id === cheat.id ? updated : c)))
+    setRenamingId(null)
+  }
+
+  async function renamePatch(patch: PatchCheat, name: string) {
+    const trimmed = name.trim()
+    if (trimmed === '') return
+    const updated = { ...patch, name: trimmed }
+    await window.tamper.saveCheat(exeName, updated)
+    setPatches((prev) => prev.map((p) => (p.id === patch.id ? updated : p)))
+    setRenamingId(null)
+  }
+
   function liveCount(cheat: CheatDefinition): number | null {
     const result = statuses.get(cheat.id)
     if (!result) return null
@@ -1009,7 +1029,34 @@ export default function CheatList({
           const deadCount = result ? result.length - result.filter((s) => s.alive).length : 0
           return (
             <li key={cheat.id} style={{ flexWrap: 'wrap' }}>
-              <span>{cheat.name}</span>
+              {renamingId === cheat.id ? (
+                <>
+                  <input
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    style={{ maxWidth: 200 }}
+                  />
+                  <button
+                    onClick={() => renameCheat(cheat, renameValue)}
+                    disabled={renameValue.trim() === ''}
+                  >
+                    Save
+                  </button>
+                  <button onClick={() => setRenamingId(null)}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  <span>{cheat.name}</span>
+                  <button
+                    onClick={() => {
+                      setRenamingId(cheat.id)
+                      setRenameValue(cheat.name)
+                    }}
+                  >
+                    Rename
+                  </button>
+                </>
+              )}
               <AddressChip
                 label={
                   cheat.targets.length === 1
@@ -1094,7 +1141,34 @@ export default function CheatList({
             const slotInfo = patchSlots.get(patch.id)
             return (
               <li key={patch.id} style={{ flexWrap: 'wrap' }}>
-                <span>{patch.name}</span>
+                {renamingId === patch.id ? (
+                  <>
+                    <input
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      style={{ maxWidth: 200 }}
+                    />
+                    <button
+                      onClick={() => renamePatch(patch, renameValue)}
+                      disabled={renameValue.trim() === ''}
+                    >
+                      Save
+                    </button>
+                    <button onClick={() => setRenamingId(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <span>{patch.name}</span>
+                    <button
+                      onClick={() => {
+                        setRenamingId(patch.id)
+                        setRenameValue(patch.name)
+                      }}
+                    >
+                      Rename
+                    </button>
+                  </>
+                )}
                 <AddressChip
                   label={
                     patch.moduleName
