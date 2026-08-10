@@ -854,7 +854,10 @@ export default function CheatList({
             onChange={(e) => setMonoValueDataType(e.target.value as DataType)}
           >
             <option value="float">Float</option>
-            <option value="int32">Whole number</option>
+            <option value="double">Double</option>
+            <option value="int32">Whole number (4 bytes)</option>
+            <option value="int16">Whole number (2 bytes)</option>
+            <option value="int64">Whole number (8 bytes)</option>
             <option value="int8">Byte (bool, e.g. a Mono bool field)</option>
           </select>
           <select

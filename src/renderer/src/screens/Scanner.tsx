@@ -378,7 +378,11 @@ export default function Scanner({
         disabled={candidates.length > 0}
       >
         <option value="float">Float (most common — health, stamina, position)</option>
+        <option value="double">Double (higher-precision float)</option>
         <option value="int32">Whole number (gold, item count)</option>
+        <option value="int16">Whole number, 2 bytes (small counters)</option>
+        <option value="int64">Whole number, 8 bytes (large totals)</option>
+        <option value="int8">Byte, 0-255 (e.g. a bool flag)</option>
       </select>
       <input
         placeholder="Current value in-game"
@@ -471,7 +475,22 @@ export default function Scanner({
                 <option value="nop">Stop this value from changing</option>
                 <option value="guard">Stop this value from changing — for this object only</option>
                 <option value="capture">Set this value — for this object only</option>
-                <option value="force">Set this value — everywhere this code runs</option>
+                {/* Force mode encodes the value as a 32-bit immediate — it
+                    can only handle the two data types that fit that shape.
+                    patchEngine.ts's apply() refuses this at save time too;
+                    disabling it here means the user sees "unavailable"
+                    instead of a save-time error. */}
+                <option
+                  value="force"
+                  disabled={dataType !== 'int32' && dataType !== 'float'}
+                  title={
+                    dataType !== 'int32' && dataType !== 'float'
+                      ? 'Force mode can only set whole numbers (4 bytes) or floats'
+                      : undefined
+                  }
+                >
+                  Set this value — everywhere this code runs
+                </option>
               </select>
               {(patchModeChoice === 'force' || patchModeChoice === 'capture') && (
                 <input
