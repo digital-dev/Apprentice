@@ -855,7 +855,7 @@ export default function CheatList({
           >
             <option value="float">Float</option>
             <option value="int32">Whole number</option>
-            <option value="byte">Byte (bool, e.g. a Mono bool field)</option>
+            <option value="int8">Byte (bool, e.g. a Mono bool field)</option>
           </select>
           <select
             value={monoValueMode}

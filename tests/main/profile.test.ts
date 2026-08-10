@@ -60,6 +60,32 @@ describe('profile', () => {
     expect(fs.readFileSync(file, 'utf-8')).toBe(LEGACY)
   })
 
+  it("migrates a legacy dataType of 'byte' to 'int8' on load, without rewriting the file", () => {
+    const file = path.join(dir, 'valheim.json')
+    const legacyByte = JSON.stringify({
+      schema: 2,
+      exe: 'valheim',
+      modules: {},
+      cheats: [
+        {
+          id: 'god-mode',
+          name: 'God Mode',
+          dataType: 'byte',
+          mode: 'freeze',
+          targets: [],
+          value: 1
+        }
+      ]
+    })
+    fs.writeFileSync(file, legacyByte)
+    const profile = loadProfile('valheim')
+    expect(profile.cheats).toHaveLength(1)
+    expect((profile.cheats[0] as { dataType?: string }).dataType).toBe('int8')
+    // The file on disk is untouched until something is saved — same
+    // convention as the schema-1 legacy-array test above.
+    expect(fs.readFileSync(file, 'utf-8')).toBe(legacyByte)
+  })
+
   it('migrates a legacy file to schema 2 on the next save', () => {
     fs.writeFileSync(path.join(dir, 'valheim.json'), LEGACY)
     saveCheat('valheim', {

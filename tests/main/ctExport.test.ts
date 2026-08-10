@@ -105,6 +105,18 @@ describe('buildCheatTable', () => {
     ])
   })
 
+  it('skips a force-mode patch whose dataType is not int32/float', () => {
+    const patch = forcePatch({ dataType: 'int8', name: 'Wide Type' })
+    const result = buildCheatTable([patch])
+    expect(result.exported).toEqual([])
+    expect(result.skipped).toEqual([
+      {
+        name: 'Wide Type',
+        reason: "This value cannot be represented in Cheat Engine's Auto Assembler script format."
+      }
+    ])
+  })
+
   it('skips a force-mode float patch whose value formats as exponential notation', () => {
     const patch = forcePatch({ value: 1e21, dataType: 'float', name: 'Huge Value' })
     const result = buildCheatTable([patch])

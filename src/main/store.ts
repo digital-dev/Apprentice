@@ -1,14 +1,20 @@
 import { loadProfile, saveProfile, setProfileDir } from './profile'
 
 export type CheatMode = 'freeze' | 'oneshot'
-// 'byte' is a 1-byte write/read — the width a Mono bool field (e.g.
-// Player.m_godMode) actually occupies. int32/float always write 4 bytes;
-// using either of those on a 1-byte field overwrites 3 bytes of whatever
-// field follows it in the object's layout. Scanning (scanner.cc) does not
-// support 'byte' — this exists for the Mono value-target write path only,
-// where the field's real width is already known from its resolution, not
-// discovered by scanning.
-export type DataType = 'int32' | 'float' | 'byte'
+// Every numeric width Apprentice can scan for, freeze, or write through a
+// Mono value target. 'int8' (an unsigned 1-byte write/read — kept
+// unsigned to match the width a Mono bool field, e.g. Player.m_godMode,
+// actually occupies, and how it's always been read/written here) was
+// previously named 'byte' and excluded from scanning; native/src/scanner.cc
+// and native/src/memory_ops.cc now handle every one of these widths
+// uniformly through native/src/value_type.h, so scanning works for all of
+// them. int16/int32/int64 are signed.
+//
+// Force-mode code patches (cave_ops.cc's encodeStore) can only encode a
+// 32-bit immediate — a force-mode PatchCheat's dataType must stay
+// 'int32' or 'float'; patchEngine.ts's apply() refuses any other width
+// before installing anything.
+export type DataType = 'int8' | 'int16' | 'int32' | 'int64' | 'float' | 'double'
 
 // A cheat can write to more than one resolved pointer chain at once. Naive
 // memory scanning sometimes finds a chain that only looks static (a false

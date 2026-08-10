@@ -77,7 +77,7 @@ export function loadProfile(exeName: string): GameProfile {
   // unverified and signature-only — exactly how it behaved before. The file
   // on disk is left alone until something is saved.
   if (Array.isArray(parsed)) {
-    return { ...emptyProfile(exeName), cheats: parsed as StoredCheat[] }
+    return { ...emptyProfile(exeName), cheats: migrateByteDataType(parsed as StoredCheat[]) }
   }
 
   const obj = parsed as Partial<GameProfile>
@@ -88,8 +88,23 @@ export function loadProfile(exeName: string): GameProfile {
     schema: 2,
     exe: obj.exe ?? exeName.replace(/\.exe$/i, ''),
     modules: obj.modules ?? {},
-    cheats: obj.cheats
+    cheats: migrateByteDataType(obj.cheats)
   }
+}
+
+// DataType's 'byte' was renamed to 'int8' (same width, same unsigned
+// representation — a naming change only, not a reinterpretation). Any
+// cheat saved before the rename still has 'byte' on disk; rewriting it to
+// 'int8' here means every existing games/*.json file keeps loading and
+// working unchanged, with no migration script and no rewrite of the file
+// until something in it is next saved — the same "fix it in memory, leave
+// the file alone" convention this loader already uses for schema 1.
+function migrateByteDataType(cheats: StoredCheat[]): StoredCheat[] {
+  return cheats.map((cheat) => {
+    const withDataType = cheat as { dataType?: string }
+    if (withDataType.dataType !== 'byte') return cheat
+    return { ...cheat, dataType: 'int8' } as StoredCheat
+  })
 }
 
 export function saveProfile(exeName: string, profile: GameProfile): void {

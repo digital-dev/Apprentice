@@ -107,7 +107,11 @@ export function buildCheatTable(patches: PatchCheat[]): CtExportResult {
       skipped.push({ name: patch.name, reason: MISSING_DATA_REASON })
       continue
     }
-    if (patch.dataType === 'byte') {
+    // Force-mode's Auto Assembler script can only encode a 32-bit
+    // immediate (see ctExport.ts's own module comment and
+    // patchEngine.ts's force-mode validation) — every dataType except
+    // int32/float is unrepresentable here, not just the old 'byte' type.
+    if (patch.dataType !== 'int32' && patch.dataType !== 'float') {
       skipped.push({ name: patch.name, reason: UNREPRESENTABLE_REASON })
       continue
     }
