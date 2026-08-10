@@ -8,6 +8,9 @@
 int g_health = 100;
 int* g_health_ptr = &g_health; // pointer.test.ts resolves through this
 float g_stamina = 100.0f; // scanner.test.ts float-path coverage
+short g_int16 = 12345; // scanner.test.ts / memory_ops.test.ts int16 coverage
+long long g_int64 = 123456789012345LL; // scanner.test.ts / memory_ops.test.ts int64 coverage — comfortably beyond int32's range
+double g_double = 123.456; // scanner.test.ts / memory_ops.test.ts double coverage
 volatile int g_drain_count = 1000000; // patch_ops.test.ts drains and NOPs this
 
 // Mimics a real object layout: the field we care about sits at a nonzero
@@ -263,6 +266,9 @@ int main(void) {
     if (line[0] == 'q') break;
     int val;
     float fval;
+    short val16;
+    long long val64;
+    double dval;
     if (strncmp(line, "loadmono", 8) == 0) {
       HMODULE m = LoadLibraryA("test-harness\\probe_mono.dll");
       if (m == NULL) printf("ERR\n");
@@ -300,6 +306,23 @@ int main(void) {
     } else if (sscanf(line, "setp %f", &fval) == 1) {
       g_player_ptr->stamina = fval; // lets pointer.test.ts narrow to this exact field
       printf("OK\n");
+    } else if (sscanf(line, "seti16 %hd", &val16) == 1) {
+      g_int16 = val16;
+      printf("OK\n");
+    } else if (strncmp(line, "geti16", 6) == 0) {
+      // Must come before the bare "get" check below — strncmp(line, "get", 3)
+      // would otherwise match "geti16" too and print g_health instead.
+      printf("OK %d\n", g_int16);
+    } else if (sscanf(line, "seti64 %lld", &val64) == 1) {
+      g_int64 = val64;
+      printf("OK\n");
+    } else if (strncmp(line, "geti64", 6) == 0) {
+      printf("OK %lld\n", g_int64);
+    } else if (sscanf(line, "setd %lf", &dval) == 1) {
+      g_double = dval;
+      printf("OK\n");
+    } else if (strncmp(line, "getd", 4) == 0) {
+      printf("OK %f\n", g_double);
     } else if (sscanf(line, "setshield %f", &fval) == 1) {
       g_player_ptr->shield = fval; // lets write_watch.test.ts narrow the scan to this exact field
       printf("OK\n");
