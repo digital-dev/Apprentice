@@ -103,6 +103,20 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.every((c) => c.value === -500)).toBe(true)
   })
 
+  it('finds and narrows an int8 value', async () => {
+    let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'int8', 42)
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((c) => c.value === 42)).toBe(true)
+
+    await send('seti8 200')
+    candidates = (addon as any).scanNext(handle, candidates, 'int8', {
+      mode: 'exact',
+      value: 200
+    })
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((c) => c.value === 200)).toBe(true)
+  })
+
   it('finds and narrows an int64 value', async () => {
     let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'int64', 123456789012345)
     expect(candidates.length).toBeGreaterThan(0)

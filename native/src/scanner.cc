@@ -9,6 +9,13 @@
 
 namespace {
 
+// Prevents an unbounded-memory crash on a narrow/common value (worst case:
+// int8 stride-1 scanning for 0 or 1 against a multi-GB process can produce
+// hundreds of millions of matches otherwise). The UI's job is to tell the
+// user to narrow further; this cap is what keeps that possible instead of
+// OOMing before the user ever sees a result.
+constexpr size_t kMaxScanResults = 1'000'000;
+
 uintptr_t ParseHex(const std::string& s) {
   return static_cast<uintptr_t>(strtoull(s.c_str(), nullptr, 16));
 }
@@ -47,10 +54,16 @@ struct AddressValue {
 std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double target) {
   std::vector<AddressValue> out;
   bool isFloat = IsFloatKind(spec.kind);
+  // Cheat Engine convention: scan on 4-byte alignment regardless of value
+  // width, so 8-byte types (int64/double) aren't missed when they sit at a
+  // non-8-byte-aligned offset inside an otherwise-aligned struct. Narrow
+  // types keep their natural stride.
+  size_t stride = spec.size <= 4 ? spec.size : 4;
 
   MEMORY_BASIC_INFORMATION mbi;
   uintptr_t addr = 0;
-  while (VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+  while (out.size() < kMaxScanResults &&
+         VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
     bool readable = (mbi.State == MEM_COMMIT) &&
         (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
         !(mbi.Protect & PAGE_GUARD);
@@ -60,10 +73,11 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
       SIZE_T bytesRead = 0;
       if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
         uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        for (SIZE_T offset = 0; offset + spec.size <= bytesRead; offset += spec.size) {
+        for (SIZE_T offset = 0; offset + spec.size <= bytesRead; offset += stride) {
           double value = InterpretAsDouble(buffer.data() + offset, spec);
           if (ValuesEqual(value, target, isFloat)) {
             out.push_back({base + offset, value});
+            if (out.size() >= kMaxScanResults) break;
           }
         }
       }

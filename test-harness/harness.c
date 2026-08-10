@@ -9,6 +9,7 @@ int g_health = 100;
 int* g_health_ptr = &g_health; // pointer.test.ts resolves through this
 float g_stamina = 100.0f; // scanner.test.ts float-path coverage
 short g_int16 = 12345; // scanner.test.ts / memory_ops.test.ts int16 coverage
+unsigned char g_int8 = 42; // scanner.test.ts / memory_ops.test.ts int8 coverage — unsigned, matches ValueKind::UInt8
 long long g_int64 = 123456789012345LL; // scanner.test.ts / memory_ops.test.ts int64 coverage — comfortably beyond int32's range
 double g_double = 123.456; // scanner.test.ts / memory_ops.test.ts double coverage
 volatile int g_drain_count = 1000000; // patch_ops.test.ts drains and NOPs this
@@ -267,6 +268,7 @@ int main(void) {
     int val;
     float fval;
     short val16;
+    unsigned char val8;
     long long val64;
     double dval;
     if (strncmp(line, "loadmono", 8) == 0) {
@@ -313,6 +315,11 @@ int main(void) {
       // Must come before the bare "get" check below — strncmp(line, "get", 3)
       // would otherwise match "geti16" too and print g_health instead.
       printf("OK %d\n", g_int16);
+    } else if (sscanf(line, "seti8 %hhu", &val8) == 1) {
+      g_int8 = val8;
+      printf("OK\n");
+    } else if (strncmp(line, "geti8", 5) == 0) {
+      printf("OK %d\n", g_int8);
     } else if (sscanf(line, "seti64 %lld", &val64) == 1) {
       g_int64 = val64;
       printf("OK\n");

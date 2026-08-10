@@ -83,4 +83,34 @@ describe('readValue / writeValue', () => {
     const reply = await send('geti16')
     expect(reply).toBe('OK -1000')
   })
+
+  it('reads and writes an int8 value directly', async () => {
+    // A raw byte value like 42 is common enough elsewhere in the process
+    // that scanFirst alone doesn't reliably land on g_int8 (unlike the
+    // wider int16 case above), so narrow with scanNext against a distinct
+    // value first, the same way scanner.test.ts's own int8 test does.
+    let candidates: { address: string; value: number }[] = await (addon as any).scanFirst(
+      handle,
+      'int8',
+      42
+    )
+    expect(candidates.length).toBeGreaterThan(0)
+
+    await send('seti8 200')
+    candidates = (addon as any).scanNext(handle, candidates, 'int8', {
+      mode: 'exact',
+      value: 200
+    })
+    expect(candidates.length).toBeGreaterThan(0)
+    const target = candidates[0].address
+
+    const before = (addon as any).readValue(handle, target, [], 'int8')
+    expect(before).toBe(200)
+
+    const ok = (addon as any).writeValue(handle, target, [], 'int8', 77)
+    expect(ok).toBe(true)
+
+    const reply = await send('geti8')
+    expect(reply).toBe('OK 77')
+  })
 })

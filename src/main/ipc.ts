@@ -219,7 +219,7 @@ export interface TargetStatus {
 // exactly equal the underlying float, so float verification tolerates a
 // small window; ints are matched exactly.
 function valueMatches(read: number, expected: number, dataType: string): boolean {
-  if (dataType === 'float') return Math.abs(read - expected) < 1.0
+  if (dataType === 'float' || dataType === 'double') return Math.abs(read - expected) < 1.0
   return read === expected
 }
 
