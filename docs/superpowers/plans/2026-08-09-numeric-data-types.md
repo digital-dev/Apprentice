@@ -947,9 +947,10 @@ Expected: same pass/fail split as this environment's established baseline for ev
 - [ ] **Step 8: Commit**
 
 ```bash
-git add native/src/value_type.h native/src/scanner.cc native/src/memory_ops.cc native/build tests/native/scanner.test.ts tests/native/memory_ops.test.ts
+git add native/src/value_type.h native/src/scanner.cc native/src/memory_ops.cc tests/native/scanner.test.ts tests/native/memory_ops.test.ts
 git commit -m "Generalize scanner.cc and memory_ops.cc to every DataType width"
 ```
+(`native/build/` is gitignored — the rebuilt addon binary is never committed, only the sources that produce it.)
 
 ---
 
