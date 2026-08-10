@@ -64,4 +64,23 @@ describe('readValue / writeValue', () => {
     const reply = await send('get')
     expect(reply).toBe('OK 777')
   })
+
+  it('reads and writes an int16 value directly', async () => {
+    let candidates: { address: string; value: number }[] = await (addon as any).scanFirst(
+      handle,
+      'int16',
+      12345
+    )
+    expect(candidates.length).toBeGreaterThan(0)
+    const target = candidates[0].address
+
+    const before = (addon as any).readValue(handle, target, [], 'int16')
+    expect(before).toBe(12345)
+
+    const ok = (addon as any).writeValue(handle, target, [], 'int16', -1000)
+    expect(ok).toBe(true)
+
+    const reply = await send('geti16')
+    expect(reply).toBe('OK -1000')
+  })
 })

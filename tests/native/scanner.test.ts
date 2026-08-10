@@ -88,4 +88,45 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.length).toBeGreaterThan(0)
     expect(candidates.every((c) => c.value === 80)).toBe(true)
   })
+
+  it('finds and narrows an int16 value', async () => {
+    let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'int16', 12345)
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((c) => c.value === 12345)).toBe(true)
+
+    await send('seti16 -500')
+    candidates = (addon as any).scanNext(handle, candidates, 'int16', {
+      mode: 'exact',
+      value: -500
+    })
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((c) => c.value === -500)).toBe(true)
+  })
+
+  it('finds and narrows an int64 value', async () => {
+    let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'int64', 123456789012345)
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((c) => c.value === 123456789012345)).toBe(true)
+
+    await send('seti64 987654321098765')
+    candidates = (addon as any).scanNext(handle, candidates, 'int64', {
+      mode: 'exact',
+      value: 987654321098765
+    })
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((c) => c.value === 987654321098765)).toBe(true)
+  })
+
+  it('finds and narrows a double value', async () => {
+    let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'double', 123.456)
+    expect(candidates.length).toBeGreaterThan(0)
+
+    await send('setd 9.5')
+    candidates = (addon as any).scanNext(handle, candidates, 'double', {
+      mode: 'exact',
+      value: 9.5
+    })
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((c) => c.value === 9.5)).toBe(true)
+  })
 })

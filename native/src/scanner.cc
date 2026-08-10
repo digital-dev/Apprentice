@@ -1,4 +1,5 @@
 #include "scanner.h"
+#include "value_type.h"
 #include <windows.h>
 #include <vector>
 #include <string>
@@ -18,36 +19,20 @@ std::string ToHex(uintptr_t addr) {
   return buf;
 }
 
-// int32 and float are both 4 bytes; scanning/filtering only differs in how
-// the raw bytes are interpreted and compared, so both data types share the
-// same walk/read code with a runtime branch on interpretation.
-constexpr size_t kValueSize = 4;
-
-double InterpretAsDouble(const uint8_t* bytes, bool isFloat) {
-  if (isFloat) {
-    float v;
-    memcpy(&v, bytes, sizeof(v));
-    return static_cast<double>(v);
-  }
-  int32_t v;
-  memcpy(&v, bytes, sizeof(v));
-  return static_cast<double>(v);
-}
-
 // Float equality after a game tick can differ by tiny rounding error even
-// when "the same" value was written, so float comparisons use a small
-// epsilon; int32 comparisons stay exact.
+// when "the same" value was written, so float/double comparisons use a
+// small epsilon; every integer width compares exact.
 bool ValuesEqual(double a, double b, bool isFloat) {
   if (isFloat) return std::abs(a - b) < 0.0001;
   return a == b;
 }
 
-bool ReadValueAsDouble(HANDLE h, uintptr_t addr, bool isFloat, double* out) {
-  uint8_t buf[kValueSize];
+bool ReadValueAsDouble(HANDLE h, uintptr_t addr, const ValueSpec& spec, double* out) {
+  uint8_t buf[8]; // widest supported type (int64/double) is 8 bytes
   SIZE_T read;
-  if (!ReadProcessMemory(h, (LPCVOID)addr, buf, sizeof(buf), &read) || read != sizeof(buf))
+  if (!ReadProcessMemory(h, (LPCVOID)addr, buf, spec.size, &read) || read != spec.size)
     return false;
-  *out = InterpretAsDouble(buf, isFloat);
+  *out = InterpretAsDouble(buf, spec);
   return true;
 }
 
@@ -59,8 +44,9 @@ struct AddressValue {
 // The actual memory walk, kept free of any Napi:: types so it's safe to run
 // on a background thread (see ScanFirstWorker below) — Napi::Env/Value are
 // not thread-safe and must only be touched on the JS thread.
-std::vector<AddressValue> RunScanFirst(HANDLE h, bool isFloat, double target) {
+std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double target) {
   std::vector<AddressValue> out;
+  bool isFloat = IsFloatKind(spec.kind);
 
   MEMORY_BASIC_INFORMATION mbi;
   uintptr_t addr = 0;
@@ -69,13 +55,13 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, bool isFloat, double target) {
         (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
         !(mbi.Protect & PAGE_GUARD);
 
-    if (readable && mbi.RegionSize >= kValueSize) {
+    if (readable && mbi.RegionSize >= spec.size) {
       std::vector<uint8_t> buffer(mbi.RegionSize);
       SIZE_T bytesRead = 0;
       if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
         uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        for (SIZE_T offset = 0; offset + kValueSize <= bytesRead; offset += kValueSize) {
-          double value = InterpretAsDouble(buffer.data() + offset, isFloat);
+        for (SIZE_T offset = 0; offset + spec.size <= bytesRead; offset += spec.size) {
+          double value = InterpretAsDouble(buffer.data() + offset, spec);
           if (ValuesEqual(value, target, isFloat)) {
             out.push_back({base + offset, value});
           }
@@ -103,16 +89,16 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, bool isFloat, double target) {
 // which is indistinguishable from a hang to the user.
 class ScanFirstWorker : public Napi::AsyncWorker {
  public:
-  ScanFirstWorker(Napi::Env env, HANDLE handle, bool isFloat, double target)
+  ScanFirstWorker(Napi::Env env, HANDLE handle, ValueSpec spec, double target)
       : Napi::AsyncWorker(env),
         handle_(handle),
-        isFloat_(isFloat),
+        spec_(spec),
         target_(target),
         deferred_(Napi::Promise::Deferred::New(env)) {}
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { results_ = RunScanFirst(handle_, isFloat_, target_); }
+  void Execute() override { results_ = RunScanFirst(handle_, spec_, target_); }
 
   void OnOK() override {
     Napi::Env env = Env();
@@ -130,7 +116,7 @@ class ScanFirstWorker : public Napi::AsyncWorker {
 
  private:
   HANDLE handle_;
-  bool isFloat_;
+  ValueSpec spec_;
   double target_;
   std::vector<AddressValue> results_;
   Napi::Promise::Deferred deferred_;
@@ -143,14 +129,15 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   std::string dataType = info[1].As<Napi::String>().Utf8Value();
-  bool isFloat = dataType == "float";
-  if (!isFloat && dataType != "int32") {
-    Napi::Error::New(env, "dataType must be 'int32' or 'float'").ThrowAsJavaScriptException();
+  auto specOpt = SpecForDataType(dataType);
+  if (!specOpt) {
+    Napi::Error::New(env, "dataType must be one of int8, int16, int32, int64, float, double")
+        .ThrowAsJavaScriptException();
     return env.Null();
   }
   double target = info[2].As<Napi::Number>().DoubleValue();
 
-  auto* worker = new ScanFirstWorker(env, h, isFloat, target);
+  auto* worker = new ScanFirstWorker(env, h, *specOpt, target);
   Napi::Promise promise = worker->GetPromise();
   worker->Queue();
   return promise;
@@ -168,7 +155,14 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
   // scan.
   Napi::Array candidates = info[1].As<Napi::Array>();
   std::string dataType = info[2].As<Napi::String>().Utf8Value();
-  bool isFloat = dataType == "float";
+  auto specOpt = SpecForDataType(dataType);
+  if (!specOpt) {
+    Napi::Error::New(env, "dataType must be one of int8, int16, int32, int64, float, double")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  ValueSpec spec = *specOpt;
+  bool isFloat = IsFloatKind(spec.kind);
   Napi::Object filter = info[3].As<Napi::Object>();
   std::string mode = filter.Get("mode").As<Napi::String>().Utf8Value();
 
@@ -179,7 +173,7 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
     Napi::Object candidate = candidates.Get(i).As<Napi::Object>();
     uintptr_t addr = ParseHex(candidate.Get("address").As<Napi::String>().Utf8Value());
     double current;
-    if (!ReadValueAsDouble(h, addr, isFloat, &current)) continue;
+    if (!ReadValueAsDouble(h, addr, spec, &current)) continue;
 
     bool keep = false;
     if (mode == "exact") {

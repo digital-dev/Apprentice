@@ -1,4 +1,5 @@
 #include "memory_ops.h"
+#include "value_type.h"
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -43,6 +44,11 @@ Napi::Value ReadValue(const Napi::CallbackInfo& info) {
   uintptr_t base = ParseHex(info[1].As<Napi::String>().Utf8Value());
   auto offsets = ParseOffsets(info[2].As<Napi::Array>());
   std::string dataType = info[3].As<Napi::String>().Utf8Value();
+  auto specOpt = SpecForDataType(dataType);
+  if (!specOpt) {
+    Napi::Error::New(env, "unrecognized dataType").ThrowAsJavaScriptException();
+    return env.Null();
+  }
 
   auto addr = ResolveChain(h, base, offsets);
   if (!addr) {
@@ -50,29 +56,13 @@ Napi::Value ReadValue(const Napi::CallbackInfo& info) {
     return env.Null();
   }
 
+  uint8_t buf[8]; // widest supported type (int64/double) is 8 bytes
   SIZE_T read;
-  if (dataType == "int32") {
-    int32_t v;
-    if (!ReadProcessMemory(h, (LPCVOID)*addr, &v, sizeof(v), &read) || read != sizeof(v)) {
-      Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    return Napi::Number::New(env, v);
-  } else if (dataType == "byte") {
-    uint8_t v;
-    if (!ReadProcessMemory(h, (LPCVOID)*addr, &v, sizeof(v), &read) || read != sizeof(v)) {
-      Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    return Napi::Number::New(env, v);
-  } else {
-    float v;
-    if (!ReadProcessMemory(h, (LPCVOID)*addr, &v, sizeof(v), &read) || read != sizeof(v)) {
-      Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    return Napi::Number::New(env, v);
+  if (!ReadProcessMemory(h, (LPCVOID)*addr, buf, specOpt->size, &read) || read != specOpt->size) {
+    Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
+    return env.Null();
   }
+  return Napi::Number::New(env, InterpretAsDouble(buf, *specOpt));
 }
 
 Napi::Value WriteValue(const Napi::CallbackInfo& info) {
@@ -82,22 +72,16 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
   uintptr_t base = ParseHex(info[1].As<Napi::String>().Utf8Value());
   auto offsets = ParseOffsets(info[2].As<Napi::Array>());
   std::string dataType = info[3].As<Napi::String>().Utf8Value();
+  auto specOpt = SpecForDataType(dataType);
+  if (!specOpt) return Napi::Boolean::New(env, false);
   double value = info[4].As<Napi::Number>().DoubleValue();
 
   auto addr = ResolveChain(h, base, offsets);
   if (!addr) return Napi::Boolean::New(env, false);
 
+  uint8_t buf[8];
+  EncodeFromDouble(value, *specOpt, buf);
   SIZE_T written;
-  bool ok;
-  if (dataType == "int32") {
-    int32_t v = (int32_t)value;
-    ok = WriteProcessMemory(h, (LPVOID)*addr, &v, sizeof(v), &written) && written == sizeof(v);
-  } else if (dataType == "byte") {
-    uint8_t v = (uint8_t)value;
-    ok = WriteProcessMemory(h, (LPVOID)*addr, &v, sizeof(v), &written) && written == sizeof(v);
-  } else {
-    float v = (float)value;
-    ok = WriteProcessMemory(h, (LPVOID)*addr, &v, sizeof(v), &written) && written == sizeof(v);
-  }
+  bool ok = WriteProcessMemory(h, (LPVOID)*addr, buf, specOpt->size, &written) && written == specOpt->size;
   return Napi::Boolean::New(env, ok);
 }
