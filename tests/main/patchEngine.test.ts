@@ -212,6 +212,14 @@ describe('PatchEngine — force injection', () => {
     expect(ops.writes).toHaveLength(0)
   })
 
+  it("refuses, before allocating a cave, when the patch's dataType is a width force mode cannot encode", async () => {
+    const wideType = { ...forcePatch, id: 'patch-wide', dataType: 'int64' } as PatchCheat
+    const result = await engine.apply(wideType)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
   it("refuses, before allocating a cave, when the patch's fieldOffset isn't valid hex", async () => {
     const junk = { ...forcePatch, id: 'patch-junk', fieldOffset: 'not-hex' }
     const result = await engine.apply(junk)

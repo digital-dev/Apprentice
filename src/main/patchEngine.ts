@@ -539,8 +539,17 @@ export class PatchEngine {
       // demanding value/dataType/fieldOffset would reject them for lacking
       // fields they never use.
       if (mode === 'force') {
-        if (typeof patch.value !== 'number' || !patch.dataType) {
-          throw new Error('missing force-mode fields')
+        if (
+          typeof patch.value !== 'number' ||
+          !patch.dataType ||
+          (patch.dataType !== 'int32' && patch.dataType !== 'float')
+        ) {
+          // Force mode encodes the value as a 32-bit immediate (see
+          // valueBits below and cave_ops.cc's encodeStore) — any other
+          // width, including a legitimately-set int8/int16/int64/double,
+          // would be silently mis-encoded rather than refused if this
+          // check only looked for presence.
+          throw new Error('missing or unencodable force-mode fields')
         }
         BigInt(patch.fieldOffset as string) // throws on unparsable hex
       }
@@ -550,7 +559,7 @@ export class PatchEngine {
         error:
           mode === 'capture'
             ? "This patch is missing the register a capture injection needs — can't install it."
-            : "This patch is missing the register, offset, value, or data type a force injection needs, or its offset isn't valid hex — can't compute what to write.",
+            : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
         caveAddress: null,
         displaced: null
       }
