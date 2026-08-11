@@ -4,6 +4,7 @@ import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
 import type { PendingMonoSelection } from '../App'
 import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
+import { playOn, playOff, playError } from '../sound'
 
 // Deliberately re-declared here instead of importing store.ts's
 // isPatchCheat: that would be a VALUE import from the main process into the
@@ -153,6 +154,7 @@ export default function CheatList({
   const [capturingHotkeyId, setCapturingHotkeyId] = useState<string | null>(null)
   const [capturedHotkey, setCapturedHotkey] = useState<string | null>(null)
   const [hotkeyError, setHotkeyError] = useState<string | null>(null)
+  const [hotkeyConflicts, setHotkeyConflicts] = useState<{ name: string; hotkey: string }[]>([])
   // Runtime state pushed by cheatRuntime for each armed patch — keyed by
   // patch id, same as patchStatuses. Populated only once a patch has been
   // toggled on at least once; patchStatusLabel covers the pre-arm readout.
@@ -323,6 +325,35 @@ export default function CheatList({
     })
     window.tamper.onGameState((state) => setChangedModules(state.changedModules))
     void window.tamper.currentGame().then((state) => setChangedModules(state.changedModules))
+
+    // A hotkey fires entirely in the main process while the game (not
+    // this window) has focus — this is the renderer's only way to learn
+    // it happened, both to play the matching sound and to keep the
+    // on-screen toggle from silently disagreeing with the game's actual
+    // state (see this feature's design doc for why that gap existed).
+    window.tamper.onHotkeyFired(({ cheatId, outcome }) => {
+      if (outcome === 'on' || outcome === 'applied') playOn()
+      else if (outcome === 'off') playOff()
+      else playError()
+
+      setEnabled((prev) => {
+        if (outcome !== 'on' && outcome !== 'off') return prev
+        const next = new Set(prev)
+        if (outcome === 'on') next.add(cheatId)
+        else next.delete(cheatId)
+        return next
+      })
+      setPatchEnabled((prev) => {
+        if (outcome !== 'on' && outcome !== 'off') return prev
+        const next = new Set(prev)
+        if (outcome === 'on') next.add(cheatId)
+        else next.delete(cheatId)
+        return next
+      })
+    })
+    window.tamper.onHotkeyConflict((failed) => {
+      setHotkeyConflicts((prev) => [...prev, ...failed])
+    })
   }, [])
 
   // Live-captures a hotkey combo while `capturingHotkeyId` is set. A
@@ -912,6 +943,23 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
             </ul>
           )}
           <button onClick={() => setCtExportResult(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {hotkeyConflicts.length > 0 && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            {hotkeyConflicts.length} hotkey{hotkeyConflicts.length === 1 ? '' : 's'} could not be
+            registered — already in use by another app:
+          </p>
+          <ul style={{ flexBasis: '100%' }}>
+            {hotkeyConflicts.map((c, i) => (
+              <li key={`${c.name}-${i}`} className="muted">
+                {c.name} ({c.hotkey})
+              </li>
+            ))}
+          </ul>
+          <button onClick={() => setHotkeyConflicts([])}>Dismiss</button>
         </div>
       )}
 
