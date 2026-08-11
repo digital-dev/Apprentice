@@ -147,6 +147,12 @@ export default function CheatList({
   const [verifyValue, setVerifyValue] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  // Which cheat/patch is currently capturing a hotkey, the combo captured
+  // so far (built live as modifiers/keys are pressed), and an error to
+  // show inline (a rejected key, or a save-time conflict from cheats:save).
+  const [capturingHotkeyId, setCapturingHotkeyId] = useState<string | null>(null)
+  const [capturedHotkey, setCapturedHotkey] = useState<string | null>(null)
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null)
   // Runtime state pushed by cheatRuntime for each armed patch — keyed by
   // patch id, same as patchStatuses. Populated only once a patch has been
   // toggled on at least once; patchStatusLabel covers the pre-arm readout.
@@ -318,6 +324,25 @@ export default function CheatList({
     window.tamper.onGameState((state) => setChangedModules(state.changedModules))
     void window.tamper.currentGame().then((state) => setChangedModules(state.changedModules))
   }, [])
+
+  // Live-captures a hotkey combo while `capturingHotkeyId` is set. A
+  // window-level listener (not one scoped to an input) because the whole
+  // point is capturing the raw combo, not typing into a text field.
+  useEffect(() => {
+    if (capturingHotkeyId === null) return
+    function onKeyDown(e: KeyboardEvent) {
+      e.preventDefault()
+      const accelerator = buildAccelerator(e)
+      if (!accelerator) {
+        setHotkeyError('Use a letter, number, or function key, with at least one modifier.')
+        return
+      }
+      setHotkeyError(null)
+      setCapturedHotkey(accelerator)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [capturingHotkeyId])
 
   useEffect(() => {
     async function loadAndRevalidate() {
@@ -638,6 +663,57 @@ export default function CheatList({
     setPatches((prev) => prev.map((p) => (p.id === patch.id ? updated : p)))
     setRenamingId(null)
   }
+
+// Only a restricted, unambiguous key set is accepted — see this feature's
+// design doc for why (avoids needing a full browser-KeyEvent-to-Electron-
+// accelerator mapping table for punctuation/media keys nobody's asking
+// for). Returns null for a key not in that set.
+function acceleratorKeyFor(e: KeyboardEvent): string | null {
+  if (/^[A-Za-z0-9]$/.test(e.key)) return e.key.toUpperCase()
+  if (/^F([1-9]|1[0-2])$/.test(e.key)) return e.key
+  return null
+}
+
+function buildAccelerator(e: KeyboardEvent): string | null {
+  const key = acceleratorKeyFor(e)
+  if (!key) return null
+  const modifiers: string[] = []
+  if (e.ctrlKey) modifiers.push('CommandOrControl')
+  if (e.altKey) modifiers.push('Alt')
+  if (e.shiftKey) modifiers.push('Shift')
+  if (e.metaKey && !e.ctrlKey) modifiers.push('CommandOrControl') // Meta and Ctrl both map to the one cross-platform modifier
+  if (modifiers.length === 0) return null
+  return [...new Set(modifiers)].join('+') + '+' + key
+}
+
+function startCapturingHotkey(id: string): void {
+  setCapturingHotkeyId(id)
+  setCapturedHotkey(null)
+  setHotkeyError(null)
+}
+
+async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
+  const conflict = hotkey
+    ? [...cheats, ...patches].find((c) => c.id !== cheat.id && c.hotkey === hotkey)
+    : undefined
+  if (conflict) {
+    setHotkeyError(`Hotkey already used by "${conflict.name}" — pick a different combo.`)
+    return
+  }
+  try {
+    const updated = { ...cheat, hotkey: hotkey ?? undefined }
+    await window.tamper.saveCheat(exeName, updated)
+    if (isPatch(updated)) {
+      setPatches((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+    } else {
+      setCheats((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+    }
+    setCapturingHotkeyId(null)
+    setHotkeyError(null)
+  } catch (err) {
+    setHotkeyError((err as Error).message)
+  }
+}
 
   function liveCount(cheat: CheatDefinition): number | null {
     const result = statuses.get(cheat.id)
@@ -1116,6 +1192,31 @@ export default function CheatList({
                   </button>
                 </>
               )}
+              {capturingHotkeyId === cheat.id ? (
+                <>
+                  <span className="address-chip">{capturedHotkey ?? 'Press keys…'}</span>
+                  <button
+                    onClick={() => saveHotkey(cheat, capturedHotkey)}
+                    disabled={capturedHotkey === null}
+                  >
+                    Save
+                  </button>
+                  <button onClick={() => setCapturingHotkeyId(null)}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  {cheat.hotkey && <span className="address-chip">{cheat.hotkey}</span>}
+                  <button onClick={() => startCapturingHotkey(cheat.id)}>
+                    {cheat.hotkey ? 'Change hotkey' : 'Set hotkey'}
+                  </button>
+                  {cheat.hotkey && (
+                    <button onClick={() => saveHotkey(cheat, null)}>Clear hotkey</button>
+                  )}
+                </>
+              )}
+              {hotkeyError && capturingHotkeyId === cheat.id && (
+                <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{hotkeyError}</span>
+              )}
               <AddressChip
                 label={
                   cheat.targets.length === 1
@@ -1227,6 +1328,31 @@ export default function CheatList({
                       Rename
                     </button>
                   </>
+                )}
+                {capturingHotkeyId === patch.id ? (
+                  <>
+                    <span className="address-chip">{capturedHotkey ?? 'Press keys…'}</span>
+                    <button
+                      onClick={() => saveHotkey(patch, capturedHotkey)}
+                      disabled={capturedHotkey === null}
+                    >
+                      Save
+                    </button>
+                    <button onClick={() => setCapturingHotkeyId(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    {patch.hotkey && <span className="address-chip">{patch.hotkey}</span>}
+                    <button onClick={() => startCapturingHotkey(patch.id)}>
+                      {patch.hotkey ? 'Change hotkey' : 'Set hotkey'}
+                    </button>
+                    {patch.hotkey && (
+                      <button onClick={() => saveHotkey(patch, null)}>Clear hotkey</button>
+                    )}
+                  </>
+                )}
+                {hotkeyError && capturingHotkeyId === patch.id && (
+                  <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{hotkeyError}</span>
                 )}
                 <AddressChip
                   label={
