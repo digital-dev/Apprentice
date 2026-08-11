@@ -1,10 +1,11 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { ipcMain, BrowserWindow, dialog, globalShortcut } from 'electron'
 import fs from 'node:fs'
 import { nativeAddon, Candidate } from './nativeAddon'
 import {
   loadCheats,
   saveCheat,
   deleteCheat,
+  findHotkeyConflict,
   CheatDefinition,
   ChainTarget,
   AnchorTarget,
@@ -37,6 +38,7 @@ import {
   profileFileExists
 } from './profile'
 import { CheatRuntime } from './cheatRuntime'
+import { HotkeyManager, HotkeyDeps } from './hotkeys'
 import { ProcessWatcher } from './watcher'
 import type { LoadedModule, MonoOps } from './anchor'
 
@@ -408,12 +410,18 @@ function attachTo(pid: number, exeName: string): { handle: number; baseAddress: 
     // cheat without first disarming it by hand. Matches what the watcher's
     // onVanish path already does.
     cheatRuntime.processExited()
+    // Same reasoning as cheatRuntime above: a hotkey registered for the
+    // process we're leaving must not still fire (or fire against the
+    // wrong game) after we've switched. registerAll below re-registers
+    // fresh for the new exe.
+    hotkeyManager.unregisterAll()
   }
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
   attachedBase = baseAddress
   attachedPid = pid
   refreshModuleContext(exeName)
+  hotkeyManager.registerAll(attachedExe ?? exeName)
   return { handle, baseAddress }
 }
 
@@ -444,6 +452,25 @@ const cheatRuntime = new CheatRuntime({
   isVerified: (patch) =>
     patch.moduleName === null || !changedModules.includes(patch.moduleName.toLowerCase())
 })
+
+// Real HotkeyDeps: wraps the electron globalShortcut module and this
+// file's own freezeLoop/patchEngine/cheatRuntime/loadCheats/writeCheat —
+// the same operations cheats:toggleFreeze/cheats:oneShot/patch:apply/
+// patch:restore already expose over IPC, just reached directly instead of
+// through a renderer round trip.
+const hotkeyDeps: HotkeyDeps = {
+  loadCheats,
+  isFreezeEnabled: (cheatId) => freezeLoop.isEnabled(cheatId),
+  enableFreeze: (cheat) => freezeLoop.enable(cheat),
+  disableFreeze: (cheatId) => freezeLoop.disable(cheatId),
+  oneShot: async (cheat) => (attachedHandle === null ? false : writeCheat(attachedHandle, cheat)),
+  isPatchApplied: (patchId) => patchEngine.isApplied(patchId),
+  armPatch: (patch) => cheatRuntime.arm(patch),
+  disarmPatch: (patch) => cheatRuntime.disarm(patch.id, patch),
+  registerShortcut: (accelerator, callback) => globalShortcut.register(accelerator, callback),
+  unregisterAllShortcuts: () => globalShortcut.unregisterAll()
+}
+const hotkeyManager = new HotkeyManager(hotkeyDeps)
 
 // A relearned RVA is worth keeping — it turns the next launch of this build
 // into the arithmetic path. Best-effort: a failed write must not stop a
@@ -528,6 +555,7 @@ export function startWatching(getWindow: () => BrowserWindow): void {
     // PatchEngine.forgetAll).
     cheatRuntime.processExited()
     patchEngine.forgetAll()
+    hotkeyManager.unregisterAll()
     attachedHandle = null
     attachedBase = null
     attachedPid = null
@@ -563,9 +591,17 @@ export function releaseTarget(): void {
     // No session, or the target is already gone — nothing to disarm.
   }
   patchEngine.restoreAll()
+  hotkeyManager.unregisterAll()
 }
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
+  hotkeyManager.onFired((cheatId, outcome, error) => {
+    getWindow().webContents.send('hotkey:fired', { cheatId, outcome, error })
+  })
+  hotkeyManager.onConflict((failed) => {
+    getWindow().webContents.send('hotkey:conflict', failed)
+  })
+
   freezeLoop.onDegraded((cheatId) => {
     // Also mirrored into the runtime's own tracking — inert for a plain
     // value cheat (no armed patch shares its id), but keeps the two
@@ -597,7 +633,21 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   ipcMain.handle('cheats:load', (_e, exeName: string): StoredCheat[] => loadCheats(exeName))
 
   ipcMain.handle('cheats:save', (_e, exeName: string, cheat: StoredCheat) => {
+    const conflict = findHotkeyConflict(loadCheats(exeName), cheat)
+    if (conflict) {
+      throw new Error(`Hotkey already used by "${conflict}" — pick a different combo.`)
+    }
     saveCheatWithFingerprint(exeName, cheat)
+    // A save can add, change, or clear a hotkey. If the profile being
+    // saved to is the currently-attached exe, re-registering the full set
+    // now picks that up immediately instead of waiting for the next
+    // attach; saving to a different (unattached) profile's file — not
+    // reachable from the current UI, but the IPC channel doesn't
+    // otherwise prevent it — correctly does nothing here, since only the
+    // attached exe's hotkeys are ever live.
+    if (attachedExe !== null && exeName.replace(/\.exe$/i, '') === attachedExe) {
+      hotkeyManager.registerAll(attachedExe)
+    }
   })
 
   ipcMain.handle('cheats:delete', (_e, exeName: string, cheatId: string) => {
