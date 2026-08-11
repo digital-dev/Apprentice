@@ -49,6 +49,14 @@ export class FreezeLoop {
     this.degraded.delete(cheatId)
   }
 
+  // Whether this cheat is currently in the freeze loop's active set — the
+  // main-process-authoritative on/off state a hotkey fire needs to decide
+  // which direction to toggle, since the renderer's own `enabled` state
+  // (set only by a click) isn't available from here.
+  isEnabled(cheatId: string): boolean {
+    return this.active.has(cheatId)
+  }
+
   // Fired once when a cheat crosses from healthy to degraded (all targets
   // have failed for degradeAfterTicks consecutive ticks).
   onDegraded(cb: (cheatId: string) => void): void {

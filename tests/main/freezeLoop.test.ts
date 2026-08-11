@@ -131,4 +131,13 @@ describe('FreezeLoop', () => {
     expect(degraded).not.toHaveBeenCalled()
     loop.stop()
   })
+
+  it('isEnabled reflects the active set', () => {
+    const loop = new FreezeLoop(async () => true)
+    expect(loop.isEnabled('c1')).toBe(false)
+    loop.enable({ id: 'c1', name: 'C1', dataType: 'int32', mode: 'freeze', targets: [], value: 1 })
+    expect(loop.isEnabled('c1')).toBe(true)
+    loop.disable('c1')
+    expect(loop.isEnabled('c1')).toBe(false)
+  })
 })

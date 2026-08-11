@@ -72,6 +72,13 @@ export interface CheatDefinition {
   mode: CheatMode
   targets: CheatTarget[]
   value: number
+  // An Electron accelerator string (e.g. "CommandOrControl+Shift+F1"),
+  // captured by the renderer's "Set hotkey" control. Absent means no
+  // hotkey — every cheat saved before this field existed keeps loading
+  // and behaving unchanged. Registered globally (works while the game,
+  // not Apprentice, has focus) only while this cheat's exe is attached —
+  // see hotkeys.ts.
+  hotkey?: string
 }
 
 // A code patch: NOP out the instruction the game uses to write a value,
@@ -155,6 +162,8 @@ export interface PatchCheat {
   fieldOffset?: string
   value?: number
   dataType?: DataType
+  // Same meaning as CheatDefinition.hotkey above.
+  hotkey?: string
 }
 
 export type StoredCheat = CheatDefinition | PatchCheat
@@ -187,4 +196,17 @@ export function deleteCheat(exeName: string, cheatId: string): void {
   const profile = loadProfile(exeName)
   profile.cheats = profile.cheats.filter((c) => c.id !== cheatId)
   saveProfile(exeName, profile)
+}
+
+// Another cheat in the same profile already using this exact hotkey, by
+// name — or null if it's free (including when `cheat.hotkey` is unset,
+// which is never a conflict). Pure, so it's testable without a profile on
+// disk; ipc.ts's cheats:save handler is the only real caller, and it's
+// what makes this check authoritative — the renderer's own pre-check
+// before calling saveCheat is only for immediate feedback and can be
+// stale.
+export function findHotkeyConflict(cheats: StoredCheat[], cheat: StoredCheat): string | null {
+  if (!cheat.hotkey) return null
+  const conflict = cheats.find((c) => c.id !== cheat.id && c.hotkey === cheat.hotkey)
+  return conflict ? conflict.name : null
 }

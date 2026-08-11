@@ -10,9 +10,11 @@ import {
   isPatchCheat,
   isAnchorTarget,
   isMonoTarget,
+  findHotkeyConflict,
   PatchCheat,
   CheatDefinition,
-  patchMode
+  patchMode,
+  type StoredCheat
 } from '../../src/main/store'
 
 let dir: string
@@ -275,5 +277,39 @@ describe('store — a damaged cheat file', () => {
       })
     ).toThrow()
     expect(fs.readFileSync(file, 'utf-8')).toBe(damaged)
+  })
+})
+
+function valueCheat(overrides: Partial<StoredCheat> = {}): StoredCheat {
+  return {
+    id: 'c1',
+    name: 'Cheat One',
+    dataType: 'int32',
+    mode: 'freeze',
+    targets: [],
+    value: 1,
+    ...overrides
+  } as StoredCheat
+}
+
+describe('findHotkeyConflict', () => {
+  it('returns null when the cheat has no hotkey', () => {
+    expect(findHotkeyConflict([valueCheat({ id: 'c2', hotkey: 'F1' })], valueCheat())).toBeNull()
+  })
+
+  it('returns null when no other cheat shares the hotkey', () => {
+    const cheat = valueCheat({ hotkey: 'F1' })
+    expect(findHotkeyConflict([cheat], cheat)).toBeNull()
+  })
+
+  it("returns the conflicting cheat's name when another cheat shares the hotkey", () => {
+    const other = valueCheat({ id: 'c2', name: 'Cheat Two', hotkey: 'F1' })
+    const cheat = valueCheat({ id: 'c1', hotkey: 'F1' })
+    expect(findHotkeyConflict([other, cheat], cheat)).toBe('Cheat Two')
+  })
+
+  it('does not conflict with itself when re-saving the same cheat unchanged', () => {
+    const cheat = valueCheat({ hotkey: 'F1' })
+    expect(findHotkeyConflict([cheat], cheat)).toBeNull()
   })
 })
