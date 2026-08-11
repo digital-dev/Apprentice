@@ -169,6 +169,21 @@ declare global {
       exportCheatTable: (
         exeName: string
       ) => Promise<{ exportedNames: string[]; skipped: { name: string; reason: string }[] } | null>
+      // Fired whenever a global hotkey toggles/applies a cheat — the
+      // trainer window won't be focused when this happens (the game is),
+      // so this is how the renderer learns to update its own on/off state
+      // and play the matching sound cue. See hotkeys.ts.
+      onHotkeyFired: (
+        cb: (payload: {
+          cheatId: string
+          outcome: 'on' | 'off' | 'applied' | 'error'
+          error?: string
+        }) => void
+      ) => void
+      // Fired once per registerAll() call that had at least one hotkey
+      // Electron's globalShortcut refused to register (already owned by
+      // another running app).
+      onHotkeyConflict: (cb: (failed: { name: string; hotkey: string }[]) => void) => void
     }
   }
 }

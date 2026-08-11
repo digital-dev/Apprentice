@@ -52,5 +52,10 @@ contextBridge.exposeInMainWorld('tamper', {
   monoReadLiveValue: (className: string, staticFieldName: string, instanceFieldName?: string) =>
     ipcRenderer.invoke('mono:readLiveValue', className, staticFieldName, instanceFieldName),
   importCheatTable: (exeName: string) => ipcRenderer.invoke('ct:import', exeName),
-  exportCheatTable: (exeName: string) => ipcRenderer.invoke('ct:export', exeName)
+  exportCheatTable: (exeName: string) => ipcRenderer.invoke('ct:export', exeName),
+  onHotkeyFired: (
+    cb: (payload: { cheatId: string; outcome: 'on' | 'off' | 'applied' | 'error'; error?: string }) => void
+  ) => ipcRenderer.on('hotkey:fired', (_e, payload) => cb(payload)),
+  onHotkeyConflict: (cb: (failed: { name: string; hotkey: string }[]) => void) =>
+    ipcRenderer.on('hotkey:conflict', (_e, failed) => cb(failed))
 })
