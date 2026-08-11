@@ -55,7 +55,18 @@ contextBridge.exposeInMainWorld('tamper', {
   exportCheatTable: (exeName: string) => ipcRenderer.invoke('ct:export', exeName),
   onHotkeyFired: (
     cb: (payload: { cheatId: string; outcome: 'on' | 'off' | 'applied' | 'error'; error?: string }) => void
-  ) => ipcRenderer.on('hotkey:fired', (_e, payload) => cb(payload)),
-  onHotkeyConflict: (cb: (failed: { name: string; hotkey: string }[]) => void) =>
-    ipcRenderer.on('hotkey:conflict', (_e, failed) => cb(failed))
+  ) => {
+    const handler = (
+      _e: unknown,
+      payload: { cheatId: string; outcome: 'on' | 'off' | 'applied' | 'error'; error?: string }
+    ) => cb(payload)
+    ipcRenderer.on('hotkey:fired', handler)
+    return () => ipcRenderer.removeListener('hotkey:fired', handler)
+  },
+  onHotkeyConflict: (cb: (failed: { name: string; hotkey: string }[]) => void) => {
+    const handler = (_e: unknown, failed: { name: string; hotkey: string }[]) => cb(failed)
+    ipcRenderer.on('hotkey:conflict', handler)
+    return () => ipcRenderer.removeListener('hotkey:conflict', handler)
+  },
+  getHotkeyConflicts: () => ipcRenderer.invoke('hotkeys:conflicts')
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CheatDefinition, StoredCheat, PatchCheat, CheatTarget, DataType } from '../../../main/store'
 import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
 import type { PendingMonoSelection } from '../App'
@@ -120,6 +120,17 @@ export default function CheatList({
 }) {
   const [cheats, setCheats] = useState<CheatDefinition[]>([])
   const [patches, setPatches] = useState<PatchCheat[]>([])
+  // Mirrors of `cheats`/`patches` for the mount-once hotkey-fired effect
+  // below: that effect subscribes exactly once (see its own comment on
+  // why it can't re-subscribe on every cheats/patches change without
+  // stacking the OTHER, deliberately-uncleaned listeners in the same
+  // effect), so it reads through these refs rather than closing over the
+  // state values, which would otherwise stay frozen at their mount-time
+  // (empty) value.
+  const cheatsRef = useRef(cheats)
+  const patchesRef = useRef(patches)
+  cheatsRef.current = cheats
+  patchesRef.current = patches
   // Where each patch currently sits and whether it's safe to toggle on.
   // Checked once on attach and refreshed after each toggle.
   const [patchStatuses, setPatchStatuses] = useState<Map<string, PatchStatus>>(new Map())
@@ -155,6 +166,13 @@ export default function CheatList({
   const [capturedHotkey, setCapturedHotkey] = useState<string | null>(null)
   const [hotkeyError, setHotkeyError] = useState<string | null>(null)
   const [hotkeyConflicts, setHotkeyConflicts] = useState<{ name: string; hotkey: string }[]>([])
+  // An 'error' outcome from a hotkey fire (currently only a one-shot write
+  // failure) — surfaced the same way patchError/toggle failures already
+  // are, since the hotkey path itself gives no other feedback (the game,
+  // not this window, has focus when it fires).
+  const [hotkeyFireError, setHotkeyFireError] = useState<{ cheatName: string; message: string } | null>(
+    null
+  )
   // Runtime state pushed by cheatRuntime for each armed patch — keyed by
   // patch id, same as patchStatuses. Populated only once a patch has been
   // toggled on at least once; patchStatusLabel covers the pre-arm readout.
@@ -325,35 +343,63 @@ export default function CheatList({
     })
     window.tamper.onGameState((state) => setChangedModules(state.changedModules))
     void window.tamper.currentGame().then((state) => setChangedModules(state.changedModules))
+    // Pull whatever conflicts already happened before this screen existed
+    // (registerAll runs synchronously during process:attach and the
+    // watcher's auto-attach, both before this screen can have subscribed to
+    // the push below). The live onHotkeyConflict push continues to handle
+    // conflicts from a save made while already on this screen.
+    void window.tamper.getHotkeyConflicts().then((failed) => setHotkeyConflicts(failed))
 
     // A hotkey fires entirely in the main process while the game (not
     // this window) has focus — this is the renderer's only way to learn
     // it happened, both to play the matching sound and to keep the
     // on-screen toggle from silently disagreeing with the game's actual
     // state (see this feature's design doc for why that gap existed).
-    window.tamper.onHotkeyFired(({ cheatId, outcome }) => {
+    const disposeFired = window.tamper.onHotkeyFired(({ cheatId, outcome, error }) => {
       if (outcome === 'on' || outcome === 'applied') playOn()
       else if (outcome === 'off') playOff()
       else playError()
 
-      setEnabled((prev) => {
-        if (outcome !== 'on' && outcome !== 'off') return prev
-        const next = new Set(prev)
-        if (outcome === 'on') next.add(cheatId)
-        else next.delete(cheatId)
-        return next
-      })
-      setPatchEnabled((prev) => {
-        if (outcome !== 'on' && outcome !== 'off') return prev
-        const next = new Set(prev)
-        if (outcome === 'on') next.add(cheatId)
-        else next.delete(cheatId)
-        return next
-      })
+      const isPatchId = patchesRef.current.some((p) => p.id === cheatId)
+      if (isPatchId) {
+        setPatchEnabled((prev) => {
+          if (outcome !== 'on' && outcome !== 'off') return prev
+          const next = new Set(prev)
+          if (outcome === 'on') next.add(cheatId)
+          else next.delete(cheatId)
+          return next
+        })
+      } else {
+        setEnabled((prev) => {
+          if (outcome !== 'on' && outcome !== 'off') return prev
+          const next = new Set(prev)
+          if (outcome === 'on') next.add(cheatId)
+          else next.delete(cheatId)
+          return next
+        })
+      }
+
+      if (outcome === 'on') {
+        setDegraded((prev) => {
+          const next = new Set(prev)
+          next.delete(cheatId)
+          return next
+        })
+      }
+
+      if (outcome === 'error' && error) {
+        const found = [...cheatsRef.current, ...patchesRef.current].find((c) => c.id === cheatId)
+        setHotkeyFireError({ cheatName: found?.name ?? cheatId, message: error })
+      }
     })
-    window.tamper.onHotkeyConflict((failed) => {
+    const disposeConflict = window.tamper.onHotkeyConflict((failed) => {
       setHotkeyConflicts((prev) => [...prev, ...failed])
     })
+
+    return () => {
+      disposeFired()
+      disposeConflict()
+    }
   }, [])
 
   // Live-captures a hotkey combo while `capturingHotkeyId` is set. A
@@ -700,8 +746,16 @@ export default function CheatList({
 // accelerator mapping table for punctuation/media keys nobody's asking
 // for). Returns null for a key not in that set.
 function acceleratorKeyFor(e: KeyboardEvent): string | null {
-  if (/^[A-Za-z0-9]$/.test(e.key)) return e.key.toUpperCase()
-  if (/^F([1-9]|1[0-2])$/.test(e.key)) return e.key
+  // e.code reports the physical key regardless of Shift/AltGr/layout —
+  // e.key does not (e.g. Shift+1 on a US layout reports e.key "!", which
+  // fails an [A-Za-z0-9] test even though the spec promises 0-9 work with
+  // any modifier combination including Shift).
+  const letter = e.code.match(/^Key([A-Z])$/)
+  if (letter) return letter[1]
+  const digit = e.code.match(/^Digit(\d)$/)
+  if (digit) return digit[1]
+  const fkey = e.code.match(/^F([1-9]|1[0-2])$/)
+  if (fkey) return `F${fkey[1]}`
   return null
 }
 
@@ -742,7 +796,14 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
     setCapturingHotkeyId(null)
     setHotkeyError(null)
   } catch (err) {
-    setHotkeyError((err as Error).message)
+    // An IPC rejection's message looks like `Error invoking remote method
+    // 'cheats:save': Error: Hotkey already used by "X"...` — strip the
+    // wrapper before showing it.
+    const raw = (err as Error).message
+    const cleaned = raw
+      .replace(/^Error invoking remote method '[^']*':\s*/, '')
+      .replace(/^Error:\s*/, '')
+    setHotkeyError(cleaned)
   }
 }
 
@@ -960,6 +1021,15 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
             ))}
           </ul>
           <button onClick={() => setHotkeyConflicts([])}>Dismiss</button>
+        </div>
+      )}
+
+      {hotkeyFireError && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            Hotkey for "{hotkeyFireError.cheatName}" failed: {hotkeyFireError.message}
+          </p>
+          <button onClick={() => setHotkeyFireError(null)}>Dismiss</button>
         </div>
       )}
 

@@ -464,7 +464,17 @@ const hotkeyDeps: HotkeyDeps = {
   enableFreeze: (cheat) => freezeLoop.enable(cheat),
   disableFreeze: (cheatId) => freezeLoop.disable(cheatId),
   oneShot: async (cheat) => (attachedHandle === null ? false : writeCheat(attachedHandle, cheat)),
-  isPatchApplied: (patchId) => patchEngine.isApplied(patchId),
+  // Mirrors exactly the condition cheatRuntime.arm() itself uses to decide
+  // whether to no-op, so "is this patch armed, from the hotkey's
+  // perspective" agrees with "will calling arm() actually do anything".
+  // patchEngine.isApplied() only flips true once a full locate+apply round
+  // trip has succeeded, which lags well behind arm()'s own no-op guard —
+  // using it here left a patch stuck 'arming' unable to ever be disarmed
+  // by hotkey (see hotkeys.ts's HotkeyDeps.isPatchArmed doc).
+  isPatchArmed: (patchId) => {
+    const state = cheatRuntime.status(patchId).state
+    return state === 'arming' || state === 'active' || state === 'degraded'
+  },
   armPatch: (patch) => cheatRuntime.arm(patch),
   disarmPatch: (patch) => cheatRuntime.disarm(patch.id, patch),
   registerShortcut: (accelerator, callback) => globalShortcut.register(accelerator, callback),
@@ -602,6 +612,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     getWindow().webContents.send('hotkey:conflict', failed)
   })
 
+  // Pull-based counterpart to the onConflict push above: registerAll() runs
+  // synchronously during process:attach and the watcher's auto-attach, both
+  // of which happen before the renderer's CheatList has mounted and
+  // subscribed to the push — so those conflicts would otherwise reach
+  // nobody. The renderer pulls this once on mount to pick up whatever
+  // already happened.
+  ipcMain.handle('hotkeys:conflicts', () => hotkeyManager.getConflicts())
+
   freezeLoop.onDegraded((cheatId) => {
     // Also mirrored into the runtime's own tracking — inert for a plain
     // value cheat (no armed patch shares its id), but keeps the two
@@ -636,6 +654,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     const conflict = findHotkeyConflict(loadCheats(exeName), cheat)
     if (conflict) {
       throw new Error(`Hotkey already used by "${conflict}" — pick a different combo.`)
+    }
+    if (cheat.hotkey && !isPatchCheat(cheat) && cheat.targets.some(isAnchorTarget)) {
+      throw new Error(
+        'Hotkeys are not yet supported for cheats anchored to a capture patch — toggle this one from the cheat list.'
+      )
     }
     saveCheatWithFingerprint(exeName, cheat)
     // A save can add, change, or clear a hotkey. If the profile being

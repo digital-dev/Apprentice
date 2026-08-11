@@ -172,18 +172,26 @@ declare global {
       // Fired whenever a global hotkey toggles/applies a cheat — the
       // trainer window won't be focused when this happens (the game is),
       // so this is how the renderer learns to update its own on/off state
-      // and play the matching sound cue. See hotkeys.ts.
+      // and play the matching sound cue. See hotkeys.ts. Returns a disposer
+      // that removes exactly this listener — CheatList unmounts/remounts on
+      // every visit, so a caller must clean up on unmount or listeners
+      // stack across visits (each firing its own sound on every press).
       onHotkeyFired: (
         cb: (payload: {
           cheatId: string
           outcome: 'on' | 'off' | 'applied' | 'error'
           error?: string
         }) => void
-      ) => void
+      ) => () => void
       // Fired once per registerAll() call that had at least one hotkey
       // Electron's globalShortcut refused to register (already owned by
-      // another running app).
-      onHotkeyConflict: (cb: (failed: { name: string; hotkey: string }[]) => void) => void
+      // another running app). Returns a disposer — see onHotkeyFired.
+      onHotkeyConflict: (cb: (failed: { name: string; hotkey: string }[]) => void) => () => void
+      // Pull-based counterpart to onHotkeyConflict: the conflicts from the
+      // most recent registerAll() call, for a caller that starts existing
+      // after registerAll already ran (e.g. this screen mounting after
+      // process:attach's synchronous registerAll).
+      getHotkeyConflicts: () => Promise<{ name: string; hotkey: string }[]>
     }
   }
 }

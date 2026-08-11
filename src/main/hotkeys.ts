@@ -6,7 +6,7 @@ export interface HotkeyDeps {
   enableFreeze(cheat: CheatDefinition): void
   disableFreeze(cheatId: string): void
   oneShot(cheat: CheatDefinition): Promise<boolean>
-  isPatchApplied(patchId: string): boolean
+  isPatchArmed(patchId: string): boolean
   armPatch(patch: PatchCheat): void
   disarmPatch(patch: PatchCheat): void
   // Wraps Electron's globalShortcut.register — returns false when the OS
@@ -29,6 +29,11 @@ export class HotkeyManager {
   private deps: HotkeyDeps
   private firedCb: ((cheatId: string, outcome: HotkeyOutcome, error?: string) => void) | null = null
   private conflictCb: ((failed: { name: string; hotkey: string }[]) => void) | null = null
+  // The failures from the most recent registerAll() call, so a caller that
+  // only starts existing (and subscribing to onConflict) AFTER registerAll
+  // already ran — e.g. the renderer mounting after process:attach's
+  // synchronous registerAll — can still pull whatever it missed.
+  private lastConflicts: { name: string; hotkey: string }[] = []
 
   constructor(deps: HotkeyDeps) {
     this.deps = deps
@@ -53,7 +58,12 @@ export class HotkeyManager {
       if (!ok) failed.push({ name: cheat.name, hotkey: cheat.hotkey })
     }
 
+    this.lastConflicts = failed
     if (failed.length > 0) this.conflictCb?.(failed)
+  }
+
+  getConflicts(): { name: string; hotkey: string }[] {
+    return this.lastConflicts
   }
 
   unregisterAll(): void {
@@ -72,8 +82,18 @@ export class HotkeyManager {
     if (cheat.mode === 'oneshot') {
       void this.deps
         .oneShot(cheat)
-        .then((ok) => this.firedCb?.(cheat.id, ok ? 'applied' : 'error'))
-        .catch(() => this.firedCb?.(cheat.id, 'error'))
+        .then((ok) =>
+          this.firedCb?.(
+            cheat.id,
+            ok ? 'applied' : 'error',
+            ok
+              ? undefined
+              : 'One-shot write failed — check the cheat is still attached and its targets resolve.'
+          )
+        )
+        .catch((err) =>
+          this.firedCb?.(cheat.id, 'error', err instanceof Error ? err.message : 'One-shot write failed.')
+        )
       return
     }
     // freeze mode: toggle.
@@ -87,7 +107,7 @@ export class HotkeyManager {
   }
 
   private firePatch(patch: PatchCheat): void {
-    if (this.deps.isPatchApplied(patch.id)) {
+    if (this.deps.isPatchArmed(patch.id)) {
       this.deps.disarmPatch(patch)
       this.firedCb?.(patch.id, 'off')
     } else {

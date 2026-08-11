@@ -35,10 +35,12 @@ const patch: PatchCheat = {
   hotkey: 'F3'
 }
 
+type FakePatchState = 'idle' | 'arming' | 'active' | 'degraded' | 'failed'
+
 class FakeDeps implements HotkeyDeps {
   cheats: StoredCheat[] = [freezeCheat, oneShotCheat, patch]
   freezeEnabled = new Set<string>()
-  patchApplied = new Set<string>()
+  patchState = new Map<string, FakePatchState>()
   registered: { accelerator: string; callback: () => void }[] = []
   registerShouldFail = new Set<string>()
   unregisterAllCalls = 0
@@ -59,14 +61,15 @@ class FakeDeps implements HotkeyDeps {
   async oneShot(): Promise<boolean> {
     return this.oneShotResult
   }
-  isPatchApplied(patchId: string): boolean {
-    return this.patchApplied.has(patchId)
+  isPatchArmed(patchId: string): boolean {
+    const state = this.patchState.get(patchId) ?? 'idle'
+    return state === 'arming' || state === 'active' || state === 'degraded'
   }
   armPatch(patch: PatchCheat): void {
-    this.patchApplied.add(patch.id)
+    this.patchState.set(patch.id, 'arming')
   }
   disarmPatch(patch: PatchCheat): void {
-    this.patchApplied.delete(patch.id)
+    this.patchState.set(patch.id, 'idle')
   }
   registerShortcut(accelerator: string, callback: () => void): boolean {
     if (this.registerShouldFail.has(accelerator)) return false
@@ -141,12 +144,30 @@ describe('HotkeyManager', () => {
     manager.onFired((_id, outcome) => outcomes.push(outcome))
 
     deps.registered.find((r) => r.accelerator === 'F3')?.callback()
-    expect(deps.patchApplied.has('patch1')).toBe(true)
+    expect(deps.patchState.get('patch1')).toBe('arming')
     expect(outcomes).toEqual(['on'])
 
     deps.registered.find((r) => r.accelerator === 'F3')?.callback()
-    expect(deps.patchApplied.has('patch1')).toBe(false)
+    expect(deps.patchState.get('patch1')).toBe('idle')
     expect(outcomes).toEqual(['on', 'off'])
+  })
+
+  it('disarms (not re-arms) a patch stuck mid-arming on the next fire', () => {
+    // Regression for the isPatchApplied bug: patchEngine.isApplied() only
+    // flips true once a full locate+apply round trip succeeds, which lags
+    // well behind arm()'s own no-op guard on 'arming'/'active'/'degraded'.
+    // A patch stuck in 'arming' used to read as "not applied" forever, so
+    // every press re-called armPatch (a no-op) and endlessly reported 'on'
+    // — never disarming. isPatchArmed must treat 'arming' as armed.
+    deps.patchState.set('patch1', 'arming')
+    manager.registerAll('game.exe')
+    const outcomes: HotkeyOutcome[] = []
+    manager.onFired((_id, outcome) => outcomes.push(outcome))
+
+    deps.registered.find((r) => r.accelerator === 'F3')?.callback()
+
+    expect(deps.patchState.get('patch1')).toBe('idle')
+    expect(outcomes).toEqual(['off'])
   })
 
   it('reports a registration failure as a conflict, and still registers the rest', () => {
@@ -158,6 +179,27 @@ describe('HotkeyManager', () => {
 
     expect(deps.registered.map((r) => r.accelerator).sort()).toEqual(['F1', 'F3'])
     expect(conflicts).toEqual([[{ name: 'Full Heal', hotkey: 'F2' }]])
+  })
+
+  it('getConflicts returns the last registerAll failures', () => {
+    deps.registerShouldFail.add('F2')
+    const conflicts: { name: string; hotkey: string }[][] = []
+    manager.onConflict((failed) => conflicts.push(failed))
+
+    manager.registerAll('game.exe')
+
+    expect(manager.getConflicts()).toEqual(conflicts[0])
+    expect(manager.getConflicts()).toEqual([{ name: 'Full Heal', hotkey: 'F2' }])
+  })
+
+  it('getConflicts resets to empty after a clean registerAll', () => {
+    deps.registerShouldFail.add('F2')
+    manager.registerAll('game.exe')
+    expect(manager.getConflicts()).toEqual([{ name: 'Full Heal', hotkey: 'F2' }])
+
+    deps.registerShouldFail.clear()
+    manager.registerAll('game.exe')
+    expect(manager.getConflicts()).toEqual([])
   })
 
   it('unregisterAll clears everything', () => {
