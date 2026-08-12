@@ -4,7 +4,8 @@ const NAV_ITEMS: { screen: Screen; label: string }[] = [
   { screen: 'picker', label: 'Attach' },
   { screen: 'cheats', label: 'Cheats' },
   { screen: 'scanner', label: 'Scanner' },
-  { screen: 'mono', label: 'Mono Explorer' }
+  { screen: 'mono', label: 'Mono Explorer' },
+  { screen: 'memory', label: 'Memory Viewer' }
 ]
 
 export default function Sidebar({

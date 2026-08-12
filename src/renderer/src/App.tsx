@@ -5,8 +5,9 @@ import ProcessPicker from './screens/ProcessPicker'
 import CheatList from './screens/CheatList'
 import Scanner from './screens/Scanner'
 import MonoExplorer from './screens/MonoExplorer'
+import MemoryViewer from './screens/MemoryViewer'
 
-export type Screen = 'picker' | 'cheats' | 'scanner' | 'mono'
+export type Screen = 'picker' | 'cheats' | 'scanner' | 'mono' | 'memory'
 
 // A resolved Mono Explorer selection, handed from that screen to the cheat
 // list's creation forms. There is no routing/context layer in this
@@ -25,6 +26,7 @@ export default function App() {
   const [pendingMonoSelection, setPendingMonoSelection] = useState<PendingMonoSelection | null>(
     null
   )
+  const [jumpToAddress, setJumpToAddress] = useState<string | null>(null)
 
   return (
     <div className="layout">
@@ -72,6 +74,12 @@ export default function App() {
           <div style={{ display: screen === 'scanner' ? 'block' : 'none' }}>
             <Scanner key={exeName} exeName={exeName} onDone={() => setScreen('cheats')} />
           </div>
+        )}
+        {screen === 'memory' && exeName && (
+          <MemoryViewer
+            initialAddress={jumpToAddress ?? undefined}
+            onDone={() => setScreen('cheats')}
+          />
         )}
       </div>
     </div>
