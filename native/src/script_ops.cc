@@ -43,6 +43,9 @@ namespace {
 constexpr size_t kMaxScriptBytes = 8 * 1024 * 1024;
 constexpr int kTimeoutMs = 5000;
 constexpr size_t kMaxOutputLines = 1000;
+// Sanity cap on the incoming `state` table, enforced on the JS thread before
+// anything is flattened. See RunScriptWorker's constructor.
+constexpr size_t kMaxStateInBytes = 256 * 1024;
 
 struct AllocBudget {
   size_t used = 0;
@@ -198,10 +201,21 @@ int LuaReadValue(lua_State* L, ValueKind kind, size_t size) {
 
 int LuaWriteValue(lua_State* L, ValueKind kind, size_t size) {
   uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-  double value = luaL_checknumber(L, 2);
   HANDLE h = HandleFromRegistry(L);
   uint8_t buf[8];
-  EncodeFromDouble(value, ValueSpec{size, kind}, buf);
+  // Int64 must never touch the `double` path: a double carries only 53 bits
+  // of mantissa, so an int64 above 2^53 (a currency/XP counter, a packed
+  // handle) would be silently rounded on its way to memory. Lua 5.4 has
+  // native 64-bit integers, so luaL_checkinteger + a raw memcpy is exact.
+  // This mirrors LuaReadValue, which already splits on IsFloatKind for the
+  // same reason on the way back out.
+  if (kind == ValueKind::Int64) {
+    int64_t raw = static_cast<int64_t>(luaL_checkinteger(L, 2));
+    memcpy(buf, &raw, sizeof(raw));
+  } else {
+    double value = luaL_checknumber(L, 2);
+    EncodeFromDouble(value, ValueSpec{size, kind}, buf);
+  }
   SIZE_T written;
   bool ok = WriteProcessMemory(h, (LPVOID)address, buf, size, &written) && written == size;
   lua_pushboolean(L, ok);
@@ -420,8 +434,41 @@ void ApplyStickyTimeout(const TimeoutState& timeout, ScriptResult& result) {
   result.error = kTimeoutMessage;
 }
 
+// Closes the lua_State on every exit path out of RunScriptImpl — the normal
+// returns, the early load-failure return, AND the catch(...) below. Without
+// this, the catch path would leak the whole state (and its allocator budget)
+// on every escaped error. lua_close itself can run __gc metamethods and
+// allocate, so it can in principle raise; a destructor is noexcept by
+// default, and an exception escaping one is an immediate std::terminate —
+// exactly the crash this guard exists to prevent — hence the inner catch.
+struct LuaStateGuard {
+  lua_State* L;
+  ~LuaStateGuard() {
+    if (!L) return;
+    try {
+      lua_close(L);
+    } catch (...) {
+      // Nothing safe left to do: the state is already being torn down.
+    }
+  }
+};
+
 // Runs entirely on RunScriptWorker's background thread: every type it
 // touches is plain C++ (HANDLE/std::string/LuaState) — never a Napi value.
+//
+// CRASH SAFETY: the vendored Lua is compiled as C++, so a Lua error is a
+// real C++ exception (LUAI_THROW). Everything below that runs OUTSIDE a
+// lua_pcall — OpenAllowlistedLibs (luaL_requiref does an unprotected
+// lua_call), SeedStateTable (which allocates, and so can hit the allocator
+// budget on a large stateIn), ReadStateTable — can therefore throw. This
+// function is called from RunScriptWorker::Execute(), and because
+// NAPI_DISABLE_CPP_EXCEPTIONS is defined, node-addon-api does NOT wrap
+// Execute() in a try/catch: an escaped exception would unwind straight out
+// of the libuv worker thread into std::terminate and kill the whole Electron
+// process. That is not merely an ugly crash — per ipc.ts's releaseTarget(),
+// dying with a write-watch armed leaves the target game primed to raise a
+// debug exception with no debugger attached, which takes the game down too.
+// So: catch everything here, report it as an ordinary failed run.
 ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
                            const LuaState& stateIn) {
   ScriptResult result;
@@ -431,42 +478,49 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
     result.error = "could not allocate Lua state";
     return result;
   }
+  LuaStateGuard guard{L};
 
-  lua_pushlightuserdata(L, reinterpret_cast<void*>(handle));
-  lua_setfield(L, LUA_REGISTRYINDEX, "apprentice_handle");
+  try {
+    lua_pushlightuserdata(L, reinterpret_cast<void*>(handle));
+    lua_setfield(L, LUA_REGISTRYINDEX, "apprentice_handle");
 
-  TimeoutState timeout;
-  timeout.deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
-  *static_cast<TimeoutState**>(lua_getextraspace(L)) = &timeout;
-  lua_sethook(L, TimeoutHook, LUA_MASKCOUNT, 1000);
+    TimeoutState timeout;
+    timeout.deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
+    *static_cast<TimeoutState**>(lua_getextraspace(L)) = &timeout;
+    lua_sethook(L, TimeoutHook, LUA_MASKCOUNT, 1000);
 
-  OutputCollector out;
-  OpenAllowlistedLibs(L, &out);
-  SeedStateTable(L, stateIn);
+    OutputCollector out;
+    OpenAllowlistedLibs(L, &out);
+    SeedStateTable(L, stateIn);
 
-  int loadStatus = luaL_loadstring(L, source.c_str());
-  if (loadStatus != LUA_OK) {
-    const char* msg = lua_tostring(L, -1);
-    result.error = msg ? msg : "could not compile script";
+    int loadStatus = luaL_loadstring(L, source.c_str());
+    if (loadStatus != LUA_OK) {
+      const char* msg = lua_tostring(L, -1);
+      result.error = msg ? msg : "could not compile script";
+      result.output = out.lines;
+      ApplyStickyTimeout(timeout, result);
+      result.stateOut = ReadStateTable(L);
+      return result;
+    }
+
+    int callStatus = lua_pcall(L, 0, 0, 0);
+    result.success = callStatus == LUA_OK;
+    if (!result.success) {
+      const char* msg = lua_tostring(L, -1);
+      result.error = msg ? msg : "unknown Lua error";
+    }
     result.output = out.lines;
     ApplyStickyTimeout(timeout, result);
     result.stateOut = ReadStateTable(L);
-    lua_close(L);
+    return result;
+  } catch (...) {
+    result.success = false;
+    result.error = "script setup failed (out of memory or an internal Lua error)";
+    // Whatever was half-collected is not trustworthy after an escaped error.
+    result.stateOut.clear();
     return result;
   }
-
-  int callStatus = lua_pcall(L, 0, 0, 0);
-  result.success = callStatus == LUA_OK;
-  if (!result.success) {
-    const char* msg = lua_tostring(L, -1);
-    result.error = msg ? msg : "unknown Lua error";
-  }
-  result.output = out.lines;
-  ApplyStickyTimeout(timeout, result);
-  result.stateOut = ReadStateTable(L);
-  lua_close(L);
-  return result;
 }
 
 // Runs the script on a libuv worker thread, the same shape patch_ops.cc's
@@ -484,19 +538,49 @@ class RunScriptWorker : public Napi::AsyncWorker {
     // JS thread, before Queue(): flatten stateIn out of N-API entirely, so
     // Execute() never needs the Env.
     Napi::Array keys = stateIn.GetPropertyNames();
+    size_t total = 0;
     for (uint32_t i = 0; i < keys.Length(); i++) {
       std::string key = keys.Get(i).As<Napi::String>().Utf8Value();
       Napi::Value value = stateIn.Get(key);
-      if (value.IsString()) flatStateIn_[key] = value.As<Napi::String>().Utf8Value();
-      else if (value.IsNumber()) flatStateIn_[key] = value.As<Napi::Number>().DoubleValue();
-      else if (value.IsBoolean()) flatStateIn_[key] = value.As<Napi::Boolean>().Value();
+      total += key.size();
+      if (value.IsString()) {
+        std::string s = value.As<Napi::String>().Utf8Value();
+        total += s.size();
+        flatStateIn_[key] = std::move(s);
+      } else if (value.IsNumber()) {
+        total += sizeof(double);
+        flatStateIn_[key] = value.As<Napi::Number>().DoubleValue();
+      } else if (value.IsBoolean()) {
+        total += sizeof(bool);
+        flatStateIn_[key] = value.As<Napi::Boolean>().Value();
+      }
       // else: skipped, per ReadStateTable's matching scope limit above.
+      if (total > kMaxStateInBytes) {
+        // Refuse here, on the JS thread, rather than letting a multi-megabyte
+        // `state` reach SeedStateTable and exhaust kMaxScriptBytes mid-setup:
+        // that failure happens OUTSIDE any lua_pcall and is far more
+        // expensive to recover from (see RunScriptImpl's crash-safety note).
+        // `state` is a handful of captured values — a few hundred KB is
+        // already absurdly generous.
+        flatStateIn_.clear();
+        stateInTooLarge_ = true;
+        return;
+      }
     }
   }
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { result_ = RunScriptImpl(handle_, source_, flatStateIn_); }
+  void Execute() override {
+    if (stateInTooLarge_) {
+      result_.success = false;
+      result_.error =
+          "state is too large to hand to the script (limit 256 KB) — store "
+          "only the few values the disable script needs";
+      return;
+    }
+    result_ = RunScriptImpl(handle_, source_, flatStateIn_);
+  }
 
   void OnOK() override {
     Napi::Env env = Env();
@@ -527,6 +611,7 @@ class RunScriptWorker : public Napi::AsyncWorker {
   HANDLE handle_;
   std::string source_;
   LuaState flatStateIn_;
+  bool stateInTooLarge_ = false;
   ScriptResult result_;
   Napi::Promise::Deferred deferred_;
 };

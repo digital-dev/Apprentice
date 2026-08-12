@@ -155,6 +155,60 @@ describe('runScript', () => {
     expect(BigInt(result.output[0])).toBe(BigInt(base) + 0x10n)
   })
 
+  // Regression: LuaWriteValue used to take EVERY value — Int64 included —
+  // through luaL_checknumber (a double), so anything above 2^53 was silently
+  // rounded before it ever reached WriteProcessMemory. 9007199254740993 is
+  // 2^53 + 1: the smallest integer a double cannot represent, and it rounds
+  // to 9007199254740992 the instant it touches one.
+  it('writes an int64 above 2^53 through Lua without losing precision', async () => {
+    let candidates = await (addon as any).scanFirst(handle, 'int64', 123456789012345)
+    expect(candidates.length).toBeGreaterThan(0)
+    await send('seti64 555000111222333')
+    candidates = (addon as any).scanNext(handle, candidates, 'int64', {
+      mode: 'exact',
+      value: 555000111222333
+    })
+    expect(candidates.length).toBeGreaterThan(0)
+    const address = parseInt(candidates[0].address, 16)
+
+    // Kept as literal source text, never a JS number: `9007199254740993` as a
+    // JS numeric literal is already 9007199254740992 before Lua sees it.
+    const result = await (addon as any).runScript(
+      handle,
+      'writeInt64(' + address + ', 9007199254740993)',
+      {}
+    )
+    expect(result.success).toBe(true)
+
+    // The harness's own view of the variable — no double anywhere in the path.
+    const reply = await send('geti64')
+    expect(reply).toBe('OK 9007199254740993')
+
+    // And back out through readInt64, in a separate run.
+    const readBack = await (addon as any).runScript(
+      handle,
+      'print(readInt64(' + address + '))',
+      {}
+    )
+    expect(readBack.success).toBe(true)
+    expect(readBack.output[0]).toBe('9007199254740993')
+  })
+
+  // Regression: an oversized stateIn used to exhaust the 8MB allocator budget
+  // inside SeedStateTable, which runs OUTSIDE any lua_pcall — the resulting
+  // Lua error escaped Execute() as a C++ exception and killed the process
+  // (exit 127, std::terminate). It must now come back as an ordinary failed
+  // run. If this test hangs or the runner dies, the regression is back.
+  it('rejects an oversized stateIn cleanly instead of crashing the process', async () => {
+    const huge = 'x'.repeat(6 * 1024 * 1024)
+    const result = await (addon as any).runScript(handle, 'print("never runs")', {
+      huge
+    })
+    expect(result.success).toBe(false)
+    expect(result.error).toBeTruthy()
+    expect(result.error).toContain('too large')
+  }, 15000)
+
   it('round-trips a value through state between two separate runScript calls', async () => {
     const first = await (addon as any).runScript(handle, 'state.original = 42', {})
     expect(first.stateOut.original).toBe(42)
