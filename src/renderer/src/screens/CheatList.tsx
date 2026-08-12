@@ -412,7 +412,7 @@ export default function CheatList({
       const accelerator = buildAccelerator(e)
       if (!accelerator) {
         setHotkeyError(
-          'Use a letter, number (including numpad), or function key, with at least one modifier.'
+          'Use a letter, number, or function key with at least one modifier — or a numpad key on its own.'
         )
         return
       }
@@ -784,8 +784,15 @@ function buildAccelerator(e: KeyboardEvent): string | null {
   if (e.altKey) modifiers.push('Alt')
   if (e.shiftKey) modifiers.push('Shift')
   if (e.metaKey && !e.ctrlKey) modifiers.push('CommandOrControl') // Meta and Ctrl both map to the one cross-platform modifier
-  if (modifiers.length === 0) return null
-  return [...new Set(modifiers)].join('+') + '+' + key
+  // Numpad keys rarely overlap with normal game controls (unlike letters,
+  // top-row digits, and F-keys, which commonly ARE game keybinds), so a
+  // bare numpad key — no modifier required — is allowed, matching how
+  // trainers like Cheat Engine/WeMod conventionally use the numpad.
+  // acceleratorKeyFor's numpad keys are the only ones it returns starting
+  // with "num" (num0-num9, numadd, numsub, nummult, numdiv, numdec).
+  const isNumpadKey = key.startsWith('num')
+  if (modifiers.length === 0 && !isNumpadKey) return null
+  return modifiers.length === 0 ? key : [...new Set(modifiers)].join('+') + '+' + key
 }
 
 function startCapturingHotkey(id: string): void {
