@@ -411,7 +411,9 @@ export default function CheatList({
       e.preventDefault()
       const accelerator = buildAccelerator(e)
       if (!accelerator) {
-        setHotkeyError('Use a letter, number, or function key, with at least one modifier.')
+        setHotkeyError(
+          'Use a letter, number (including numpad), or function key, with at least one modifier.'
+        )
         return
       }
       setHotkeyError(null)
@@ -745,6 +747,18 @@ export default function CheatList({
 // design doc for why (avoids needing a full browser-KeyEvent-to-Electron-
 // accelerator mapping table for punctuation/media keys nobody's asking
 // for). Returns null for a key not in that set.
+// Electron's accelerator syntax for the numpad ("num0"-"num9", "numadd",
+// "numsub", "nummult", "numdiv", "numdec") is a distinct set of key
+// tokens from the top-row digits — binding one never collides with the
+// other.
+const NUMPAD_OPERATORS: Record<string, string> = {
+  NumpadAdd: 'numadd',
+  NumpadSubtract: 'numsub',
+  NumpadMultiply: 'nummult',
+  NumpadDivide: 'numdiv',
+  NumpadDecimal: 'numdec'
+}
+
 function acceleratorKeyFor(e: KeyboardEvent): string | null {
   // e.code reports the physical key regardless of Shift/AltGr/layout —
   // e.key does not (e.g. Shift+1 on a US layout reports e.key "!", which
@@ -756,6 +770,9 @@ function acceleratorKeyFor(e: KeyboardEvent): string | null {
   if (digit) return digit[1]
   const fkey = e.code.match(/^F([1-9]|1[0-2])$/)
   if (fkey) return `F${fkey[1]}`
+  const numpadDigit = e.code.match(/^Numpad(\d)$/)
+  if (numpadDigit) return `num${numpadDigit[1]}`
+  if (e.code in NUMPAD_OPERATORS) return NUMPAD_OPERATORS[e.code]
   return null
 }
 
