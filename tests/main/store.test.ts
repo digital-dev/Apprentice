@@ -11,10 +11,12 @@ import {
   isAnchorTarget,
   isMonoTarget,
   findHotkeyConflict,
+  isScriptCheat,
   PatchCheat,
   CheatDefinition,
   patchMode,
-  type StoredCheat
+  type StoredCheat,
+  type ScriptCheat
 } from '../../src/main/store'
 
 let dir: string
@@ -311,5 +313,31 @@ describe('findHotkeyConflict', () => {
   it('does not conflict with itself when re-saving the same cheat unchanged', () => {
     const cheat = valueCheat({ hotkey: 'F1' })
     expect(findHotkeyConflict([cheat], cheat)).toBeNull()
+  })
+})
+
+describe('isScriptCheat', () => {
+  it('is true for a script cheat', () => {
+    const script: ScriptCheat = {
+      kind: 'script',
+      id: 's1',
+      name: 'Double Health',
+      enableScript: 'writeInt32(0x1000, readInt32(0x1000) * 2)',
+      disableScript: ''
+    }
+    expect(isScriptCheat(script)).toBe(true)
+  })
+
+  it('is false for a value cheat', () => {
+    expect(
+      isScriptCheat({
+        id: 'c1',
+        name: 'C1',
+        dataType: 'int32',
+        mode: 'freeze',
+        targets: [],
+        value: 1
+      })
+    ).toBe(false)
   })
 })

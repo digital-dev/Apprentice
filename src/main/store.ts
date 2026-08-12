@@ -166,10 +166,28 @@ export interface PatchCheat {
   hotkey?: string
 }
 
-export type StoredCheat = CheatDefinition | PatchCheat
+// A cheat whose enable/disable are one-shot Lua scripts, instead of a
+// value write or a code patch. No mode/dataType/targets — its only state
+// is which script last ran, tracked the way FreezeLoop tracks freeze
+// state (see ScriptRuntime, main/scriptRuntime.ts).
+export interface ScriptCheat {
+  kind: 'script'
+  id: string
+  name: string
+  enableScript: string
+  disableScript: string
+  // Same meaning as CheatDefinition.hotkey / PatchCheat.hotkey above.
+  hotkey?: string
+}
+
+export type StoredCheat = CheatDefinition | PatchCheat | ScriptCheat
 
 export function isPatchCheat(cheat: StoredCheat): cheat is PatchCheat {
   return cheat.kind === 'patch'
+}
+
+export function isScriptCheat(cheat: StoredCheat): cheat is ScriptCheat {
+  return (cheat as ScriptCheat).kind === 'script'
 }
 
 export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'guard' | 'immune' {
