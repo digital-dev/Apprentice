@@ -695,6 +695,22 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   })
 
   ipcMain.handle(
+    'memory:readBlock',
+    (_e, address: string, length: number): Buffer | null => {
+      if (attachedHandle === null) throw new Error('not attached')
+      return nativeAddon.tryReadMemoryBlock(attachedHandle, address, length)
+    }
+  )
+
+  ipcMain.handle('memory:writeByte', (_e, address: string, value: number): boolean => {
+    if (attachedHandle === null) throw new Error('not attached')
+    // Same call writeCheat makes for an int8 target — int8 is this app's
+    // unsigned 1-byte width, exactly what a hex editor's 0-255 byte field
+    // wants (see store.ts's DataType comment).
+    return nativeAddon.writeValue(attachedHandle, address, [], 'int8', value)
+  })
+
+  ipcMain.handle(
     'cheats:verify',
     async (_e, cheat: CheatDefinition, expectedValue: number | null): Promise<TargetStatus[]> => {
       if (attachedHandle === null) throw new Error('not attached')

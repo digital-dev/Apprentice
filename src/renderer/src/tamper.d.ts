@@ -70,6 +70,14 @@ declare global {
       onCheatRecovered: (cb: (cheatId: string) => void) => void
       startWriteWatch: (address: string) => Promise<void>
       pollWriteWatch: () => Promise<CaughtInstruction[]>
+      // Fetches up to 4096 raw bytes starting at `address` from the attached
+      // process, for the memory viewer. null when the read fails outright
+      // (unmapped, wrong permissions) — the caller shows the page as
+      // unreadable rather than treating this as an error.
+      readMemoryBlock: (address: string, length: number) => Promise<ArrayBuffer | null>
+      // Writes a single unsigned byte (0-255) at `address` — the memory
+      // viewer's inline byte editor.
+      writeMemoryByte: (address: string, value: number) => Promise<boolean>
       stopWriteWatch: () => Promise<CaughtInstruction[]>
       locatePatch: (patch: PatchCheat) => Promise<PatchStatus>
       applyPatch: (patch: PatchCheat) => Promise<{ ok: boolean; error: string | null }>

@@ -100,6 +100,22 @@ export const nativeAddon = {
       return null
     }
   },
+  // Raw-Buffer counterpart to readBytes/tryReadBytes, for a caller that
+  // wants to decode the bytes itself (DataView, multiple widths at once)
+  // instead of re-parsing a hex string — the memory viewer's whole reason
+  // for existing. Same throw-on-failure contract as readBytes.
+  readMemoryBlock: (handle: number, address: string, length: number): Buffer =>
+    addon.readBytes(handle, address, length, true),
+  // Non-throwing form for a 250ms poll landing on unmapped memory — an
+  // expected, routine outcome for a viewer jumping to an arbitrary
+  // address, not an error. Same split as tryReadBytes/tryReadValue.
+  tryReadMemoryBlock: (handle: number, address: string, length: number): Buffer | null => {
+    try {
+      return addon.readBytes(handle, address, length, true)
+    } catch {
+      return null
+    }
+  },
   writeBytes: (handle: number, address: string, hexBytes: string): boolean =>
     addon.writeBytes(handle, address, hexBytes),
   // Runs on a background thread in the addon (Napi::AsyncWorker) and returns

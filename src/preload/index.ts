@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.on('cheat:recovered', (_e, cheatId) => cb(cheatId)),
   startWriteWatch: (address: string) => ipcRenderer.invoke('writeWatch:start', address),
   pollWriteWatch: () => ipcRenderer.invoke('writeWatch:poll'),
+  readMemoryBlock: (address: string, length: number) =>
+    ipcRenderer.invoke('memory:readBlock', address, length),
+  writeMemoryByte: (address: string, value: number) =>
+    ipcRenderer.invoke('memory:writeByte', address, value),
   stopWriteWatch: () => ipcRenderer.invoke('writeWatch:stop'),
   locatePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:locate', patch),
   applyPatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:apply', patch),
