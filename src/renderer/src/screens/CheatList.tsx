@@ -144,6 +144,7 @@ export default function CheatList({
   // (empty) value.
   const cheatsRef = useRef(cheats)
   const patchesRef = useRef(patches)
+  const scriptsRef = useRef<ScriptCheat[]>([])
   cheatsRef.current = cheats
   patchesRef.current = patches
   // Where each patch currently sits and whether it's safe to toggle on.
@@ -201,6 +202,11 @@ export default function CheatList({
   const [editingScript, setEditingScript] = useState<ScriptCheat | null>(null)
   const [scriptOutput, setScriptOutput] = useState<string[] | null>(null)
   const [scriptError, setScriptError] = useState<string | null>(null)
+  // Same reasoning as cheatsRef/patchesRef above: the mount-once
+  // onHotkeyFired effect reads through this ref rather than closing over
+  // `scripts`, which would otherwise stay frozen at its mount-time (empty)
+  // value.
+  scriptsRef.current = scripts
 
   // The two mini creation forms below Mono Explorer's handoff feeds. Kept
   // as plain per-field state, matching Scanner.tsx's own creation-form
@@ -383,6 +389,7 @@ export default function CheatList({
       else playError()
 
       const isPatchId = patchesRef.current.some((p) => p.id === cheatId)
+      const isScriptId = scriptsRef.current.some((s) => s.id === cheatId)
       if (isPatchId) {
         setPatchEnabled((prev) => {
           if (outcome !== 'on' && outcome !== 'off') return prev
@@ -390,6 +397,11 @@ export default function CheatList({
           if (outcome === 'on') next.add(cheatId)
           else next.delete(cheatId)
           return next
+        })
+      } else if (isScriptId) {
+        setScriptEnabled((prev) => {
+          if (outcome !== 'on' && outcome !== 'off') return prev
+          return { ...prev, [cheatId]: outcome === 'on' }
         })
       } else {
         setEnabled((prev) => {
@@ -410,7 +422,9 @@ export default function CheatList({
       }
 
       if (outcome === 'error' && error) {
-        const found = [...cheatsRef.current, ...patchesRef.current].find((c) => c.id === cheatId)
+        const found = [...cheatsRef.current, ...patchesRef.current, ...scriptsRef.current].find(
+          (c) => c.id === cheatId
+        )
         setHotkeyFireError({ cheatName: found?.name ?? cheatId, message: error })
       }
     })
@@ -1664,6 +1678,31 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
             />
             <span>{script.name}</span>
             <button onClick={() => setEditingScript(script)}>Edit script</button>
+            {capturingHotkeyId === script.id ? (
+              <>
+                <span className="address-chip">{capturedHotkey ?? 'Press keys…'}</span>
+                <button
+                  onClick={() => saveHotkey(script, capturedHotkey)}
+                  disabled={capturedHotkey === null}
+                >
+                  Save
+                </button>
+                <button onClick={() => setCapturingHotkeyId(null)}>Cancel</button>
+              </>
+            ) : (
+              <>
+                {script.hotkey && <span className="address-chip">{script.hotkey}</span>}
+                <button onClick={() => startCapturingHotkey(script.id)}>
+                  {script.hotkey ? 'Change hotkey' : 'Set hotkey'}
+                </button>
+                {script.hotkey && (
+                  <button onClick={() => saveHotkey(script, null)}>Clear hotkey</button>
+                )}
+              </>
+            )}
+            {hotkeyError && capturingHotkeyId === script.id && (
+              <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{hotkeyError}</span>
+            )}
           </li>
         ))}
         <li>
