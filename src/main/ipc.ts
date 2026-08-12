@@ -15,7 +15,9 @@ import {
   StoredCheat,
   PatchCheat,
   patchMode,
-  isPatchCheat
+  isPatchCheat,
+  isScriptCheat,
+  type ScriptCheat
 } from './store'
 import { importCheatTable } from './ctImport'
 import { buildCheatTable } from './ctExport'
@@ -39,6 +41,7 @@ import {
 } from './profile'
 import { CheatRuntime } from './cheatRuntime'
 import { HotkeyManager, HotkeyDeps } from './hotkeys'
+import { ScriptRuntime, type LuaValue } from './scriptRuntime'
 import { ProcessWatcher } from './watcher'
 import type { LoadedModule, MonoOps } from './anchor'
 
@@ -415,6 +418,9 @@ function attachTo(pid: number, exeName: string): { handle: number; baseAddress: 
     // wrong game) after we've switched. registerAll below re-registers
     // fresh for the new exe.
     hotkeyManager.unregisterAll()
+    for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
+      scriptRuntime.clear(cheat.id)
+    }
   }
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
@@ -458,12 +464,22 @@ const cheatRuntime = new CheatRuntime({
 // the same operations cheats:toggleFreeze/cheats:oneShot/patch:apply/
 // patch:restore already expose over IPC, just reached directly instead of
 // through a renderer round trip.
+const scriptRuntime = new ScriptRuntime(async (source, stateIn) => {
+  if (attachedHandle === null) {
+    return { success: false, output: [], error: 'not attached', stateOut: stateIn }
+  }
+  return nativeAddon.runScript(attachedHandle, source, stateIn)
+})
+
 const hotkeyDeps: HotkeyDeps = {
   loadCheats,
   isFreezeEnabled: (cheatId) => freezeLoop.isEnabled(cheatId),
   enableFreeze: (cheat) => freezeLoop.enable(cheat),
   disableFreeze: (cheatId) => freezeLoop.disable(cheatId),
   oneShot: async (cheat) => (attachedHandle === null ? false : writeCheat(attachedHandle, cheat)),
+  isScriptEnabled: (cheatId) => scriptRuntime.isEnabled(cheatId),
+  runScriptEnable: (cheat) => scriptRuntime.enable(cheat),
+  runScriptDisable: (cheat) => scriptRuntime.disable(cheat),
   // Mirrors exactly the condition cheatRuntime.arm() itself uses to decide
   // whether to no-op, so "is this patch armed, from the hotkey's
   // perspective" agrees with "will calling arm() actually do anything".
@@ -566,6 +582,9 @@ export function startWatching(getWindow: () => BrowserWindow): void {
     cheatRuntime.processExited()
     patchEngine.forgetAll()
     hotkeyManager.unregisterAll()
+    for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
+      scriptRuntime.clear(cheat.id)
+    }
     attachedHandle = null
     attachedBase = null
     attachedPid = null
@@ -602,6 +621,9 @@ export function releaseTarget(): void {
   }
   patchEngine.restoreAll()
   hotkeyManager.unregisterAll()
+  for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
+    scriptRuntime.clear(cheat.id)
+  }
 }
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
@@ -655,7 +677,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (conflict) {
       throw new Error(`Hotkey already used by "${conflict}" — pick a different combo.`)
     }
-    if (cheat.hotkey && !isPatchCheat(cheat) && cheat.targets.some(isAnchorTarget)) {
+    if (cheat.hotkey && !isPatchCheat(cheat) && !isScriptCheat(cheat) && cheat.targets.some(isAnchorTarget)) {
       throw new Error(
         'Hotkeys are not yet supported for cheats anchored to a capture patch — toggle this one from the cheat list.'
       )
@@ -693,6 +715,32 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (attachedHandle === null) return false
     return writeCheat(attachedHandle, cheat)
   })
+
+  ipcMain.handle(
+    'scripts:toggle',
+    async (_e, cheat: ScriptCheat, enabled: boolean): Promise<{ ok: boolean; error?: string }> => {
+      return enabled ? scriptRuntime.enable(cheat) : scriptRuntime.disable(cheat)
+    }
+  )
+
+  ipcMain.handle('scripts:isEnabled', (_e, cheatId: string): boolean => scriptRuntime.isEnabled(cheatId))
+
+  ipcMain.handle(
+    'scripts:run',
+    async (
+      _e,
+      source: string,
+      stateIn: Record<string, LuaValue>
+    ): Promise<{
+      success: boolean
+      output: string[]
+      error: string | null
+      stateOut: Record<string, LuaValue>
+    }> => {
+      if (attachedHandle === null) throw new Error('not attached')
+      return nativeAddon.runScript(attachedHandle, source, stateIn)
+    }
+  )
 
   ipcMain.handle(
     'memory:readBlock',
@@ -998,13 +1046,18 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       // comment on PatchCheat.internal) — they must not surface as skip
       // entries for patches the user never saw.
       const patches = allCheats.filter(isPatchCheat).filter((p) => !p.internal)
-      const valueCheats = allCheats.filter((c) => !isPatchCheat(c))
+      const scripts = allCheats.filter(isScriptCheat)
+      const valueCheats = allCheats.filter((c) => !isPatchCheat(c) && !isScriptCheat(c))
       const { xml, exported, skipped: patchSkipped } = buildCheatTable(patches)
       const skipped = [
         ...patchSkipped,
         ...valueCheats.map((cheat) => ({
           name: cheat.name,
           reason: "Value cheats have no equivalent Auto Assembler script shape and can't be exported to .CT."
+        })),
+        ...scripts.map((cheat) => ({
+          name: cheat.name,
+          reason: "Lua-scripted cheats have no equivalent Auto Assembler script shape and can't be exported to .CT."
         }))
       ]
       const result = await dialog.showSaveDialog(getWindow(), {

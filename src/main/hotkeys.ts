@@ -1,4 +1,11 @@
-import { isPatchCheat, type CheatDefinition, type PatchCheat, type StoredCheat } from './store'
+import {
+  isPatchCheat,
+  isScriptCheat,
+  type CheatDefinition,
+  type PatchCheat,
+  type ScriptCheat,
+  type StoredCheat
+} from './store'
 
 export interface HotkeyDeps {
   loadCheats(exeName: string): StoredCheat[]
@@ -9,6 +16,13 @@ export interface HotkeyDeps {
   isPatchArmed(patchId: string): boolean
   armPatch(patch: PatchCheat): void
   disarmPatch(patch: PatchCheat): void
+  isScriptEnabled(cheatId: string): boolean
+  // Both resolve even on failure — HotkeyOutcome 'error' is used in that
+  // case, mirroring fireValueCheat's existing one-shot path, since a
+  // script run is async and fallible the same way a one-shot write is
+  // (unlike freeze/patch toggling, which cannot fail).
+  runScriptEnable(cheat: ScriptCheat): Promise<{ ok: boolean; error?: string }>
+  runScriptDisable(cheat: ScriptCheat): Promise<{ ok: boolean; error?: string }>
   // Wraps Electron's globalShortcut.register — returns false when the OS
   // or another app already owns this accelerator.
   registerShortcut(accelerator: string, callback: () => void): boolean
@@ -73,9 +87,29 @@ export class HotkeyManager {
   private fire(cheat: StoredCheat): void {
     if (isPatchCheat(cheat)) {
       this.firePatch(cheat)
+    } else if (isScriptCheat(cheat)) {
+      this.fireScript(cheat)
     } else {
       this.fireValueCheat(cheat)
     }
+  }
+
+  // Modeled on fireValueCheat's ONE-SHOT branch (async, can fail), not its
+  // freeze branch (sync, infallible) — a script run is always fallible.
+  private fireScript(cheat: ScriptCheat): void {
+    const wasEnabled = this.deps.isScriptEnabled(cheat.id)
+    const action = wasEnabled ? this.deps.runScriptDisable(cheat) : this.deps.runScriptEnable(cheat)
+    void action
+      .then((result) => {
+        if (result.ok) {
+          this.firedCb?.(cheat.id, wasEnabled ? 'off' : 'on')
+        } else {
+          this.firedCb?.(cheat.id, 'error', result.error ?? 'Script failed.')
+        }
+      })
+      .catch((err) =>
+        this.firedCb?.(cheat.id, 'error', err instanceof Error ? err.message : 'Script failed.')
+      )
   }
 
   private fireValueCheat(cheat: CheatDefinition): void {

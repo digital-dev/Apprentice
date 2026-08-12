@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { HotkeyManager, HotkeyDeps, HotkeyOutcome } from '../../src/main/hotkeys'
-import type { CheatDefinition, PatchCheat, StoredCheat } from '../../src/main/store'
+import type { CheatDefinition, PatchCheat, ScriptCheat, StoredCheat } from '../../src/main/store'
 
 const freezeCheat: CheatDefinition = {
   id: 'freeze1',
@@ -45,6 +45,13 @@ class FakeDeps implements HotkeyDeps {
   registerShouldFail = new Set<string>()
   unregisterAllCalls = 0
   oneShotResult = true
+  scriptEnabled = new Set<string>()
+  runScriptEnable = vi.fn(async (_cheat: ScriptCheat): Promise<{ ok: boolean; error?: string }> => ({
+    ok: true
+  }))
+  runScriptDisable = vi.fn(async (_cheat: ScriptCheat): Promise<{ ok: boolean; error?: string }> => ({
+    ok: true
+  }))
 
   loadCheats(): StoredCheat[] {
     return this.cheats
@@ -70,6 +77,9 @@ class FakeDeps implements HotkeyDeps {
   }
   disarmPatch(patch: PatchCheat): void {
     this.patchState.set(patch.id, 'idle')
+  }
+  isScriptEnabled(cheatId: string): boolean {
+    return this.scriptEnabled.has(cheatId)
   }
   registerShortcut(accelerator: string, callback: () => void): boolean {
     if (this.registerShouldFail.has(accelerator)) return false
@@ -206,5 +216,47 @@ describe('HotkeyManager', () => {
     manager.registerAll('game.exe')
     manager.unregisterAll()
     expect(deps.unregisterAllCalls).toBe(2)
+  })
+
+  it('fires a script cheat: runs enableScript when currently off, reports on', async () => {
+    const script: ScriptCheat = {
+      kind: 'script',
+      id: 's1',
+      name: 'S1',
+      enableScript: 'writeInt32(0, 1)',
+      disableScript: '',
+      hotkey: 'F5'
+    }
+    deps.cheats = [script]
+    manager.registerAll('game.exe')
+    const outcomes: [string, HotkeyOutcome, string?][] = []
+    manager.onFired((id, outcome, error) => outcomes.push([id, outcome, error]))
+
+    deps.registered.find((r) => r.accelerator === 'F5')?.callback()
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(deps.runScriptEnable).toHaveBeenCalledWith(script)
+    expect(outcomes).toEqual([['s1', 'on', undefined]])
+  })
+
+  it('reports outcome "error" when a script run fails', async () => {
+    const script: ScriptCheat = {
+      kind: 'script',
+      id: 's1',
+      name: 'S1',
+      enableScript: 'error("boom")',
+      disableScript: '',
+      hotkey: 'F5'
+    }
+    deps.cheats = [script]
+    deps.runScriptEnable = vi.fn(async () => ({ ok: false, error: 'boom' }))
+    manager.registerAll('game.exe')
+    const outcomes: [string, HotkeyOutcome, string?][] = []
+    manager.onFired((id, outcome, error) => outcomes.push([id, outcome, error]))
+
+    deps.registered.find((r) => r.accelerator === 'F5')?.callback()
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(outcomes).toEqual([['s1', 'error', 'boom']])
   })
 })

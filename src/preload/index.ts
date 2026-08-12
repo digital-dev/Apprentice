@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CheatDefinition, StoredCheat, PatchCheat } from '../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat } from '../main/store'
 
 contextBridge.exposeInMainWorld('tamper', {
   listProcesses: () => ipcRenderer.invoke('process:list'),
@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('tamper', {
   toggleFreeze: (cheat: CheatDefinition, enabled: boolean) =>
     ipcRenderer.invoke('cheats:toggleFreeze', cheat, enabled),
   oneShot: (cheat: CheatDefinition) => ipcRenderer.invoke('cheats:oneShot', cheat),
+  runScript: (source: string, stateIn: Record<string, string | number | boolean>) =>
+    ipcRenderer.invoke('scripts:run', source, stateIn),
+  toggleScript: (cheat: ScriptCheat, enabled: boolean) =>
+    ipcRenderer.invoke('scripts:toggle', cheat, enabled),
+  isScriptEnabled: (cheatId: string) => ipcRenderer.invoke('scripts:isEnabled', cheatId),
   readMemoryBlock: (address: string, length: number) =>
     ipcRenderer.invoke('memory:readBlock', address, length),
   writeMemoryByte: (address: string, value: number) =>

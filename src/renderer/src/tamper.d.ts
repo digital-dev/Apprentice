@@ -1,4 +1,4 @@
-import type { CheatDefinition, StoredCheat, PatchCheat } from '../../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat } from '../../main/store'
 
 export {}
 
@@ -55,6 +55,32 @@ declare global {
       deleteCheat: (exeName: string, cheatId: string) => Promise<void>
       toggleFreeze: (cheat: CheatDefinition, enabled: boolean) => Promise<void>
       oneShot: (cheat: CheatDefinition) => Promise<boolean>
+      // Runs `source` as a one-shot Lua chunk against the attached
+      // process — used only by ScriptEditor's ad-hoc "Run enable/disable
+      // now" test buttons, against a throwaway state (the script may not
+      // even be saved yet). A saved script cheat's real enable/disable
+      // goes through toggleScript below instead, so its `state` handoff
+      // and enabled-flag stay correct regardless of whether it was last
+      // toggled by a click or a hotkey. Throws 'not attached'.
+      runScript: (
+        source: string,
+        stateIn: Record<string, string | number | boolean>
+      ) => Promise<{
+        success: boolean
+        output: string[]
+        error: string | null
+        stateOut: Record<string, string | number | boolean>
+      }>
+      // The real, state-tracked toggle for a saved script cheat — routes
+      // through ScriptRuntime (main/scriptRuntime.ts) exactly like a
+      // hotkey firing this same cheat does.
+      toggleScript: (cheat: ScriptCheat, enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+      // Current ScriptRuntime-tracked enabled state for a script cheat —
+      // pulled on CheatList mount to initialize each checkbox correctly
+      // (mirrors getHotkeyConflicts' pull-based pattern above, for the
+      // same reason: ScriptRuntime's state can already reflect a hotkey
+      // fire that happened before this screen mounted).
+      isScriptEnabled: (cheatId: string) => Promise<boolean>
       // Fetches up to 4096 raw bytes starting at `address` from the attached
       // process, for the memory viewer. null when the read fails outright
       // (unmapped, wrong permissions) — the caller shows the page as
