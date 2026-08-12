@@ -329,20 +329,50 @@ void SeedStateTable(lua_State* L, const LuaState& stateIn) {
 // stateOut — only string/number/boolean values are collected; anything
 // else the script stored in `state` (a nested table, a function) is
 // silently dropped, per this plan's Global Constraints on `state`'s scope.
-LuaState ReadStateTable(lua_State* L) {
+//
+// The same kMaxStateInBytes cap the JS thread applies to stateIn is applied
+// here on the way OUT, and for a concrete reason: stateOut becomes the next
+// run's stateIn. A script that stashed more than the cap into `state` during
+// enable would produce a stateOut that the constructor rejects on the next
+// call — so its disable script could NEVER run and the cheat would be
+// stranded enabled forever, with the game left holding its effect. Dropping
+// the overflow keeps the handoff usable; `truncated` lets the caller say so
+// in the run's output rather than losing values silently.
+LuaState ReadStateTable(lua_State* L, bool* truncated) {
   LuaState out;
+  size_t total = 0;
   lua_getglobal(L, "state");
   if (lua_istable(L, -1)) {
     lua_pushnil(L);
     while (lua_next(L, -2) != 0) {
       if (lua_type(L, -2) == LUA_TSTRING) {
+        // lua_tostring on the KEY would convert a numeric key in place and
+        // confuse lua_next; the LUA_TSTRING check above already excludes that.
         std::string key = lua_tostring(L, -2);
+        size_t cost = key.size();
+        bool have = true;
+        LuaValueVariant value;
         if (lua_isboolean(L, -1)) {
-          out[key] = static_cast<bool>(lua_toboolean(L, -1));
+          value = static_cast<bool>(lua_toboolean(L, -1));
+          cost += sizeof(bool);
         } else if (lua_isnumber(L, -1)) {
-          out[key] = static_cast<double>(lua_tonumber(L, -1));
+          value = static_cast<double>(lua_tonumber(L, -1));
+          cost += sizeof(double);
         } else if (lua_isstring(L, -1)) {
-          out[key] = std::string(lua_tostring(L, -1));
+          size_t len = 0;
+          const char* s = lua_tolstring(L, -1, &len);
+          value = std::string(s, len);
+          cost += len;
+        } else {
+          have = false;
+        }
+        if (have) {
+          if (total + cost > kMaxStateInBytes) {
+            *truncated = true;
+          } else {
+            total += cost;
+            out[key] = std::move(value);
+          }
         }
       }
       lua_pop(L, 1);
@@ -434,6 +464,15 @@ void ApplyStickyTimeout(const TimeoutState& timeout, ScriptResult& result) {
   result.error = kTimeoutMessage;
 }
 
+// The run still succeeds — dropping the overflow is what keeps the next run
+// (the disable script) able to start at all — but the author needs to know
+// values went missing, so it lands in the output the editor already shows.
+void NoteStateTruncation(bool truncated, ScriptResult& result) {
+  if (!truncated) return;
+  result.output.push_back(
+      "... state exceeded 256 KB; the values over that limit were dropped ...");
+}
+
 // Closes the lua_State on every exit path out of RunScriptImpl — the normal
 // returns, the early load-failure return, AND the catch(...) below. Without
 // this, the catch path would leak the whole state (and its allocator budget)
@@ -478,19 +517,36 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
     result.error = "could not allocate Lua state";
     return result;
   }
+  // DECLARATION ORDER IS LOAD-BEARING — do not reorder these three.
+  //
+  // lua_close() runs the collector, including __gc metamethods, and the base
+  // library's setmetatable is allowlisted, so a script CAN arrange for our
+  // own C functions to run during close:
+  //   setmetatable({}, {__gc = function() print("bye") end})
+  // That reaches LuaPrint, whose upvalue is a raw pointer to `out`; the count
+  // hook can likewise fire during a slow finalizer and dereference `&timeout`
+  // out of the state's extra space. Both must therefore still be ALIVE while
+  // lua_close runs, or this is a use-after-free — the very crash class the
+  // guard below exists to prevent.
+  //
+  // C++ destroys locals in REVERSE declaration order, so declaring `timeout`
+  // and `out` FIRST makes them destroyed LAST, i.e. after `guard` has already
+  // closed the state. Declaring the guard first (as an earlier revision did)
+  // inverts this and reopens the bug.
+  TimeoutState timeout;
+  OutputCollector out;
+  bool stateOutTruncated = false;
   LuaStateGuard guard{L};
 
   try {
     lua_pushlightuserdata(L, reinterpret_cast<void*>(handle));
     lua_setfield(L, LUA_REGISTRYINDEX, "apprentice_handle");
 
-    TimeoutState timeout;
     timeout.deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
     *static_cast<TimeoutState**>(lua_getextraspace(L)) = &timeout;
     lua_sethook(L, TimeoutHook, LUA_MASKCOUNT, 1000);
 
-    OutputCollector out;
     OpenAllowlistedLibs(L, &out);
     SeedStateTable(L, stateIn);
 
@@ -500,7 +556,8 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
       result.error = msg ? msg : "could not compile script";
       result.output = out.lines;
       ApplyStickyTimeout(timeout, result);
-      result.stateOut = ReadStateTable(L);
+      result.stateOut = ReadStateTable(L, &stateOutTruncated);
+      NoteStateTruncation(stateOutTruncated, result);
       return result;
     }
 
@@ -512,12 +569,18 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
     }
     result.output = out.lines;
     ApplyStickyTimeout(timeout, result);
-    result.stateOut = ReadStateTable(L);
+    result.stateOut = ReadStateTable(L, &stateOutTruncated);
+    NoteStateTruncation(stateOutTruncated, result);
     return result;
   } catch (...) {
     result.success = false;
     result.error = "script setup failed (out of memory or an internal Lua error)";
-    // Whatever was half-collected is not trustworthy after an escaped error.
+    // `out` is a function-scope local (see the ordering note above), so
+    // anything the script managed to print before dying is still here and
+    // still valid — those lines are often the only clue to what went wrong.
+    result.output = out.lines;
+    // The state table, by contrast, is not trustworthy after an escaped
+    // error: it may have been half-read, or never seeded at all.
     result.stateOut.clear();
     return result;
   }

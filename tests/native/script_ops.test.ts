@@ -209,6 +209,68 @@ describe('runScript', () => {
     expect(result.error).toContain('too large')
   }, 15000)
 
+  // Regression: lua_close() runs pending __gc finalizers, and setmetatable is
+  // allowlisted, so a script can get our own C functions called during close.
+  // LuaPrint holds a raw pointer to the run's OutputCollector and the count
+  // hook holds one to its TimeoutState — both used to be scoped INSIDE the
+  // try block while the RAII guard that calls lua_close was scoped outside
+  // it. Reverse-order destruction meant they died first and lua_close then
+  // ran finalizers against freed memory. If that ordering regresses, this
+  // test crashes the runner rather than failing.
+  it('survives a __gc finalizer that calls back into the host during close', async () => {
+    const result = await (addon as any).runScript(
+      handle,
+      `
+      -- Deliberately unreachable and unreferenced, so it is finalized during
+      -- lua_close rather than while the chunk is still running.
+      setmetatable({}, {__gc = function() print("finalizer ran") end})
+      print("chunk done")
+    `,
+      {}
+    )
+    expect(result.success).toBe(true)
+    expect(result.output[0]).toBe('chunk done')
+  })
+
+  it('survives many __gc finalizers touching state and memory during close', async () => {
+    const result = await (addon as any).runScript(
+      handle,
+      `
+      for i = 1, 200 do
+        setmetatable({}, {__gc = function() print("f" .. i) end})
+      end
+      state.collected = true
+    `,
+      {}
+    )
+    expect(result.success).toBe(true)
+    // Proves ReadStateTable still ran normally, i.e. nothing was corrupted on
+    // the way to close.
+    expect(result.stateOut.collected).toBe(true)
+  })
+
+  // Regression: the 256 KB cap applied to stateIn but not stateOut, so a
+  // script that stashed more than that during enable produced a stateOut the
+  // NEXT run would reject outright — stranding the cheat enabled forever,
+  // since its disable script could never start. The overflow is dropped
+  // instead, and the drop is reported.
+  it('drops oversized state on the way out so the next run can still start', async () => {
+    const first = await (addon as any).runScript(
+      handle,
+      'state.keep = 7 state.huge = string.rep("x", 400 * 1024)',
+      {}
+    )
+    expect(first.success).toBe(true)
+    expect(first.output[first.output.length - 1]).toContain('state exceeded 256 KB')
+    expect(first.stateOut.huge).toBeUndefined()
+    expect(first.stateOut.keep).toBe(7)
+
+    // The whole point: that stateOut is small enough to be accepted back in.
+    const second = await (addon as any).runScript(handle, 'print(state.keep)', first.stateOut)
+    expect(second.success).toBe(true)
+    expect(second.output[0]).toBe('7')
+  })
+
   it('round-trips a value through state between two separate runScript calls', async () => {
     const first = await (addon as any).runScript(handle, 'state.original = 42', {})
     expect(first.stateOut.original).toBe(42)
