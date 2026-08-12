@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CheatDefinition, StoredCheat, PatchCheat, CheatTarget, DataType } from '../../../main/store'
+import type {
+  CheatDefinition,
+  StoredCheat,
+  PatchCheat,
+  ScriptCheat,
+  CheatTarget,
+  DataType
+} from '../../../main/store'
 import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
 import type { PendingMonoSelection } from '../App'
 import Toggle from '../components/Toggle'
@@ -13,6 +20,12 @@ import { playOn, playOff, playError } from '../sound'
 // boundary.
 function isPatch(cheat: StoredCheat): cheat is PatchCheat {
   return cheat.kind === 'patch'
+}
+
+// Same reasoning as isPatch above: a local guard rather than importing
+// store.ts's isScriptCheat.
+function isScript(cheat: StoredCheat): cheat is ScriptCheat {
+  return (cheat as ScriptCheat).kind === 'script'
 }
 
 // Same reasoning as isPatch above: a local guard rather than importing
@@ -183,6 +196,12 @@ export default function CheatList({
   // against — drives the "this game has updated" banner.
   const [changedModules, setChangedModules] = useState<string[]>([])
 
+  const [scripts, setScripts] = useState<ScriptCheat[]>([])
+  const [scriptEnabled, setScriptEnabled] = useState<Record<string, boolean>>({})
+  const [editingScript, setEditingScript] = useState<ScriptCheat | null>(null)
+  const [scriptOutput, setScriptOutput] = useState<string[] | null>(null)
+  const [scriptError, setScriptError] = useState<string | null>(null)
+
   // The two mini creation forms below Mono Explorer's handoff feeds. Kept
   // as plain per-field state, matching Scanner.tsx's own creation-form
   // style, rather than a shared "new cheat" object — the two forms build
@@ -263,8 +282,9 @@ export default function CheatList({
       // here, so this stays in sync with whatever the save path actually
       // persisted.
       const all: StoredCheat[] = await window.tamper.loadCheats(exeName)
-      setCheats(all.filter((c): c is CheatDefinition => !isPatch(c)))
+      setCheats(all.filter((c): c is CheatDefinition => !isPatch(c) && !isScript(c)))
       setPatches(all.filter(isPatch))
+      setScripts(all.filter(isScript))
     } finally {
       setCtImporting(false)
     }
@@ -428,10 +448,16 @@ export default function CheatList({
   useEffect(() => {
     async function loadAndRevalidate() {
       const all: StoredCheat[] = await window.tamper.loadCheats(exeName)
-      const loaded = all.filter((c): c is CheatDefinition => !isPatch(c))
+      const loaded = all.filter((c): c is CheatDefinition => !isPatch(c) && !isScript(c))
       const loadedPatches = all.filter(isPatch)
       setCheats(loaded)
       setPatches(loadedPatches)
+      const loadedScripts = all.filter(isScript)
+      setScripts(loadedScripts)
+      const enabledEntries = await Promise.all(
+        loadedScripts.map(async (s) => [s.id, await window.tamper.isScriptEnabled(s.id)] as const)
+      )
+      setScriptEnabled(Object.fromEntries(enabledEntries))
 
       // A patch's address is only meaningful against the running process, so
       // resolve each one on attach: module+offset for module code, an AOB
@@ -816,6 +842,8 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
     await window.tamper.saveCheat(exeName, updated)
     if (isPatch(updated)) {
       setPatches((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+    } else if (isScript(updated)) {
+      setScripts((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
     } else {
       setCheats((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
     }
@@ -950,6 +978,37 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
     setMonoAnchorUseReturnValue(false)
     setMonoAnchorReturnValue('')
     onConsumePendingMonoSelection?.()
+  }
+
+  async function toggleScript(script: ScriptCheat, enabled: boolean) {
+    setScriptError(null)
+    // Routed through ScriptRuntime (scripts:toggle), not a raw scripts:run
+    // call — this keeps the enable->disable `state` handoff and the
+    // enabled-flag correct regardless of whether this cheat was last
+    // toggled by a click or a hotkey (see this plan's Task 7).
+    const result = await window.tamper.toggleScript(script, enabled)
+    if (!result.ok) {
+      setScriptError(result.error ?? 'Script failed.')
+      return
+    }
+    setScriptEnabled((prev) => ({ ...prev, [script.id]: enabled }))
+  }
+
+  async function saveScript(script: ScriptCheat) {
+    await window.tamper.saveCheat(exeName, script)
+    setEditingScript(null)
+    const all = await window.tamper.loadCheats(exeName)
+    setScripts(all.filter(isScript))
+  }
+
+  async function testScript(source: string) {
+    setScriptError(null)
+    // Deliberately the raw scripts:run call (not toggleScript) — this is
+    // ScriptEditor's ad-hoc test button, running against a throwaway state,
+    // possibly against a script that hasn't been saved yet at all.
+    const result = await window.tamper.runScript(source, {})
+    if (!result.success) setScriptError(result.error ?? 'Script failed.')
+    setScriptOutput(result.output)
   }
 
   return (
@@ -1594,7 +1653,75 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
           })}
         </ul>
       )}
-      {cheats.length === 0 && patches.length === 0 && (
+      <h3>Scripts</h3>
+      <ul>
+        {scripts.map((script) => (
+          <li key={script.id} style={{ flexWrap: 'wrap' }}>
+            <input
+              type="checkbox"
+              checked={scriptEnabled[script.id] ?? false}
+              onChange={(e) => void toggleScript(script, e.target.checked)}
+            />
+            <span>{script.name}</span>
+            <button onClick={() => setEditingScript(script)}>Edit script</button>
+          </li>
+        ))}
+        <li>
+          <button
+            onClick={() =>
+              setEditingScript({
+                kind: 'script',
+                id: `script-${Date.now()}`,
+                name: 'New Script',
+                enableScript: '',
+                disableScript: ''
+              })
+            }
+          >
+            + New Script
+          </button>
+        </li>
+      </ul>
+
+      {scriptError && (
+        <div className="banner banner-error">
+          {scriptError}
+          <button onClick={() => setScriptError(null)}>Dismiss</button>
+        </div>
+      )}
+      {scriptOutput && scriptOutput.length > 0 && (
+        <div className="banner">
+          <pre>{scriptOutput.join('\n')}</pre>
+          <button onClick={() => setScriptOutput(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {editingScript && (
+        <div className="script-editor">
+          <input
+            value={editingScript.name}
+            onChange={(e) => setEditingScript({ ...editingScript, name: e.target.value })}
+          />
+          <label>Enable script</label>
+          <textarea
+            value={editingScript.enableScript}
+            onChange={(e) => setEditingScript({ ...editingScript, enableScript: e.target.value })}
+          />
+          <button onClick={() => void testScript(editingScript.enableScript)}>Run enable now</button>
+          <label>Disable script</label>
+          <textarea
+            value={editingScript.disableScript}
+            onChange={(e) => setEditingScript({ ...editingScript, disableScript: e.target.value })}
+          />
+          <button onClick={() => void testScript(editingScript.disableScript)}>Run disable now</button>
+          <div>
+            <button onClick={() => void saveScript(editingScript)}>Save</button>
+            <button onClick={() => setEditingScript(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {cheats.length === 0 && patches.length === 0 && scripts.length === 0 && (
         <p>No cheats yet for {exeName}. Scan for one to get started.</p>
       )}
     </div>
