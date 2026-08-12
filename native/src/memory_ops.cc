@@ -1,5 +1,6 @@
 #include "memory_ops.h"
 #include "value_type.h"
+#include "chain_walk.h"
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -7,25 +8,6 @@
 #include <optional>
 
 namespace {
-
-uintptr_t ParseHex(const std::string& s) {
-  return static_cast<uintptr_t>(strtoull(s.c_str(), nullptr, 16));
-}
-
-std::optional<uintptr_t> ResolveChain(HANDLE h, uintptr_t base, const std::vector<uintptr_t>& offsets) {
-  uintptr_t addr = base;
-  for (size_t i = 0; i < offsets.size(); i++) {
-    addr += offsets[i];
-    if (i + 1 < offsets.size()) {
-      uintptr_t next;
-      SIZE_T read;
-      if (!ReadProcessMemory(h, (LPCVOID)addr, &next, sizeof(next), &read) || read != sizeof(next))
-        return std::nullopt;
-      addr = next;
-    }
-  }
-  return addr;
-}
 
 std::vector<uintptr_t> ParseOffsets(const Napi::Array& arr) {
   std::vector<uintptr_t> out;
