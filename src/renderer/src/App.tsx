@@ -28,6 +28,11 @@ export default function App() {
   )
   const [jumpToAddress, setJumpToAddress] = useState<string | null>(null)
 
+  function onViewInMemory(address: string) {
+    setJumpToAddress(address)
+    setScreen('memory')
+  }
+
   return (
     <div className="layout">
       <Sidebar screen={screen} exeName={exeName} onNavigate={setScreen} />
@@ -48,6 +53,7 @@ export default function App() {
             exeName={exeName}
             pendingMonoSelection={pendingMonoSelection}
             onConsumePendingMonoSelection={() => setPendingMonoSelection(null)}
+            onViewInMemory={onViewInMemory}
           />
         )}
         {screen === 'mono' && exeName && (
@@ -72,7 +78,12 @@ export default function App() {
             "Clear scan" is how you throw it away deliberately. */}
         {exeName && (
           <div style={{ display: screen === 'scanner' ? 'block' : 'none' }}>
-            <Scanner key={exeName} exeName={exeName} onDone={() => setScreen('cheats')} />
+            <Scanner
+              key={exeName}
+              exeName={exeName}
+              onDone={() => setScreen('cheats')}
+              onViewInMemory={onViewInMemory}
+            />
           </div>
         )}
         {screen === 'memory' && exeName && (

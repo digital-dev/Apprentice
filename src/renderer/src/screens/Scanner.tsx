@@ -7,10 +7,12 @@ type ResolveStatus = 'resolving' | 'resolved' | 'no-chain'
 
 export default function Scanner({
   exeName,
-  onDone
+  onDone,
+  onViewInMemory
 }: {
   exeName: string
   onDone: () => void
+  onViewInMemory: (address: string) => void
 }) {
   const [dataType, setDataType] = useState<DataType>('float')
   const [value, setValue] = useState('')
@@ -430,6 +432,7 @@ export default function Scanner({
                     {status === 'no-chain' && '— no static chain found'}
                   </label>
                   <button onClick={() => startWatch(c.address)}>Find what writes this</button>
+                  <button onClick={() => onViewInMemory(c.address)}>View in Memory</button>
                 </li>
               )
             })}

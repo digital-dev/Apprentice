@@ -107,7 +107,8 @@ function cheatStateLabel(status: CheatStatus): string {
 export default function CheatList({
   exeName,
   pendingMonoSelection,
-  onConsumePendingMonoSelection
+  onConsumePendingMonoSelection,
+  onViewInMemory
 }: {
   exeName: string
   // A selection handed over from Mono Explorer, if the user just came from
@@ -117,6 +118,7 @@ export default function CheatList({
   // visit to this screen.
   pendingMonoSelection?: PendingMonoSelection | null
   onConsumePendingMonoSelection?: () => void
+  onViewInMemory: (address: string) => void
 }) {
   const [cheats, setCheats] = useState<CheatDefinition[]>([])
   const [patches, setPatches] = useState<PatchCheat[]>([])
@@ -1415,6 +1417,11 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                                   ? '✗ not resolving'
                                   : `✗ ${result[i]?.value} (mismatch)`}
                             </span>
+                            {!isAnchor(t) && !isMono(t) && 'offsets' in t && t.offsets.length === 0 && (
+                              <button onClick={() => onViewInMemory(t.baseOffset)}>
+                                View in Memory
+                              </button>
+                            )}
                           </li>
                         ))}
                       </ul>
