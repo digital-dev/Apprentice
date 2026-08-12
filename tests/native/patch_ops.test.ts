@@ -104,6 +104,23 @@ describe('readBytes / writeBytes', () => {
 
     await send('stopdrain')
   }, 30000)
+
+  it('reads up to 4096 bytes now, not just 64', () => {
+    const bytes: string = (addon as any).readBytes(handle, baseAddress, 4096)
+    expect(bytes.length).toBe(4096 * 2) // hex-encoded, 2 chars/byte
+  })
+
+  it('still rejects a request over the new cap', () => {
+    expect(() => (addon as any).readBytes(handle, baseAddress, 4097)).toThrow()
+  })
+
+  it('raw mode returns a Buffer of the requested length, matching the hex mode byte-for-byte', () => {
+    const hex: string = (addon as any).readBytes(handle, baseAddress, 16)
+    const raw: Buffer = (addon as any).readBytes(handle, baseAddress, 16, true)
+    expect(Buffer.isBuffer(raw)).toBe(true)
+    expect(raw.length).toBe(16)
+    expect(raw.toString('hex')).toBe(hex)
+  })
 })
 
 describe('writeBytes rejects malformed hex', () => {

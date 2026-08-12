@@ -182,9 +182,13 @@ Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
   size_t length = static_cast<size_t>(info[2].As<Napi::Number>().Uint32Value());
+  // Raised from 64 to 4096: the memory viewer requests one 256-byte page
+  // per poll tick, well under this cap; 4096 remains a safety bound
+  // against a malformed call, not a real constraint on any caller.
+  bool raw = info.Length() > 3 && info[3].As<Napi::Boolean>().Value();
 
-  if (length == 0 || length > 64) {
-    Napi::Error::New(env, "readBytes length must be 1..64").ThrowAsJavaScriptException();
+  if (length == 0 || length > 4096) {
+    Napi::Error::New(env, "readBytes length must be 1..4096").ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -193,6 +197,9 @@ Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
   if (!ReadProcessMemory(h, (LPCVOID)address, buffer.data(), length, &read) || read != length) {
     Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
     return env.Null();
+  }
+  if (raw) {
+    return Napi::Buffer<uint8_t>::Copy(env, buffer.data(), length);
   }
   return Napi::String::New(env, BytesToHex(buffer.data(), length));
 }
