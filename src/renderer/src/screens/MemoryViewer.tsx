@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { decodeAt } from '../dissect'
+import type { DataType } from '../../../main/store'
 
 const PAGE_SIZE = 256 // 16 bytes/row x 16 rows
 const POLL_MS = 250
@@ -28,6 +30,17 @@ export default function MemoryViewer({
   const [editValue, setEditValue] = useState('')
   const editingRef = useRef<number | null>(null)
   editingRef.current = editingOffset
+
+  interface DissectRow {
+    offset: string // hex, relative to baseAddress
+    dataType: DataType
+    label: string
+  }
+
+  const [dissectRows, setDissectRows] = useState<DissectRow[]>([])
+  const [newOffset, setNewOffset] = useState('0x0')
+  const [newDataType, setNewDataType] = useState<DataType>('int32')
+  const [newLabel, setNewLabel] = useState('')
 
   useEffect(() => {
     if (!baseAddress) return
@@ -145,6 +158,52 @@ export default function MemoryViewer({
             })}
           </tbody>
         </table>
+      )}
+
+      {baseAddress && bytes && (
+        <div className="dissect-panel">
+          <h3>Structure Dissect</h3>
+          <div className="toolbar">
+            <input value={newOffset} onChange={(e) => setNewOffset(e.target.value)} placeholder="offset (hex)" />
+            <select value={newDataType} onChange={(e) => setNewDataType(e.target.value as DataType)}>
+              <option value="int8">int8</option>
+              <option value="int16">int16</option>
+              <option value="int32">int32</option>
+              <option value="int64">int64</option>
+              <option value="float">float</option>
+              <option value="double">double</option>
+            </select>
+            <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="label" />
+            <button
+              onClick={() => {
+                const normalized = normalizeAddress(newOffset)
+                if (!normalized) return
+                setDissectRows((rows) => [
+                  ...rows,
+                  { offset: normalized, dataType: newDataType, label: newLabel || normalized }
+                ])
+                setNewLabel('')
+              }}
+            >
+              Add
+            </button>
+          </div>
+          <ul>
+            {dissectRows.map((row, i) => {
+              const decoded = decodeAt(block!, Number(BigInt(row.offset)), row.dataType)
+              return (
+                <li key={`${row.offset}-${i}`}>
+                  <span>{row.label}</span>
+                  <span className="muted"> ({row.dataType} @ {row.offset}): </span>
+                  <strong>{decoded === null ? 'out of range' : decoded.toString()}</strong>
+                  <button onClick={() => setDissectRows((rows) => rows.filter((_, idx) => idx !== i))}>
+                    Remove
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
       )}
     </div>
   )
