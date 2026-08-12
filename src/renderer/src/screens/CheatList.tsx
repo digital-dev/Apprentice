@@ -1008,11 +1008,31 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
     setScriptEnabled((prev) => ({ ...prev, [script.id]: enabled }))
   }
 
+  // Mirrors removePatch: main clears the runtime state as part of deletion
+  // (cheats:delete calls scriptRuntime.clear), so the enabled flag here is
+  // safe to drop regardless of the checkbox's state.
+  async function removeScript(script: ScriptCheat) {
+    await window.tamper.deleteCheat(exeName, script.id)
+    setScripts((prev) => prev.filter((s) => s.id !== script.id))
+    setScriptEnabled((prev) => {
+      const copy = { ...prev }
+      delete copy[script.id]
+      return copy
+    })
+  }
+
+  // saveCheat rejects on a hotkey conflict; without this the failure would
+  // be an unhandled rejection and the dialog would just sit there.
   async function saveScript(script: ScriptCheat) {
-    await window.tamper.saveCheat(exeName, script)
-    setEditingScript(null)
-    const all = await window.tamper.loadCheats(exeName)
-    setScripts(all.filter(isScript))
+    setScriptError(null)
+    try {
+      await window.tamper.saveCheat(exeName, script)
+      setEditingScript(null)
+      const all = await window.tamper.loadCheats(exeName)
+      setScripts(all.filter(isScript))
+    } catch (e) {
+      setScriptError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   async function testScript(source: string) {
@@ -1020,9 +1040,17 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
     // Deliberately the raw scripts:run call (not toggleScript) — this is
     // ScriptEditor's ad-hoc test button, running against a throwaway state,
     // possibly against a script that hasn't been saved yet at all.
-    const result = await window.tamper.runScript(source, {})
-    if (!result.success) setScriptError(result.error ?? 'Script failed.')
-    setScriptOutput(result.output)
+    //
+    // scripts:run THROWS when nothing is attached (unlike scripts:toggle,
+    // which resolves {ok:false}), which is the likeliest first-use case of
+    // all: without this catch the button did visibly nothing at all.
+    try {
+      const result = await window.tamper.runScript(source, {})
+      if (!result.success) setScriptError(result.error ?? 'Script failed.')
+      setScriptOutput(result.output)
+    } catch (e) {
+      setScriptError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   return (
@@ -1700,6 +1728,7 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                 )}
               </>
             )}
+            <button onClick={() => removeScript(script)}>Delete</button>
             {hotkeyError && capturingHotkeyId === script.id && (
               <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{hotkeyError}</span>
             )}

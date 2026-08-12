@@ -41,7 +41,12 @@ import {
 } from './profile'
 import { CheatRuntime } from './cheatRuntime'
 import { HotkeyManager, HotkeyDeps } from './hotkeys'
-import { ScriptRuntime, type LuaValue } from './scriptRuntime'
+import {
+  ScriptRuntime,
+  ScriptRunLimiter,
+  SCRIPT_RUN_CAP_ERROR,
+  type LuaValue
+} from './scriptRuntime'
 import { ProcessWatcher } from './watcher'
 import type { LoadedModule, MonoOps } from './anchor'
 
@@ -464,12 +469,17 @@ const cheatRuntime = new CheatRuntime({
 // the same operations cheats:toggleFreeze/cheats:oneShot/patch:apply/
 // patch:restore already expose over IPC, just reached directly instead of
 // through a renderer round trip.
+// One budget for every script run in the process — cheat toggles (through
+// ScriptRuntime) and ScriptEditor's ad-hoc `scripts:run` alike. See
+// ScriptRunLimiter for why the cap exists and what it does not fix.
+const scriptRunLimiter = new ScriptRunLimiter()
+
 const scriptRuntime = new ScriptRuntime(async (source, stateIn) => {
   if (attachedHandle === null) {
     return { success: false, output: [], error: 'not attached', stateOut: stateIn }
   }
   return nativeAddon.runScript(attachedHandle, source, stateIn)
-})
+}, scriptRunLimiter)
 
 const hotkeyDeps: HotkeyDeps = {
   loadCheats,
@@ -697,6 +707,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle('cheats:delete', (_e, exeName: string, cheatId: string) => {
     freezeLoop.disable(cheatId)
+    // A deleted script must not leave its enabled flag and captured `state`
+    // behind: ids are reused (a new cheat can be created with the same id
+    // after a delete), and a stale entry would hand a fresh cheat someone
+    // else's captured values — or report it enabled before it ever ran.
+    scriptRuntime.clear(cheatId)
     // A deleted patch must not stay in the game's code — restore it while
     // we still have its recorded address and original bytes.
     if (patchEngine.isApplied(cheatId)) {
@@ -738,7 +753,18 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       stateOut: Record<string, LuaValue>
     }> => {
       if (attachedHandle === null) throw new Error('not attached')
-      return nativeAddon.runScript(attachedHandle, source, stateIn)
+      // Unlike scripts:toggle, this path has no in-flight guard of its own —
+      // the test button can be clicked as fast as the user likes. It must
+      // still count against the same global budget, or a few impatient
+      // clicks on a stuck script would strand the whole threadpool.
+      if (!scriptRunLimiter.tryAcquire()) {
+        return { success: false, output: [], error: SCRIPT_RUN_CAP_ERROR, stateOut: stateIn }
+      }
+      try {
+        return await nativeAddon.runScript(attachedHandle, source, stateIn)
+      } finally {
+        scriptRunLimiter.release()
+      }
     }
   )
 

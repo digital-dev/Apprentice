@@ -1,3 +1,7 @@
+// MUST stay the first import: it sets UV_THREADPOOL_SIZE, which libuv reads
+// only once, before any import below can load the native addon and use the
+// threadpool. See threadpool.ts.
+import './threadpool'
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
 import { registerIpcHandlers, releaseTarget } from './ipc'
