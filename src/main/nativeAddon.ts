@@ -263,5 +263,12 @@ export const nativeAddon = {
     monoDllBase: string,
     imageHandle: string
   ): Promise<{ namespaceName: string; className: string; classHandle: string }[]> =>
-    addon.monoListClassesInImage(handle, monoDllBase, imageHandle)
+    addon.monoListClassesInImage(handle, monoDllBase, imageHandle),
+  // Runs `source` in a fresh, sandboxed Lua 5.4 state: an explicit
+  // allowlist of libraries (no io/package/debug/os.execute/os.exit/load),
+  // a 5-second execution cap and an 8 MB allocation cap. Synchronous and
+  // source-only for now — the process handle, phase and persisted state
+  // arguments arrive with the memory bindings in Task 4.
+  runScript: (source: string): { success: boolean; output: string[]; error: string | null } =>
+    addon.runScript(source)
 }
