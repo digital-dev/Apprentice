@@ -11,6 +11,10 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#include "value_type.h"
+
+#include <windows.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -141,6 +145,98 @@ int LuaPrint(lua_State* L) {
   return 0;
 }
 
+// Every bound memory function reads its HANDLE from the Lua registry
+// (set once per run in RunScriptImpl) rather than threading it through
+// every call's arguments — Lua scripts only ever touch ONE process per
+// run, so this keeps the exposed Lua signature to just (address, ...).
+HANDLE HandleFromRegistry(lua_State* L) {
+  lua_getfield(L, LUA_REGISTRYINDEX, "apprentice_handle");
+  HANDLE h = reinterpret_cast<HANDLE>(lua_touserdata(L, -1));
+  lua_pop(L, 1);
+  return h;
+}
+
+int LuaReadValue(lua_State* L, ValueKind kind, size_t size) {
+  uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+  HANDLE h = HandleFromRegistry(L);
+  uint8_t buf[8];
+  SIZE_T read;
+  if (!ReadProcessMemory(h, (LPCVOID)address, buf, size, &read) || read != size) {
+    return luaL_error(L, "read failed at 0x%llx", (unsigned long long)address);
+  }
+  double value = InterpretAsDouble(buf, ValueSpec{size, kind});
+  // Push whole-number kinds as Lua integers, not floats: Lua 5.4's tostring
+  // (and print, which goes through it) renders a whole-number float as
+  // "12345.0" to keep it visually distinct from an integer, which would
+  // surprise a script author reading back an int8/16/32/64 value. Only the
+  // genuinely fractional float/double kinds go through lua_pushnumber.
+  if (!IsFloatKind(kind)) {
+    int64_t raw;
+    if (kind == ValueKind::Int64) {
+      memcpy(&raw, buf, sizeof(raw));
+    } else {
+      raw = static_cast<int64_t>(value);
+    }
+    lua_pushinteger(L, raw);
+  } else {
+    lua_pushnumber(L, value);
+  }
+  return 1;
+}
+
+int LuaWriteValue(lua_State* L, ValueKind kind, size_t size) {
+  uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+  double value = luaL_checknumber(L, 2);
+  HANDLE h = HandleFromRegistry(L);
+  uint8_t buf[8];
+  EncodeFromDouble(value, ValueSpec{size, kind}, buf);
+  SIZE_T written;
+  bool ok = WriteProcessMemory(h, (LPVOID)address, buf, size, &written) && written == size;
+  lua_pushboolean(L, ok);
+  return 1;
+}
+
+int LuaReadInt8(lua_State* L)   { return LuaReadValue(L, ValueKind::UInt8, 1); }
+int LuaReadInt16(lua_State* L)  { return LuaReadValue(L, ValueKind::Int16, 2); }
+int LuaReadInt32(lua_State* L)  { return LuaReadValue(L, ValueKind::Int32, 4); }
+int LuaReadInt64(lua_State* L)  { return LuaReadValue(L, ValueKind::Int64, 8); }
+int LuaReadFloat(lua_State* L)  { return LuaReadValue(L, ValueKind::Float, 4); }
+int LuaReadDouble(lua_State* L) { return LuaReadValue(L, ValueKind::Double, 8); }
+int LuaWriteInt8(lua_State* L)   { return LuaWriteValue(L, ValueKind::UInt8, 1); }
+int LuaWriteInt16(lua_State* L)  { return LuaWriteValue(L, ValueKind::Int16, 2); }
+int LuaWriteInt32(lua_State* L)  { return LuaWriteValue(L, ValueKind::Int32, 4); }
+int LuaWriteInt64(lua_State* L)  { return LuaWriteValue(L, ValueKind::Int64, 8); }
+int LuaWriteFloat(lua_State* L)  { return LuaWriteValue(L, ValueKind::Float, 4); }
+int LuaWriteDouble(lua_State* L) { return LuaWriteValue(L, ValueKind::Double, 8); }
+
+// Raw, binary-safe Lua strings — NOT hex, and NOT patch_ops.cc's
+// ReadBytes/WriteBytes (see this plan's Global Constraints on why those
+// aren't reused here).
+int LuaReadBytes(lua_State* L) {
+  uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+  size_t length = static_cast<size_t>(luaL_checkinteger(L, 2));
+  if (length == 0 || length > 4096) return luaL_error(L, "readBytes length must be 1..4096");
+  HANDLE h = HandleFromRegistry(L);
+  std::vector<uint8_t> buf(length);
+  SIZE_T read;
+  if (!ReadProcessMemory(h, (LPCVOID)address, buf.data(), length, &read) || read != length) {
+    return luaL_error(L, "read failed at 0x%llx", (unsigned long long)address);
+  }
+  lua_pushlstring(L, reinterpret_cast<const char*>(buf.data()), length);
+  return 1;
+}
+
+int LuaWriteBytes(lua_State* L) {
+  uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+  size_t length;
+  const char* data = luaL_checklstring(L, 2, &length);
+  HANDLE h = HandleFromRegistry(L);
+  SIZE_T written;
+  bool ok = WriteProcessMemory(h, (LPVOID)address, data, length, &written) && written == length;
+  lua_pushboolean(L, ok);
+  return 1;
+}
+
 // WARNING: this is the ONLY function that may populate a script state's
 // globals. Never call luaL_openlibs — it is linked into this binary (see
 // third_party/lua/linit.cpp) and a single call to it would open io, os,
@@ -181,6 +277,18 @@ void OpenAllowlistedLibs(lua_State* L, OutputCollector* out) {
   lua_pushlightuserdata(L, out);
   lua_pushcclosure(L, LuaPrint, 1);
   lua_setglobal(L, "print");
+
+  const struct { const char* name; lua_CFunction fn; } memoryFns[] = {
+    {"readInt8", LuaReadInt8}, {"readInt16", LuaReadInt16}, {"readInt32", LuaReadInt32},
+    {"readInt64", LuaReadInt64}, {"readFloat", LuaReadFloat}, {"readDouble", LuaReadDouble},
+    {"writeInt8", LuaWriteInt8}, {"writeInt16", LuaWriteInt16}, {"writeInt32", LuaWriteInt32},
+    {"writeInt64", LuaWriteInt64}, {"writeFloat", LuaWriteFloat}, {"writeDouble", LuaWriteDouble},
+    {"readBytes", LuaReadBytes}, {"writeBytes", LuaWriteBytes},
+  };
+  for (const auto& entry : memoryFns) {
+    lua_pushcfunction(L, entry.fn);
+    lua_setglobal(L, entry.name);
+  }
 }
 
 struct ScriptResult {
@@ -208,7 +316,7 @@ void ApplyStickyTimeout(const TimeoutState& timeout, ScriptResult& result) {
   result.error = kTimeoutMessage;
 }
 
-ScriptResult RunScriptImpl(const std::string& source) {
+ScriptResult RunScriptImpl(HANDLE handle, const std::string& source) {
   ScriptResult result;
   AllocBudget budget;
   lua_State* L = lua_newstate(BudgetAlloc, &budget);
@@ -216,6 +324,9 @@ ScriptResult RunScriptImpl(const std::string& source) {
     result.error = "could not allocate Lua state";
     return result;
   }
+
+  lua_pushlightuserdata(L, reinterpret_cast<void*>(handle));
+  lua_setfield(L, LUA_REGISTRYINDEX, "apprentice_handle");
 
   TimeoutState timeout;
   timeout.deadline =
@@ -250,20 +361,24 @@ ScriptResult RunScriptImpl(const std::string& source) {
 
 }  // namespace
 
-// This task's RunScript takes only a source string and runs it — no
-// memory bindings, no state handoff, no async worker yet. Those are added
-// in Tasks 4-5. Synchronous for now; Task 4 wraps this in an
-// Napi::AsyncWorker once there's real per-process work worth offloading.
+// runScript(handle, source): the handle is threaded through so the bound
+// memory globals (readInt32/writeInt32/etc., registered in
+// OpenAllowlistedLibs) know which process to touch. Still synchronous —
+// no async worker yet. That's Task 5: a script calling a blocking memory
+// function against an unresponsive target can freeze the calling thread
+// (Electron's main thread, in practice) until then.
 Napi::Value RunScript(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  if (info.Length() < 1 || !info[0].IsString()) {
-    Napi::TypeError::New(env, "runScript(source: string) expects a string")
+  if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsString()) {
+    Napi::TypeError::New(env, "runScript(handle: number, source: string) expects a number and a string")
         .ThrowAsJavaScriptException();
     return env.Undefined();
   }
-  std::string source = info[0].As<Napi::String>().Utf8Value();
+  HANDLE h = reinterpret_cast<HANDLE>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  std::string source = info[1].As<Napi::String>().Utf8Value();
 
-  ScriptResult result = RunScriptImpl(source);
+  ScriptResult result = RunScriptImpl(h, source);
 
   Napi::Object out = Napi::Object::New(env);
   out.Set("success", Napi::Boolean::New(env, result.success));

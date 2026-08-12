@@ -266,9 +266,13 @@ export const nativeAddon = {
     addon.monoListClassesInImage(handle, monoDllBase, imageHandle),
   // Runs `source` in a fresh, sandboxed Lua 5.4 state: an explicit
   // allowlist of libraries (no io/package/debug/os.execute/os.exit/load),
-  // a 5-second execution cap and an 8 MB allocation cap. Synchronous and
-  // source-only for now — the process handle, phase and persisted state
-  // arguments arrive with the memory bindings in Task 4.
-  runScript: (source: string): { success: boolean; output: string[]; error: string | null } =>
-    addon.runScript(source)
+  // a 5-second execution cap and an 8 MB allocation cap. `handle` is the
+  // target process's HANDLE, threaded through so the bound memory globals
+  // (readInt32/writeInt32/readBytes/etc.) know which process to touch.
+  // Still synchronous for now — Task 5 wraps this in an Napi::AsyncWorker.
+  runScript: (
+    handle: number,
+    source: string
+  ): { success: boolean; output: string[]; error: string | null } =>
+    addon.runScript(handle, source)
 }
