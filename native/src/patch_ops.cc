@@ -182,11 +182,14 @@ Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
   size_t length = static_cast<size_t>(info[2].As<Napi::Number>().Uint32Value());
+  // ToBoolean() coerces rather than throwing, so a caller that explicitly
+  // passes `undefined` as the 4th arg (no current caller does, but nothing
+  // stops one) still resolves to false instead of raising.
+  bool raw = info.Length() > 3 && info[3].ToBoolean().Value();
+
   // Raised from 64 to 4096: the memory viewer requests one 256-byte page
   // per poll tick, well under this cap; 4096 remains a safety bound
   // against a malformed call, not a real constraint on any caller.
-  bool raw = info.Length() > 3 && info[3].As<Napi::Boolean>().Value();
-
   if (length == 0 || length > 4096) {
     Napi::Error::New(env, "readBytes length must be 1..4096").ThrowAsJavaScriptException();
     return env.Null();

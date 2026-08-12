@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { decodeAt } from '../dissect'
+import { decodeAt, toArrayBuffer } from '../dissect'
 import type { DataType } from '../../../main/store'
 
 const PAGE_SIZE = 256 // 16 bytes/row x 16 rows
@@ -13,16 +13,29 @@ function normalizeAddress(input: string): string | null {
 
 export default function MemoryViewer({
   initialAddress,
-  onDone
+  onDone,
+  onConsumeJumpToAddress
 }: {
   initialAddress?: string
   onDone: () => void
+  // Clears App.tsx's jumpToAddress once this visit has consumed it as its
+  // seed address — without this, a later, unrelated visit to this screen
+  // (e.g. from the sidebar, with no fresh "View in Memory" click) would
+  // silently re-seed from whatever address was clicked earlier in the
+  // session. Mirrors CheatList's onConsumePendingMonoSelection pattern.
+  onConsumeJumpToAddress?: () => void
 }) {
   const [addressInput, setAddressInput] = useState(initialAddress ?? '0x0')
   const [baseAddress, setBaseAddress] = useState<string | null>(
     initialAddress ? normalizeAddress(initialAddress) : null
   )
   const [block, setBlock] = useState<ArrayBuffer | null>(null)
+  // Distinct from "block is null" (reachable process, address unreadable):
+  // this means the attached process itself is gone — a read/write rejected
+  // rather than resolving. The stale grid is left on screen; only this
+  // banner changes, and it clears on the next successful read (e.g. after
+  // reattaching to the same address).
+  const [detachedError, setDetachedError] = useState<string | null>(null)
   // The address currently being inline-edited, if any — the poll below
   // skips refetching while this is set, so a half-typed hex value is
   // never stomped by the next tick's refresh.
@@ -30,6 +43,15 @@ export default function MemoryViewer({
   const [editValue, setEditValue] = useState('')
   const editingRef = useRef<number | null>(null)
   editingRef.current = editingOffset
+
+  // Consume the seed address exactly once, right after using it — mirrors
+  // CheatList's pendingMonoSelection consumption. Mount-only: a later
+  // change to initialAddress mid-visit (there isn't one today) should not
+  // re-fire this.
+  useEffect(() => {
+    onConsumeJumpToAddress?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   interface DissectRow {
     offset: string // hex, relative to baseAddress
@@ -47,8 +69,22 @@ export default function MemoryViewer({
     let cancelled = false
     async function poll() {
       if (editingRef.current !== null) return
-      const result = await window.tamper.readMemoryBlock(baseAddress!, PAGE_SIZE)
-      if (!cancelled) setBlock(result)
+      try {
+        const result = await window.tamper.readMemoryBlock(baseAddress!, PAGE_SIZE)
+        if (cancelled) return
+        setBlock(result ? toArrayBuffer(result) : null)
+        setDetachedError(null)
+      } catch (err) {
+        // The attached process is gone (memory:readBlock throws 'not
+        // attached' once ipc.ts's watcher.onVanish/attachTo paths null out
+        // attachedHandle). Leave `block` as-is — the interval keeps
+        // retrying every tick, and a reattach to the same address clears
+        // this on its next successful read.
+        if (!cancelled) {
+          void err // the underlying message is an IPC-wrapped 'not attached' — not worth surfacing verbatim
+          setDetachedError('Lost connection to the attached process.')
+        }
+      }
     }
     void poll()
     const id = setInterval(poll, POLL_MS)
@@ -83,10 +119,15 @@ export default function MemoryViewer({
     }
     const value = parseInt(editValue, 16)
     const byteAddress = '0x' + (BigInt(baseAddress) + BigInt(offset)).toString(16)
-    await window.tamper.writeMemoryByte(byteAddress, value)
     setEditingOffset(null)
-    const refreshed = await window.tamper.readMemoryBlock(baseAddress, PAGE_SIZE)
-    setBlock(refreshed)
+    try {
+      await window.tamper.writeMemoryByte(byteAddress, value)
+      const refreshed = await window.tamper.readMemoryBlock(baseAddress, PAGE_SIZE)
+      setBlock(refreshed ? toArrayBuffer(refreshed) : null)
+      setDetachedError(null)
+    } catch {
+      setDetachedError('Lost connection to the attached process.')
+    }
   }
 
   const bytes = block ? new Uint8Array(block) : null
@@ -110,6 +151,12 @@ export default function MemoryViewer({
         </button>
         <button onClick={onDone}>Done</button>
       </div>
+
+      {detachedError && (
+        <p className="muted" style={{ color: 'var(--error)' }}>
+          {detachedError}
+        </p>
+      )}
 
       {baseAddress && !bytes && <p className="muted">Unreadable at this address.</p>}
 

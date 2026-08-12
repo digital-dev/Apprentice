@@ -710,6 +710,24 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     return nativeAddon.writeValue(attachedHandle, address, [], 'int8', value)
   })
 
+  // Resolves a ChainTarget's absolute address for the "View in Memory"
+  // button — only meaningful for a target with no offsets left to walk
+  // (offsets.length === 0), where baseOffset is the only/last element of
+  // the chain and needs no dereference: moduleBase + baseOffset, exactly
+  // the arithmetic fullOffsets/writeCheat already do for the general case.
+  // baseOffset is module-relative, never an absolute address on its own —
+  // handing it straight to the memory viewer without this resolution step
+  // navigates to the wrong address entirely.
+  ipcMain.handle(
+    'memory:resolveTargetAddress',
+    (_e, moduleName: string, baseOffset: string): string | null => {
+      if (attachedHandle === null) return null
+      const moduleBase = nativeAddon.getModuleBase(attachedHandle, moduleName)
+      if (moduleBase === null) return null
+      return '0x' + (BigInt(moduleBase) + BigInt(baseOffset)).toString(16)
+    }
+  )
+
   ipcMain.handle(
     'cheats:verify',
     async (_e, cheat: CheatDefinition, expectedValue: number | null): Promise<TargetStatus[]> => {

@@ -90,6 +90,7 @@ export default function App() {
           <MemoryViewer
             initialAddress={jumpToAddress ?? undefined}
             onDone={() => setScreen('cheats')}
+            onConsumeJumpToAddress={() => setJumpToAddress(null)}
           />
         )}
       </div>

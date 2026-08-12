@@ -55,6 +55,30 @@ declare global {
       deleteCheat: (exeName: string, cheatId: string) => Promise<void>
       toggleFreeze: (cheat: CheatDefinition, enabled: boolean) => Promise<void>
       oneShot: (cheat: CheatDefinition) => Promise<boolean>
+      // Fetches up to 4096 raw bytes starting at `address` from the attached
+      // process, for the memory viewer. null when the read fails outright
+      // (unmapped, wrong permissions) — the caller shows the page as
+      // unreadable rather than treating this as an error.
+      //
+      // Declared as Uint8Array, not ArrayBuffer: structured-clone over
+      // Electron IPC delivers the main process's Node Buffer to the
+      // renderer as a Uint8Array view (typically over its own freshly
+      // allocated backing buffer, but that is not a contract this type may
+      // rely on) — never a real, zero-offset ArrayBuffer. A caller that
+      // needs a genuine ArrayBuffer (e.g. dissect.ts's decodeAt, via
+      // `new DataView`) must normalize explicitly — see MemoryViewer.tsx's
+      // toArrayBuffer helper — rather than assume this is already one.
+      readMemoryBlock: (address: string, length: number) => Promise<Uint8Array | null>
+      // Writes a single unsigned byte (0-255) at `address` — the memory
+      // viewer's inline byte editor.
+      writeMemoryByte: (address: string, value: number) => Promise<boolean>
+      // Resolves a ChainTarget's absolute address (moduleBase + baseOffset)
+      // for the "View in Memory" button — only valid for a target with no
+      // remaining offsets (offsets.length === 0), where baseOffset is the
+      // last/only element of the chain and needs no dereference. null when
+      // not attached or the module isn't loaded. baseOffset is
+      // module-relative, never an address to navigate to directly.
+      resolveTargetAddress: (moduleName: string, baseOffset: string) => Promise<string | null>
       verifyCheat: (
         cheat: CheatDefinition,
         expectedValue: number | null
@@ -70,14 +94,6 @@ declare global {
       onCheatRecovered: (cb: (cheatId: string) => void) => void
       startWriteWatch: (address: string) => Promise<void>
       pollWriteWatch: () => Promise<CaughtInstruction[]>
-      // Fetches up to 4096 raw bytes starting at `address` from the attached
-      // process, for the memory viewer. null when the read fails outright
-      // (unmapped, wrong permissions) — the caller shows the page as
-      // unreadable rather than treating this as an error.
-      readMemoryBlock: (address: string, length: number) => Promise<ArrayBuffer | null>
-      // Writes a single unsigned byte (0-255) at `address` — the memory
-      // viewer's inline byte editor.
-      writeMemoryByte: (address: string, value: number) => Promise<boolean>
       stopWriteWatch: () => Promise<CaughtInstruction[]>
       locatePatch: (patch: PatchCheat) => Promise<PatchStatus>
       applyPatch: (patch: PatchCheat) => Promise<{ ok: boolean; error: string | null }>

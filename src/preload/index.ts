@@ -12,6 +12,12 @@ contextBridge.exposeInMainWorld('tamper', {
   toggleFreeze: (cheat: CheatDefinition, enabled: boolean) =>
     ipcRenderer.invoke('cheats:toggleFreeze', cheat, enabled),
   oneShot: (cheat: CheatDefinition) => ipcRenderer.invoke('cheats:oneShot', cheat),
+  readMemoryBlock: (address: string, length: number) =>
+    ipcRenderer.invoke('memory:readBlock', address, length),
+  writeMemoryByte: (address: string, value: number) =>
+    ipcRenderer.invoke('memory:writeByte', address, value),
+  resolveTargetAddress: (moduleName: string, baseOffset: string) =>
+    ipcRenderer.invoke('memory:resolveTargetAddress', moduleName, baseOffset),
   verifyCheat: (cheat: CheatDefinition, expectedValue: number | null) =>
     ipcRenderer.invoke('cheats:verify', cheat, expectedValue),
   scanFirst: (dataType: string, value: number) => ipcRenderer.invoke('scan:first', dataType, value),
@@ -25,10 +31,6 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.on('cheat:recovered', (_e, cheatId) => cb(cheatId)),
   startWriteWatch: (address: string) => ipcRenderer.invoke('writeWatch:start', address),
   pollWriteWatch: () => ipcRenderer.invoke('writeWatch:poll'),
-  readMemoryBlock: (address: string, length: number) =>
-    ipcRenderer.invoke('memory:readBlock', address, length),
-  writeMemoryByte: (address: string, value: number) =>
-    ipcRenderer.invoke('memory:writeByte', address, value),
   stopWriteWatch: () => ipcRenderer.invoke('writeWatch:stop'),
   locatePatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:locate', patch),
   applyPatch: (patch: PatchCheat) => ipcRenderer.invoke('patch:apply', patch),

@@ -20,6 +20,18 @@ const WIDTH: Record<DataType, number> = {
   double: 8
 }
 
+// Structured-clone over Electron IPC delivers a Node Buffer to the renderer
+// as a Uint8Array, never a real ArrayBuffer (see tamper.d.ts's
+// readMemoryBlock comment) — and that Uint8Array's byteOffset is not
+// guaranteed to be 0. Handing `.buffer` straight to `new DataView` (as
+// decodeAt does) would then read from entirely the wrong bytes, or throw if
+// the view doesn't happen to span the whole buffer. This slices out exactly
+// the view's own bytes into a genuine, independent ArrayBuffer, so every
+// caller downstream (decodeAt, the hex grid) can trust what it's holding.
+export function toArrayBuffer(view: Uint8Array): ArrayBuffer {
+  return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer
+}
+
 export function decodeAt(
   block: ArrayBuffer,
   offset: number,

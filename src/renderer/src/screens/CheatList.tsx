@@ -1418,7 +1418,27 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                                   : `✗ ${result[i]?.value} (mismatch)`}
                             </span>
                             {!isAnchor(t) && !isMono(t) && 'offsets' in t && t.offsets.length === 0 && (
-                              <button onClick={() => onViewInMemory(t.baseOffset)}>
+                              <button
+                                onClick={async () => {
+                                  // t.baseOffset is module-relative, never an
+                                  // absolute address on its own — resolve it
+                                  // against the attached process's actual
+                                  // module base before navigating, or this
+                                  // jumps to a bogus address (see
+                                  // ipc.ts's memory:resolveTargetAddress).
+                                  const resolved = await window.tamper.resolveTargetAddress(
+                                    t.moduleName,
+                                    t.baseOffset
+                                  )
+                                  if (resolved === null) {
+                                    console.warn(
+                                      `Could not resolve ${t.moduleName}+${t.baseOffset} — is the module loaded?`
+                                    )
+                                    return
+                                  }
+                                  onViewInMemory(resolved)
+                                }}
+                              >
                                 View in Memory
                               </button>
                             )}
