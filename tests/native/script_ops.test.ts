@@ -57,6 +57,33 @@ describe('runScript — sandbox', () => {
     expect(elapsed).toBeLessThan(7000)
   }, 10000)
 
+  // The timeout is delivered as an ordinary Lua error, which a script can
+  // catch with pcall. It must still be reported as a failed run: a script
+  // that swallows the timeout and returns normally must not come back as
+  // `success: true`. (This does not stop the script spinning — a
+  // pcall-wrapped infinite loop still blocks until the worker-thread abort
+  // arrives in Task 4 — it only guarantees the reported outcome is honest.)
+  it('still reports failure when the script swallows the timeout with pcall', () => {
+    const result = (addon as any).runScript(`
+      local ok, err = pcall(function() while true do end end)
+      -- swallowed on purpose: ok is false, err is the timeout message,
+      -- and this chunk goes on to finish "successfully".
+      swallowed = not ok
+    `)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('execution limit')
+  }, 10000)
+
+  it('caps captured output at 1000 lines and marks it truncated', () => {
+    const result = (addon as any).runScript('for i = 1, 1500 do print(i) end')
+    expect(result.success).toBe(true)
+    // 1000 real lines plus the truncation marker.
+    expect(result.output.length).toBe(1001)
+    expect(result.output[0]).toBe('1')
+    expect(result.output[999]).toBe('1000')
+    expect(result.output[1000]).toBe('... output truncated at 1000 lines ...')
+  })
+
   it('raises a clean error instead of exhausting memory on an allocation loop', () => {
     const result = (addon as any).runScript(
       'local s = "" while true do s = s .. string.rep("x", 1024) end'

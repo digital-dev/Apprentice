@@ -30,9 +30,14 @@
 #define apprentice_lua_config_h
 
 #if !defined(__cplusplus)
-#error "Apprentice requires the vendored Lua sources to be compiled as C++ \
-(MSVC /TP, or -x c++). Lua errors must unwind as C++ exceptions so that \
-destructors in Apprentice's bound C functions run. See binding.gyp."
+#error "Apprentice requires the vendored Lua sources to be compiled as C++. \
+Lua errors must unwind as C++ exceptions so that destructors in Apprentice's \
+bound functions run. That is why every file in this directory carries a .cpp \
+extension (renamed from Lua's own .c) — if you are seeing this, a file was \
+renamed back to .c, or was added to binding.gyp under its .c name. Rename it \
+to .cpp rather than forcing the language target-wide with /TP or -x c++: a \
+target-wide override also captures third_party/zydis/Zydis.c, which does not \
+compile as C++."
 #endif
 
 #if defined(LUA_USE_LONGJMP)

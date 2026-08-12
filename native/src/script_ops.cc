@@ -1,8 +1,10 @@
 #include "script_ops.h"
 
-// NOTE: the vendored Lua is compiled as C++ (see binding.gyp's /TP and
-// third_party/lua/apprentice_lua_config.h), so its symbols carry C++
-// linkage. These headers must therefore NOT be wrapped in `extern "C"` —
+// NOTE: the vendored Lua is compiled as C++ — its sources are shipped with
+// a .cpp extension precisely so that every compiler does so; see
+// third_party/lua/apprentice_lua_config.h for why that is required. Its
+// symbols therefore carry C++ linkage, and these headers must NOT be
+// wrapped in `extern "C"` —
 // doing so would declare C-linkage symbols that never get defined and the
 // link would fail with unresolved externals for every lua_* function.
 #include "lua.h"
@@ -54,10 +56,22 @@ void* BudgetAlloc(void* ud, void* ptr, size_t osize, size_t nsize) {
 
 struct TimeoutState {
   std::chrono::steady_clock::time_point deadline;
+  // Sticky: once the deadline has tripped even once, this run is a failure
+  // no matter what the script does afterwards. The Lua error raised by
+  // TimeoutHook is an ordinary Lua error, so a script can swallow it with
+  // pcall and carry on; without this flag such a script would be reported
+  // as `success: true`, which would be a lie. See RunScriptImpl.
+  bool timedOut = false;
 };
 
-static_assert(sizeof(TimeoutState) <= LUA_EXTRASPACE,
-              "TimeoutState must fit in the lua_State's extra space");
+// The lua_State's extra space is only sizeof(void*) by default, so it holds
+// a *pointer* to the run's TimeoutState (which lives on RunScriptImpl's
+// stack) rather than the state itself. That keeps the arrangement working
+// as more per-run state accumulates in Task 4.
+static_assert(sizeof(TimeoutState*) <= LUA_EXTRASPACE,
+              "a TimeoutState* must fit in the lua_State's extra space");
+
+const char kTimeoutMessage[] = "script exceeded its 5-second execution limit";
 
 // LUA_MASKCOUNT hook: checked every 1000 VM instructions rather than every
 // single one, to keep the check's own overhead negligible. Re-arms itself
@@ -66,9 +80,12 @@ static_assert(sizeof(TimeoutState) <= LUA_EXTRASPACE,
 // one-shot install persists — this hook is installed once per run in
 // RunScriptImpl and stays armed for that run's whole lifetime.
 void TimeoutHook(lua_State* L, lua_Debug*) {
-  TimeoutState* state = static_cast<TimeoutState*>(lua_getextraspace(L));
+  TimeoutState* state = *static_cast<TimeoutState**>(lua_getextraspace(L));
   if (std::chrono::steady_clock::now() >= state->deadline) {
-    luaL_error(L, "script exceeded its 5-second execution limit");
+    // Record the trip BEFORE raising: luaL_error does not return, and the
+    // error it raises is catchable by the script's own pcall.
+    state->timedOut = true;
+    luaL_error(L, "%s", kTimeoutMessage);
   }
 }
 
@@ -124,6 +141,11 @@ int LuaPrint(lua_State* L) {
   return 0;
 }
 
+// WARNING: this is the ONLY function that may populate a script state's
+// globals. Never call luaL_openlibs — it is linked into this binary (see
+// third_party/lua/linit.cpp) and a single call to it would open io, os,
+// package and debug and undo this entire allowlist.
+//
 // Opens exactly base (minus dofile/loadfile/load/collectgarbage) + string
 // + table + math + the 3-function os table above. debug/io/package are
 // never luaL_requiref'd, so their globals never exist in this state at
@@ -167,6 +189,25 @@ struct ScriptResult {
   std::string error;
 };
 
+// The timeout error TimeoutHook raises is an ordinary Lua error, so a
+// script can catch it: `while true do pcall(function() while true do end
+// end) end` swallows it on every iteration and would otherwise be reported
+// as a clean success. Once the deadline has tripped, the run is a failure —
+// overwrite whatever the script's own error handling concluded.
+//
+// NOTE FOR TASK 4: this makes the *reported outcome* honest, it does not
+// stop the spin. RunScript is still synchronous, so a pcall-wrapped
+// infinite loop still blocks the calling thread indefinitely (measured at
+// 45s+ before being killed manually). Task 4's move to an Napi::AsyncWorker
+// is therefore not merely an optimisation — it is the load-bearing half of
+// this fix, and must come with a hard wall-clock abort of the worker rather
+// than relying on the Lua-level hook alone.
+void ApplyStickyTimeout(const TimeoutState& timeout, ScriptResult& result) {
+  if (!timeout.timedOut) return;
+  result.success = false;
+  result.error = kTimeoutMessage;
+}
+
 ScriptResult RunScriptImpl(const std::string& source) {
   ScriptResult result;
   AllocBudget budget;
@@ -176,9 +217,10 @@ ScriptResult RunScriptImpl(const std::string& source) {
     return result;
   }
 
-  TimeoutState* timeoutState = static_cast<TimeoutState*>(lua_getextraspace(L));
-  timeoutState->deadline =
+  TimeoutState timeout;
+  timeout.deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
+  *static_cast<TimeoutState**>(lua_getextraspace(L)) = &timeout;
   lua_sethook(L, TimeoutHook, LUA_MASKCOUNT, 1000);
 
   OutputCollector out;
@@ -189,6 +231,7 @@ ScriptResult RunScriptImpl(const std::string& source) {
     const char* msg = lua_tostring(L, -1);
     result.error = msg ? msg : "could not compile script";
     result.output = out.lines;
+    ApplyStickyTimeout(timeout, result);
     lua_close(L);
     return result;
   }
@@ -200,6 +243,7 @@ ScriptResult RunScriptImpl(const std::string& source) {
     result.error = msg ? msg : "unknown Lua error";
   }
   result.output = out.lines;
+  ApplyStickyTimeout(timeout, result);
   lua_close(L);
   return result;
 }
