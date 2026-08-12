@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <psapi.h>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -31,4 +32,24 @@ inline std::optional<uintptr_t> ResolveChain(
     }
   }
   return addr;
+}
+
+// Minimal module-base lookup — script_ops.cc's resolvePointer binding
+// only needs the base address, not pointer.cc's full ModuleRange/
+// FindContainingModule machinery (that supports the REVERSE pointer scan;
+// this supports the forward walk above).
+inline std::optional<uintptr_t> FindModuleBase(HANDLE h, const std::string& moduleName) {
+  HMODULE mods[1024];
+  DWORD needed;
+  if (!EnumProcessModulesEx(h, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) return std::nullopt;
+  DWORD count = needed / sizeof(HMODULE);
+  if (count > 1024) count = 1024;
+  for (DWORD i = 0; i < count; i++) {
+    char nameBuf[MAX_PATH];
+    if (GetModuleBaseNameA(h, mods[i], nameBuf, sizeof(nameBuf)) &&
+        _stricmp(nameBuf, moduleName.c_str()) == 0) {
+      return reinterpret_cast<uintptr_t>(mods[i]);
+    }
+  }
+  return std::nullopt;
 }

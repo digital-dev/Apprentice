@@ -12,6 +12,7 @@
 #include "lualib.h"
 
 #include "value_type.h"
+#include "chain_walk.h"
 
 #include <windows.h>
 
@@ -19,8 +20,19 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <map>
 #include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
+
+// The `state` handoff table, in plain C++ terms. RunScriptImpl and its
+// helpers run on RunScriptWorker's BACKGROUND thread, where no N-API
+// handle may be touched — so `state` crosses that boundary as this map,
+// and only RunScriptWorker's constructor and OnOK() (both JS-thread-only)
+// ever convert to/from a Napi::Object.
+using LuaValueVariant = std::variant<std::string, double, bool>;
+using LuaState = std::map<std::string, LuaValueVariant>;
 
 namespace {
 
@@ -237,6 +249,95 @@ int LuaWriteBytes(lua_State* L) {
   return 1;
 }
 
+// resolvePointer(moduleName, {offsets}) -> integer | nil. Uses the same
+// forward walk (chain_walk.h's ResolveChain) memory_ops.cc uses, against
+// the module base FindModuleBase looks up in the attached process.
+int LuaResolvePointer(lua_State* L) {
+  const char* moduleName = luaL_checkstring(L, 1);
+  luaL_checktype(L, 2, LUA_TTABLE);
+  std::vector<uintptr_t> offsets;
+  lua_Integer n = luaL_len(L, 2);
+  for (lua_Integer i = 1; i <= n; i++) {
+    lua_geti(L, 2, i);
+    offsets.push_back(static_cast<uintptr_t>(luaL_checkinteger(L, -1)));
+    lua_pop(L, 1);
+  }
+  HANDLE h = HandleFromRegistry(L);
+  auto base = FindModuleBase(h, moduleName);
+  if (!base) { lua_pushnil(L); return 1; }
+  auto resolved = ResolveChain(h, *base, offsets);
+  if (!resolved) { lua_pushnil(L); return 1; }
+  lua_pushinteger(L, static_cast<lua_Integer>(*resolved));
+  return 1;
+}
+
+// Seeds the Lua global `state` table from a flat map (string/number/
+// boolean values only), for the enable->disable value handoff the spec
+// requires (e.g. `state.original = readInt32(addr)` in enableScript,
+// read back in disableScript). Called once per run, before the loaded
+// chunk executes.
+void SeedStateTable(lua_State* L, const LuaState& stateIn) {
+  lua_newtable(L);
+  for (const auto& [key, value] : stateIn) {
+    std::visit(
+        [&](auto&& v) {
+          using T = std::decay_t<decltype(v)>;
+          if constexpr (std::is_same_v<T, std::string>) {
+            lua_pushstring(L, v.c_str());
+          } else if constexpr (std::is_same_v<T, double>) {
+            // Push a whole number back as a Lua *integer*, not a float, for
+            // the same reason LuaReadValue does: Lua 5.4's tostring renders
+            // a whole-number float as "42.0", so `state.original = 42`
+            // followed by `print(state.original)` on the next run would
+            // otherwise come back as "42.0". A value only becomes a double
+            // here because LuaState carries every number as one.
+            // The range guard matters: casting an out-of-range double to an
+            // integer type is undefined behaviour, not a wrap.
+            constexpr double kIntMin = -9223372036854775808.0;
+            constexpr double kIntMax = 9223372036854775808.0;  // 2^63, exclusive
+            if (v >= kIntMin && v < kIntMax &&
+                static_cast<double>(static_cast<lua_Integer>(v)) == v) {
+              lua_pushinteger(L, static_cast<lua_Integer>(v));
+            } else {
+              lua_pushnumber(L, v);
+            }
+          } else {
+            lua_pushboolean(L, v);
+          }
+        },
+        value);
+    lua_setfield(L, -2, key.c_str());
+  }
+  lua_setglobal(L, "state");
+}
+
+// Reads the `state` global back out after the run, for the caller's
+// stateOut — only string/number/boolean values are collected; anything
+// else the script stored in `state` (a nested table, a function) is
+// silently dropped, per this plan's Global Constraints on `state`'s scope.
+LuaState ReadStateTable(lua_State* L) {
+  LuaState out;
+  lua_getglobal(L, "state");
+  if (lua_istable(L, -1)) {
+    lua_pushnil(L);
+    while (lua_next(L, -2) != 0) {
+      if (lua_type(L, -2) == LUA_TSTRING) {
+        std::string key = lua_tostring(L, -2);
+        if (lua_isboolean(L, -1)) {
+          out[key] = static_cast<bool>(lua_toboolean(L, -1));
+        } else if (lua_isnumber(L, -1)) {
+          out[key] = static_cast<double>(lua_tonumber(L, -1));
+        } else if (lua_isstring(L, -1)) {
+          out[key] = std::string(lua_tostring(L, -1));
+        }
+      }
+      lua_pop(L, 1);
+    }
+  }
+  lua_pop(L, 1);
+  return out;
+}
+
 // WARNING: this is the ONLY function that may populate a script state's
 // globals. Never call luaL_openlibs — it is linked into this binary (see
 // third_party/lua/linit.cpp) and a single call to it would open io, os,
@@ -289,12 +390,16 @@ void OpenAllowlistedLibs(lua_State* L, OutputCollector* out) {
     lua_pushcfunction(L, entry.fn);
     lua_setglobal(L, entry.name);
   }
+
+  lua_pushcfunction(L, LuaResolvePointer);
+  lua_setglobal(L, "resolvePointer");
 }
 
 struct ScriptResult {
   bool success = false;
   std::vector<std::string> output;
   std::string error;
+  LuaState stateOut;
 };
 
 // The timeout error TimeoutHook raises is an ordinary Lua error, so a
@@ -303,20 +408,22 @@ struct ScriptResult {
 // as a clean success. Once the deadline has tripped, the run is a failure —
 // overwrite whatever the script's own error handling concluded.
 //
-// NOTE FOR TASK 4: this makes the *reported outcome* honest, it does not
-// stop the spin. RunScript is still synchronous, so a pcall-wrapped
-// infinite loop still blocks the calling thread indefinitely (measured at
-// 45s+ before being killed manually). Task 4's move to an Napi::AsyncWorker
-// is therefore not merely an optimisation — it is the load-bearing half of
-// this fix, and must come with a hard wall-clock abort of the worker rather
-// than relying on the Lua-level hook alone.
+// NOTE: this makes the *reported outcome* honest, it does not stop the
+// spin. As of Task 5 the run happens on a libuv worker thread
+// (RunScriptWorker), so a pcall-wrapped infinite loop no longer freezes
+// the JS thread — but it does still occupy its worker thread until the
+// process exits, because the Lua-level hook can only raise a catchable
+// error. A hard wall-clock abort of the worker is still outstanding.
 void ApplyStickyTimeout(const TimeoutState& timeout, ScriptResult& result) {
   if (!timeout.timedOut) return;
   result.success = false;
   result.error = kTimeoutMessage;
 }
 
-ScriptResult RunScriptImpl(HANDLE handle, const std::string& source) {
+// Runs entirely on RunScriptWorker's background thread: every type it
+// touches is plain C++ (HANDLE/std::string/LuaState) — never a Napi value.
+ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
+                           const LuaState& stateIn) {
   ScriptResult result;
   AllocBudget budget;
   lua_State* L = lua_newstate(BudgetAlloc, &budget);
@@ -336,6 +443,7 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source) {
 
   OutputCollector out;
   OpenAllowlistedLibs(L, &out);
+  SeedStateTable(L, stateIn);
 
   int loadStatus = luaL_loadstring(L, source.c_str());
   if (loadStatus != LUA_OK) {
@@ -343,6 +451,7 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source) {
     result.error = msg ? msg : "could not compile script";
     result.output = out.lines;
     ApplyStickyTimeout(timeout, result);
+    result.stateOut = ReadStateTable(L);
     lua_close(L);
     return result;
   }
@@ -355,40 +464,98 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source) {
   }
   result.output = out.lines;
   ApplyStickyTimeout(timeout, result);
+  result.stateOut = ReadStateTable(L);
   lua_close(L);
   return result;
 }
 
+// Runs the script on a libuv worker thread, the same shape patch_ops.cc's
+// ScanAobWorker uses. THREAD BOUNDARY: the constructor and OnOK()/OnError()
+// run on the JS thread and are the only places that may touch a Napi value;
+// Execute() runs on the worker thread and touches only the already-flattened
+// plain-C++ members (handle_/source_/flatStateIn_/result_).
+class RunScriptWorker : public Napi::AsyncWorker {
+ public:
+  RunScriptWorker(Napi::Env env, HANDLE handle, std::string source, const Napi::Object& stateIn)
+      : Napi::AsyncWorker(env),
+        handle_(handle),
+        source_(std::move(source)),
+        deferred_(Napi::Promise::Deferred::New(env)) {
+    // JS thread, before Queue(): flatten stateIn out of N-API entirely, so
+    // Execute() never needs the Env.
+    Napi::Array keys = stateIn.GetPropertyNames();
+    for (uint32_t i = 0; i < keys.Length(); i++) {
+      std::string key = keys.Get(i).As<Napi::String>().Utf8Value();
+      Napi::Value value = stateIn.Get(key);
+      if (value.IsString()) flatStateIn_[key] = value.As<Napi::String>().Utf8Value();
+      else if (value.IsNumber()) flatStateIn_[key] = value.As<Napi::Number>().DoubleValue();
+      else if (value.IsBoolean()) flatStateIn_[key] = value.As<Napi::Boolean>().Value();
+      // else: skipped, per ReadStateTable's matching scope limit above.
+    }
+  }
+
+  Napi::Promise GetPromise() { return deferred_.Promise(); }
+
+  void Execute() override { result_ = RunScriptImpl(handle_, source_, flatStateIn_); }
+
+  void OnOK() override {
+    Napi::Env env = Env();
+    Napi::Object out = Napi::Object::New(env);
+    out.Set("success", Napi::Boolean::New(env, result_.success));
+    Napi::Array output = Napi::Array::New(env, result_.output.size());
+    for (size_t i = 0; i < result_.output.size(); i++) {
+      output.Set(static_cast<uint32_t>(i), Napi::String::New(env, result_.output[i]));
+    }
+    out.Set("output", output);
+    out.Set("error", result_.success
+                         ? env.Null()
+                         : Napi::Value(Napi::String::New(env, result_.error)));
+    Napi::Object stateOut = Napi::Object::New(env);
+    // Deliberately not a structured binding: capturing one in the lambda
+    // below is a C++20 extension this build warns about.
+    for (const auto& entry : result_.stateOut) {
+      const std::string& key = entry.first;
+      std::visit([&](auto&& v) { stateOut.Set(key, Napi::Value::From(env, v)); }, entry.second);
+    }
+    out.Set("stateOut", stateOut);
+    deferred_.Resolve(out);
+  }
+
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+ private:
+  HANDLE handle_;
+  std::string source_;
+  LuaState flatStateIn_;
+  ScriptResult result_;
+  Napi::Promise::Deferred deferred_;
+};
+
 }  // namespace
 
-// runScript(handle, source): the handle is threaded through so the bound
-// memory globals (readInt32/writeInt32/etc., registered in
-// OpenAllowlistedLibs) know which process to touch. Still synchronous —
-// no async worker yet. That's Task 5: a script calling a blocking memory
-// function against an unresponsive target can freeze the calling thread
-// (Electron's main thread, in practice) until then.
+// runScript(handle, source, stateIn) -> Promise<{success, output, error,
+// stateOut}>. The handle is threaded through so the bound memory globals
+// (readInt32/writeInt32/resolvePointer/etc., registered in
+// OpenAllowlistedLibs) know which process to touch. The run itself happens
+// on a background thread (RunScriptWorker), so a script that spins for its
+// full 5-second cap — or blocks on an unresponsive target — no longer
+// freezes Electron's main thread.
 Napi::Value RunScript(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsString()) {
-    Napi::TypeError::New(env, "runScript(handle: number, source: string) expects a number and a string")
+    Napi::TypeError::New(env, "runScript(handle: number, source: string, stateIn?: object) expects a number and a string")
         .ThrowAsJavaScriptException();
     return env.Undefined();
   }
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   std::string source = info[1].As<Napi::String>().Utf8Value();
+  Napi::Object stateIn = info.Length() > 2 && info[2].IsObject()
+                             ? info[2].As<Napi::Object>()
+                             : Napi::Object::New(env);
 
-  ScriptResult result = RunScriptImpl(h, source);
-
-  Napi::Object out = Napi::Object::New(env);
-  out.Set("success", Napi::Boolean::New(env, result.success));
-  Napi::Array output = Napi::Array::New(env, result.output.size());
-  for (size_t i = 0; i < result.output.size(); i++) {
-    output.Set(static_cast<uint32_t>(i), Napi::String::New(env, result.output[i]));
-  }
-  out.Set("output", output);
-  out.Set("error", result.success
-                       ? env.Null()
-                       : Napi::Value(Napi::String::New(env, result.error)));
-  return out;
+  auto* worker = new RunScriptWorker(env, h, std::move(source), stateIn);
+  Napi::Promise promise = worker->GetPromise();
+  worker->Queue();
+  return promise;
 }

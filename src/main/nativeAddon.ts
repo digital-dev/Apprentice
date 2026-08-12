@@ -38,6 +38,10 @@ export interface CaughtInstruction {
   moduleOffset: string | null
 }
 
+// The `state` handoff table only round-trips flat key->primitive entries;
+// nested tables/functions a script stores in `state` are dropped natively.
+export type LuaValue = string | number | boolean
+
 export const nativeAddon = {
   listProcesses: (): ProcessInfo[] => addon.listProcesses(),
   attach: (pid: number): AttachResult => addon.attach(pid),
@@ -269,10 +273,20 @@ export const nativeAddon = {
   // a 5-second execution cap and an 8 MB allocation cap. `handle` is the
   // target process's HANDLE, threaded through so the bound memory globals
   // (readInt32/writeInt32/readBytes/etc.) know which process to touch.
-  // Still synchronous for now — Task 5 wraps this in an Napi::AsyncWorker.
+  // Runs on a background thread (Napi::AsyncWorker), same as scanAob/
+  // resolvePointerChain — a script can legitimately run for up to its
+  // 5-second cap, and must not block the Electron main thread for that
+  // whole time. stateIn seeds the script's `state` global (for the
+  // enable/disable value handoff); stateOut is `state`'s contents after
+  // the run.
   runScript: (
     handle: number,
-    source: string
-  ): { success: boolean; output: string[]; error: string | null } =>
-    addon.runScript(handle, source)
+    source: string,
+    stateIn: Record<string, LuaValue>
+  ): Promise<{
+    success: boolean
+    output: string[]
+    error: string | null
+    stateOut: Record<string, LuaValue>
+  }> => addon.runScript(handle, source, stateIn)
 }
