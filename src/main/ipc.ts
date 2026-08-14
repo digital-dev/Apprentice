@@ -739,6 +739,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       if (stored && stored.kind === 'patch') patchEngine.restore(stored)
     }
     deleteCheat(exeName, cheatId)
+    // A deleted cheat's hotkey must stop firing — without this,
+    // HotkeyManager's registered accelerator still closes over the
+    // now-deleted cheat definition and re-adds it to the freeze loop
+    // every time the key is pressed, with no UI row left to disable it.
+    // Same guard cheats:save already uses: only re-register if we're
+    // deleting from the currently-attached exe's profile.
+    if (attachedExe !== null && exeName.replace(/\.exe$/i, '') === attachedExe) {
+      hotkeyManager.registerAll(attachedExe)
+    }
   })
 
   ipcMain.handle('cheats:toggleFreeze', (_e, cheat: CheatDefinition, enabled: boolean) => {
