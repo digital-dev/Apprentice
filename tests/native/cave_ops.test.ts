@@ -35,7 +35,7 @@ beforeAll(async () => {
 
   let candidates = await (addon as any).scanFirst(handle, 'float', 10.0)
   await send('setforce 4242')
-  candidates = (addon as any).scanNext(handle, candidates, 'float', {
+  candidates = await (addon as any).scanNext(handle, candidates, 'float', {
     mode: 'exact',
     value: 4242
   })
@@ -170,7 +170,7 @@ describe('decodeRun', () => {
     // corrupt the tail byte of whatever follows).
     let candidates = await (addon as any).scanFirst(handle, 'float', 20.0)
     await send('settight 4141')
-    candidates = (addon as any).scanNext(handle, candidates, 'float', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'float', {
       mode: 'exact',
       value: 4141
     })

@@ -50,11 +50,13 @@ export const nativeAddon = {
   // must call this — attach() previously had no matching close anywhere in
   // the codebase, leaking one kernel handle per attach/relaunch cycle.
   detach: (handle: number): boolean => addon.detach(handle),
-  // scanFirst and resolvePointerChain run on a background thread in the
-  // native addon (Napi::AsyncWorker) and return Promises — walking a real
+  // scanFirst, scanNext and resolvePointerChain run on a background thread in
+  // the native addon (Napi::AsyncWorker) and return Promises — walking a real
   // game's entire committed memory takes real wall-clock time even after
   // the read/search optimizations, and running that synchronously on the
-  // main thread would block the whole Electron app for the duration.
+  // main thread would block the whole Electron app for the duration. scanNext
+  // is the same story per-candidate: an under-narrowed first scan can leave
+  // hundreds of thousands of addresses, one syscall each.
   scanFirst: (handle: number, dataType: string, value: number): Promise<Candidate[]> =>
     addon.scanFirst(handle, dataType, value),
   scanNext: (
@@ -62,7 +64,7 @@ export const nativeAddon = {
     candidates: Candidate[],
     dataType: string,
     filter: ScanFilter
-  ): Candidate[] => addon.scanNext(handle, candidates, dataType, filter),
+  ): Promise<Candidate[]> => addon.scanNext(handle, candidates, dataType, filter),
   resolvePointerChain: (
     handle: number,
     target: string,

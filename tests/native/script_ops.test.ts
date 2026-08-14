@@ -120,7 +120,7 @@ describe('runScript', () => {
   it('writes an int32 via Lua and the harness confirms it', async () => {
     let candidates = await (addon as any).scanFirst(handle, 'int32', 100)
     await send('set 55')
-    candidates = (addon as any).scanNext(handle, candidates, 'int32', { mode: 'exact', value: 55 })
+    candidates = await (addon as any).scanNext(handle, candidates, 'int32', { mode: 'exact', value: 55 })
     expect(candidates.length).toBe(1)
     const address = parseInt(candidates[0].address, 16)
 
@@ -164,7 +164,7 @@ describe('runScript', () => {
     let candidates = await (addon as any).scanFirst(handle, 'int64', 123456789012345)
     expect(candidates.length).toBeGreaterThan(0)
     await send('seti64 555000111222333')
-    candidates = (addon as any).scanNext(handle, candidates, 'int64', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int64', {
       mode: 'exact',
       value: 555000111222333
     })

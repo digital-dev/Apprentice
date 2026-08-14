@@ -38,7 +38,7 @@ describe('readValue / writeValue', () => {
       100
     )
     await send('set 55')
-    candidates = (addon as any).scanNext(handle, candidates, 'int32', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int32', {
       mode: 'exact',
       value: 55
     })
@@ -97,7 +97,7 @@ describe('readValue / writeValue', () => {
     expect(candidates.length).toBeGreaterThan(0)
 
     await send('seti8 200')
-    candidates = (addon as any).scanNext(handle, candidates, 'int8', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int8', {
       mode: 'exact',
       value: 200
     })

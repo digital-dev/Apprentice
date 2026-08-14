@@ -42,7 +42,7 @@ async function narrowToOne(
 ): Promise<string> {
   let candidates: Candidate[] = await (addon as any).scanFirst(handle, dataType, from)
   await send(`${setCmd} ${to}`)
-  candidates = (addon as any).scanNext(handle, candidates, dataType, { mode: 'exact', value: to })
+  candidates = await (addon as any).scanNext(handle, candidates, dataType, { mode: 'exact', value: to })
   expect(candidates.length).toBe(1)
   return candidates[0].address
 }

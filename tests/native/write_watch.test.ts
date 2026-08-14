@@ -44,7 +44,7 @@ async function staminaAddress(): Promise<string> {
 async function resolveStaminaAddress(): Promise<string> {
   let candidates = await (addon as any).scanFirst(handle, 'float', 77.0)
   await send('setp 33')
-  candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 33 })
+  candidates = await (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 33 })
   expect(candidates.length).toBe(1)
   return candidates[0].address
 }
@@ -64,7 +64,7 @@ async function shieldAddress(): Promise<string> {
 async function resolveShieldAddress(): Promise<string> {
   let candidates = await (addon as any).scanFirst(handle, 'float', 55.0)
   await send('setshield 66')
-  candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 66 })
+  candidates = await (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 66 })
   expect(candidates.length).toBe(1)
   return candidates[0].address
 }
@@ -220,7 +220,7 @@ describe('write watch — negative displacement', () => {
   it('reports a negative displacement as a signed value, not a huge unsigned one', async () => {
     let candidates = await (addon as any).scanFirst(handle, 'float', 44.0)
     await send('setnegdisp 91')
-    candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 91 })
+    candidates = await (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 91 })
     expect(candidates.length).toBe(1)
     const address = candidates[0].address
 
@@ -409,7 +409,7 @@ describe('write watch — decode-ranking regressions', () => {
 
     let candidates = await (addon as any).scanFirst(handle, 'float', 30.0)
     await send('setprobe 3939')
-    candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 3939 })
+    candidates = await (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 3939 })
     expect(candidates.length).toBe(1)
     const watchedAddress = candidates[0].address
 

@@ -36,7 +36,7 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.every((c) => c.value === 100)).toBe(true)
 
     await send('set 55')
-    candidates = (addon as any).scanNext(handle, candidates, 'int32', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int32', {
       mode: 'exact',
       value: 55
     })
@@ -48,11 +48,25 @@ describe('scanFirst / scanNext', () => {
     // what "increased" compares against now — no separately-supplied
     // previous array, proving the per-candidate tracking works across two
     // chained relative-filter steps, not just the first one.
-    candidates = (addon as any).scanNext(handle, candidates, 'int32', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int32', {
       mode: 'increased'
     })
     expect(candidates.length).toBe(1)
     expect(candidates[0].value).toBe(999)
+  })
+
+  it('scanNext returns a Promise and resolves with the filtered candidates', async () => {
+    await send('set 100')
+    const candidates = await (addon as any).scanFirst(handle, 'int32', 100)
+    await send('set 55')
+    const result = (addon as any).scanNext(handle, candidates, 'int32', {
+      mode: 'exact',
+      value: 55
+    })
+    expect(result).toBeInstanceOf(Promise)
+    const filtered = await result
+    expect(filtered.length).toBeGreaterThan(0)
+    expect(filtered.every((c: Candidate) => c.value === 55)).toBe(true)
   })
 
   it('finds the harness stamina value as a float and narrows it after a change', async () => {
@@ -60,7 +74,7 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.length).toBeGreaterThan(0)
 
     await send('setf 42.5')
-    candidates = (addon as any).scanNext(handle, candidates, 'float', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'float', {
       mode: 'exact',
       value: 42.5
     })
@@ -79,12 +93,12 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.length).toBeGreaterThan(0)
 
     await send('setf 50.0')
-    candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'decreased' })
+    candidates = await (addon as any).scanNext(handle, candidates, 'float', { mode: 'decreased' })
     expect(candidates.length).toBeGreaterThan(0)
     expect(candidates.every((c) => c.value === 50)).toBe(true)
 
     await send('setf 80.0')
-    candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'increased' })
+    candidates = await (addon as any).scanNext(handle, candidates, 'float', { mode: 'increased' })
     expect(candidates.length).toBeGreaterThan(0)
     expect(candidates.every((c) => c.value === 80)).toBe(true)
   })
@@ -95,7 +109,7 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.every((c) => c.value === 12345)).toBe(true)
 
     await send('seti16 -500')
-    candidates = (addon as any).scanNext(handle, candidates, 'int16', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int16', {
       mode: 'exact',
       value: -500
     })
@@ -109,7 +123,7 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.every((c) => c.value === 42)).toBe(true)
 
     await send('seti8 200')
-    candidates = (addon as any).scanNext(handle, candidates, 'int8', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int8', {
       mode: 'exact',
       value: 200
     })
@@ -123,7 +137,7 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.every((c) => c.value === 123456789012345)).toBe(true)
 
     await send('seti64 987654321098765')
-    candidates = (addon as any).scanNext(handle, candidates, 'int64', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'int64', {
       mode: 'exact',
       value: 987654321098765
     })
@@ -136,7 +150,7 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.length).toBeGreaterThan(0)
 
     await send('setd 9.5')
-    candidates = (addon as any).scanNext(handle, candidates, 'double', {
+    candidates = await (addon as any).scanNext(handle, candidates, 'double', {
       mode: 'exact',
       value: 9.5
     })

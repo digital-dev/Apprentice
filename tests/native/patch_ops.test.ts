@@ -56,7 +56,7 @@ async function catchDrainInstruction(): Promise<{
   const current = await count()
   let candidates = await (addon as any).scanFirst(handle, 'int32', current)
   await send('setcount 424242')
-  candidates = (addon as any).scanNext(handle, candidates, 'int32', {
+  candidates = await (addon as any).scanNext(handle, candidates, 'int32', {
     mode: 'exact',
     value: 424242
   })
