@@ -250,6 +250,26 @@ describe('scanAob bounds', () => {
     await send('unloaddll')
   })
 
+  // RunScanAob reads each executable region in 4 MiB chunks instead of
+  // allocating the whole region. Its stride is 1 byte and its "value width"
+  // is the whole pattern, so a match straddling a chunk boundary is the
+  // common case, not an exotic one — without the (plen - 1) read overlap
+  // past each chunk's owned start offsets, a pattern starting in the last
+  // plen-1 bytes of a chunk is visited by no chunk at all.
+  it('finds a pattern straddling a 4 MiB region-read chunk boundary', async () => {
+    const reply = await send('bigcode')
+    const base = reply.split(' ')[1]
+    expect(base).toMatch(/^0x/)
+    const CHUNK = 4 * 1024 * 1024
+
+    const sig = '48 8b 05 11 22 33 44 0f 1e fa 5a a5 7e e7 13 31'
+    const matches: string[] = await (addon as any).scanAob(handle, sig)
+    const expected = '0x' + (BigInt(base) + BigInt(CHUNK - 8)).toString(16)
+    expect(matches).toContain(expected)
+
+    await send('bigcodefree')
+  }, 30000)
+
   it('with no bounds behaves as before', async () => {
     // The existing unbounded call must keep working unchanged — this is the
     // back-compat guarantee every existing caller relies on.

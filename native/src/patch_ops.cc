@@ -5,8 +5,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cctype>
+#include <algorithm>
+#include <exception>
 
 namespace {
+
+// Never allocate a whole region in one shot — see the chunking note in
+// scanner.cc for the scheme. Here the "value width" is the pattern length
+// and the stride is 1 byte, so a match genuinely CAN straddle a chunk
+// boundary: the (plen - 1) read overlap past each chunk's owned start
+// offsets is what keeps those matches findable.
+constexpr size_t kChunkSize = 4 * 1024 * 1024;
 
 uintptr_t ParseHex(const std::string& s) {
   return static_cast<uintptr_t>(strtoull(s.c_str(), nullptr, 16));
@@ -108,19 +117,30 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
         !(mbi.Protect & PAGE_GUARD);
 
     if (executable && mbi.RegionSize >= plen) {
-      std::vector<uint8_t> buffer(mbi.RegionSize);
-      SIZE_T bytesRead = 0;
-      if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead) &&
-          bytesRead >= plen) {
-        uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        for (SIZE_T offset = 0; offset + plen <= bytesRead; offset++) {
+      const size_t regionSize = (size_t)mbi.RegionSize;
+      const size_t overlap = plen - 1;
+      std::vector<uint8_t> buffer(std::min(regionSize, kChunkSize + overlap));
+
+      for (size_t chunkOffset = 0; chunkOffset < regionSize; chunkOffset += kChunkSize) {
+        // Chunk owns start offsets [chunkOffset, chunkOffset + scanSpan);
+        // reads (plen - 1) further so a match starting at the last owned
+        // offset is still complete in the buffer.
+        const size_t scanSpan = std::min(kChunkSize, regionSize - chunkOffset);
+        const size_t readLen = std::min(kChunkSize + overlap, regionSize - chunkOffset);
+        SIZE_T bytesRead = 0;
+        if (!ReadProcessMemory(h, (LPCVOID)(regionBase + chunkOffset), buffer.data(), readLen,
+                               &bytesRead) ||
+            bytesRead < plen) {
+          continue;
+        }
+        for (size_t offset = 0; offset < scanSpan && offset + plen <= bytesRead; offset++) {
           bool match = true;
           for (size_t k = 0; k < plen; k++) {
             if (pattern[k].wildcard) continue;
             if (buffer[offset + k] != pattern[k].value) { match = false; break; }
           }
           if (match) {
-            uintptr_t hit = base + offset;
+            uintptr_t hit = regionBase + chunkOffset + offset;
             if (hit >= rangeStart && (rangeEnd == 0 || hit + plen <= rangeEnd)) {
               out.push_back(hit);
             }
@@ -152,7 +172,21 @@ class ScanAobWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { results_ = RunScanAob(handle_, pattern_, rangeStart_, rangeEnd_); }
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception here (a
+  // std::bad_alloc from the per-chunk buffer being the realistic one) calls
+  // std::terminate on a libuv worker thread and kills the whole Electron
+  // process. SetError routes to OnError below instead, rejecting the
+  // promise. Pure safety net: the success path is unchanged.
+  void Execute() override {
+    try {
+      results_ = RunScanAob(handle_, pattern_, rangeStart_, rangeEnd_);
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error during scanAob");
+    }
+  }
 
   void OnOK() override {
     Napi::Env env = Env();

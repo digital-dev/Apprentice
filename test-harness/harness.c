@@ -70,6 +70,37 @@ static volatile int g_drain_running = 0;
 static volatile int g_wide_running = 0;
 static volatile int g_shield_running = 0;
 
+// Chunk-boundary regression support (scanner.test.ts / patch_ops.test.ts).
+// The native scanners read a committed region in 4 MiB chunks rather than
+// allocating the whole region, so a value or AOB match that STRADDLES a
+// chunk boundary is the one case chunking can silently drop. These
+// commands allocate a single 8 MiB region — big enough that the region has
+// a chunk boundary 4 MiB in, and allocated as one VirtualAlloc so
+// VirtualQueryEx reports it as ONE region whose base is where the chunking
+// arithmetic starts counting — and place a marker deliberately across that
+// boundary.
+#define BIG_REGION_SIZE (8u * 1024u * 1024u)
+#define BIG_CHUNK_SIZE  (4u * 1024u * 1024u)
+// Straddles: an int64 is 8 bytes but the scanner strides 4, so a value
+// starting 4 bytes before the boundary is a REAL scanned position whose
+// last 4 bytes live in the next chunk.
+#define BIG_I64_OFFSET  (BIG_CHUNK_SIZE - 4u)
+// Sits well inside the SECOND chunk, so a wrong chunk re-basing (adding the
+// region base instead of the chunk base to the in-buffer offset) reports
+// the wrong address for it.
+#define BIG_I32_OFFSET  (BIG_CHUNK_SIZE + 0x1000u)
+// The AOB pattern is 16 bytes and scans on a 1-byte stride; starting 8
+// bytes before the boundary puts half of it in each chunk.
+#define BIG_SIG_OFFSET  (BIG_CHUNK_SIZE - 8u)
+static const long long BIG_I64_VALUE = 1122334455667788LL;
+static const int BIG_I32_VALUE = 24681357;
+static const unsigned char BIG_SIG_BYTES[16] = {
+  0x48, 0x8b, 0x05, 0x11, 0x22, 0x33, 0x44, 0x0f,
+  0x1e, 0xfa, 0x5a, 0xa5, 0x7e, 0xe7, 0x13, 0x31
+};
+static void* g_big_data = NULL;
+static void* g_big_code = NULL;
+
 static HMODULE g_probe_dll = NULL;
 static void (*g_probe_write)(float*, float) = NULL;
 static float g_probe_target = 5.0f;
@@ -297,7 +328,41 @@ int main(void) {
     unsigned char val8;
     long long val64;
     double dval;
-    if (strncmp(line, "loadmono", 8) == 0) {
+    if (strncmp(line, "bigallocfree", 12) == 0) {
+      if (g_big_data != NULL) { VirtualFree(g_big_data, 0, MEM_RELEASE); g_big_data = NULL; }
+      printf("OK\n");
+    } else if (strncmp(line, "bigalloc", 8) == 0) {
+      if (g_big_data == NULL) {
+        g_big_data = VirtualAlloc(NULL, BIG_REGION_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (g_big_data != NULL) {
+          memset(g_big_data, 0, BIG_REGION_SIZE);
+          memcpy((char*)g_big_data + BIG_I64_OFFSET, &BIG_I64_VALUE, sizeof(BIG_I64_VALUE));
+          memcpy((char*)g_big_data + BIG_I32_OFFSET, &BIG_I32_VALUE, sizeof(BIG_I32_VALUE));
+        }
+      }
+      if (g_big_data == NULL) printf("ERR\n");
+      else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_big_data);
+    } else if (strncmp(line, "bigcodefree", 11) == 0) {
+      if (g_big_code != NULL) { VirtualFree(g_big_code, 0, MEM_RELEASE); g_big_code = NULL; }
+      printf("OK\n");
+    } else if (strncmp(line, "bigcode", 7) == 0) {
+      if (g_big_code == NULL) {
+        g_big_code = VirtualAlloc(NULL, BIG_REGION_SIZE, MEM_RESERVE | MEM_COMMIT,
+                                  PAGE_EXECUTE_READWRITE);
+        if (g_big_code != NULL) {
+          // 0xCC (int3) filler, not zeros: a plausible code-padding byte
+          // that no existing test's signature matches.
+          memset(g_big_code, 0xCC, BIG_REGION_SIZE);
+          memcpy((char*)g_big_code + BIG_SIG_OFFSET, BIG_SIG_BYTES, sizeof(BIG_SIG_BYTES));
+          // scanAob only walks executable regions; PAGE_EXECUTE_READ keeps
+          // the whole 8 MiB one uniform region (same protection throughout).
+          DWORD oldProtect = 0;
+          VirtualProtect(g_big_code, BIG_REGION_SIZE, PAGE_EXECUTE_READ, &oldProtect);
+        }
+      }
+      if (g_big_code == NULL) printf("ERR\n");
+      else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_big_code);
+    } else if (strncmp(line, "loadmono", 8) == 0) {
       HMODULE m = LoadLibraryA("test-harness\\probe_mono.dll");
       if (m == NULL) printf("ERR\n");
       else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)m);

@@ -145,6 +145,34 @@ describe('scanFirst / scanNext', () => {
     expect(candidates.every((c) => c.value === 987654321098765)).toBe(true)
   })
 
+  // RunScanFirst reads each committed region in 4 MiB chunks instead of
+  // allocating the whole region. The one thing chunking can silently break
+  // is a value that STRADDLES a chunk boundary — and it is reachable for
+  // real, not hypothetically: int64/double are 8 bytes but scan on a 4-byte
+  // stride, so a value starting 4 bytes before a chunk boundary is a
+  // genuine scan position whose last 4 bytes fall in the next chunk. Without
+  // the (size - 1) read overlap, chunk 0 stops at boundary-8 and chunk 1
+  // starts at boundary, so this address is visited by neither.
+  it('finds an int64 straddling a 4 MiB region-read chunk boundary, and re-bases later chunks correctly', async () => {
+    const reply = await send('bigalloc')
+    const base = reply.split(' ')[1]
+    expect(base).toMatch(/^0x/)
+    const CHUNK = 4 * 1024 * 1024
+
+    const straddling: Candidate[] = await (addon as any).scanFirst(handle, 'int64', 1122334455667788)
+    const straddleAddress = '0x' + (BigInt(base) + BigInt(CHUNK - 4)).toString(16)
+    expect(straddling.map((c) => c.address)).toContain(straddleAddress)
+
+    // A marker deep inside the SECOND chunk: a match here is only reported
+    // at the right address if each hit is re-based onto its own chunk's
+    // base rather than the region base.
+    const secondChunk: Candidate[] = await (addon as any).scanFirst(handle, 'int32', 24681357)
+    const secondChunkAddress = '0x' + (BigInt(base) + BigInt(CHUNK + 0x1000)).toString(16)
+    expect(secondChunk.map((c) => c.address)).toContain(secondChunkAddress)
+
+    await send('bigallocfree')
+  }, 30000)
+
   it('finds and narrows a double value', async () => {
     let candidates: Candidate[] = await (addon as any).scanFirst(handle, 'double', 123.456)
     expect(candidates.length).toBeGreaterThan(0)

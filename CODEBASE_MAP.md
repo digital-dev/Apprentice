@@ -199,6 +199,12 @@ Native tests drive a **real child process**: `test-harness/harness.exe`, built
 from `harness.c`, driven over stdin (`drainloop`, `forceloop`, `wideloop`,
 `shieldloop`, `tight_write`, `loaddll`, `loaddll2`, `unloaddll`, …).
 
+`bigalloc` / `bigallocfree` and `bigcode` / `bigcodefree` allocate one 8 MiB
+region (data / executable respectively), replying `OK <0xbase>`, with a marker
+value deliberately placed ACROSS the 4 MiB chunk boundary the native region
+readers use. `scanner.test.ts` and `patch_ops.test.ts` use these to prove
+chunked region reads never drop a boundary-straddling candidate.
+
 `loaddll` / `loaddll2` / `unloaddll` load and unload a real DLL
 (`probe.dll` / `probe2.dll`, a size/timestamp-varied variant of the same
 DLL) into the harness process, replying `OK <0xbase>`. This is what

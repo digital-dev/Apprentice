@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
+#include <exception>
 
 namespace {
 
@@ -15,6 +17,32 @@ namespace {
 // user to narrow further; this cap is what keeps that possible instead of
 // OOMing before the user ever sees a result.
 constexpr size_t kMaxScanResults = 1'000'000;
+
+// Never allocate a whole region in one shot: a single multi-GB committed
+// region (routine in a real game) would otherwise allocate multi-GB inside
+// Apprentice's own process just to scan it. Regions are read in fixed-size
+// chunks instead.
+//
+// Chunking is only safe if it can't miss a value that straddles a chunk
+// boundary, so the scheme below is deliberately explicit about which chunk
+// "owns" which start positions:
+//
+//   chunk i OWNS the start offsets [i*kChunkSize, i*(kChunkSize)+scanSpan)
+//   chunk i READS [i*kChunkSize, i*kChunkSize + scanSpan + (width-1))
+//
+// The owned ranges exactly partition [0, regionSize), so every start offset
+// belongs to exactly one chunk (no misses, no duplicates). The read extends
+// (width - 1) bytes past the owned range — clamped to the region end — so a
+// value STARTING at the last owned offset is still fully present in the
+// buffer. Both properties are independent of the stride.
+//
+// kChunkSize is also a multiple of 8 (the widest stride/value in use here
+// and in pointer.cc), so an aligned stride stays in phase across chunk
+// boundaries: chunk i's owned range starts at a multiple of the stride
+// relative to the region base, so iterating 0, stride, 2*stride, ... within
+// the chunk hits exactly the region-global strided positions.
+constexpr size_t kChunkSize = 4 * 1024 * 1024;
+static_assert(kChunkSize % 8 == 0, "kChunkSize must be a multiple of the widest scan stride");
 
 uintptr_t ParseHex(const std::string& s) {
   return static_cast<uintptr_t>(strtoull(s.c_str(), nullptr, 16));
@@ -69,22 +97,39 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
         !(mbi.Protect & PAGE_GUARD);
 
     if (readable && mbi.RegionSize >= spec.size) {
-      std::vector<uint8_t> buffer(mbi.RegionSize);
-      SIZE_T bytesRead = 0;
-      if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
-        uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        for (SIZE_T offset = 0; offset + spec.size <= bytesRead; offset += stride) {
+      const size_t regionSize = (size_t)mbi.RegionSize;
+      const uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+      // A value starting at the last offset this chunk owns runs
+      // (spec.size - 1) bytes past the chunk — read that tail too, so a
+      // boundary-straddling value is complete in the buffer instead of
+      // being silently dropped. (Relevant for real: int64/double are 8
+      // bytes but scan on a 4-byte stride, so a value CAN start 4 bytes
+      // before a chunk boundary and finish after it.)
+      const size_t overlap = spec.size - 1;
+      std::vector<uint8_t> buffer(std::min(regionSize, kChunkSize + overlap));
+
+      for (size_t chunkOffset = 0; chunkOffset < regionSize; chunkOffset += kChunkSize) {
+        const size_t scanSpan = std::min(kChunkSize, regionSize - chunkOffset);
+        const size_t readLen = std::min(kChunkSize + overlap, regionSize - chunkOffset);
+        SIZE_T bytesRead = 0;
+        // A chunk read can legitimately fail (e.g. protection changed
+        // between VirtualQueryEx and ReadProcessMemory) — skip that chunk
+        // rather than falling back to a per-address read, which is what
+        // made scanning slow enough to look hung against a real game.
+        if (!ReadProcessMemory(h, (LPCVOID)(regionBase + chunkOffset), buffer.data(), readLen,
+                               &bytesRead)) {
+          continue;
+        }
+        for (size_t offset = 0; offset < scanSpan && offset + spec.size <= bytesRead;
+             offset += stride) {
           double value = InterpretAsDouble(buffer.data() + offset, spec);
           if (ValuesEqual(value, target, isFloat)) {
-            out.push_back({base + offset, value});
+            out.push_back({regionBase + chunkOffset + offset, value});
             if (out.size() >= kMaxScanResults) break;
           }
         }
+        if (out.size() >= kMaxScanResults) break;
       }
-      // A whole-region read can legitimately fail (e.g. protection changed
-      // between VirtualQueryEx and ReadProcessMemory) — skip that region
-      // rather than falling back to a per-address read, which is what made
-      // scanning slow enough to look hung against a real game process.
     }
 
     uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
@@ -112,7 +157,21 @@ class ScanFirstWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { results_ = RunScanFirst(handle_, spec_, target_); }
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception here (a
+  // std::bad_alloc from the per-chunk buffer being the realistic one) calls
+  // std::terminate on a libuv worker thread and kills the whole Electron
+  // process. SetError routes to the OnError below instead, rejecting the
+  // promise. Pure safety net: the success path is unchanged.
+  void Execute() override {
+    try {
+      results_ = RunScanFirst(handle_, spec_, target_);
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error during scanFirst");
+    }
+  }
 
   void OnOK() override {
     Napi::Env env = Env();
@@ -183,7 +242,16 @@ class ScanNextWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { results_ = RunScanNext(h_, candidates_, spec_, mode_, filterValue_); }
+  // Same NAPI_DISABLE_CPP_EXCEPTIONS reasoning as ScanFirstWorker::Execute.
+  void Execute() override {
+    try {
+      results_ = RunScanNext(h_, candidates_, spec_, mode_, filterValue_);
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error during scanNext");
+    }
+  }
 
   void OnOK() override {
     Napi::Env env = Env();

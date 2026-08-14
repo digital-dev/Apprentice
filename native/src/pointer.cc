@@ -7,6 +7,7 @@
 #include <cstring>
 #include <optional>
 #include <algorithm>
+#include <exception>
 
 namespace {
 
@@ -69,27 +70,60 @@ const ModuleRange* FindContainingModule(const std::vector<ModuleRange>& modules,
   return nullptr;
 }
 
+// Same reasoning as scanner.cc's kMaxScanResults: an unbounded pointer
+// collection against a real game's multi-GB committed heap can produce on
+// the order of 10^8 entries before this function even returns, which
+// std::sort then has to sort — this is the actual OOM risk that motivates
+// this cap, not a hypothetical one. The UI's job is to tell the user
+// pointer-chain resolution didn't find enough candidates; this cap is what
+// keeps that possible instead of exhausting memory first.
+constexpr size_t kMaxPointerEntries = 5'000'000;
+
+// Never allocate a whole region in one shot — see the identical chunking
+// note in scanner.cc for the full scheme and its boundary argument. Here
+// the value width and the stride are both sizeof(uintptr_t), and
+// kChunkSize is a multiple of it, so a pointer-sized value can never
+// actually straddle a chunk boundary; the (width - 1) read overlap is kept
+// anyway so the scheme stays correct if the stride ever changes.
+constexpr size_t kChunkSize = 4 * 1024 * 1024;
+static_assert(kChunkSize % sizeof(uintptr_t) == 0,
+              "kChunkSize must be a multiple of the pointer stride");
+
 std::vector<PointerEntry> CollectPointers(HANDLE h) {
   std::vector<PointerEntry> out;
   MEMORY_BASIC_INFORMATION mbi;
   uintptr_t addr = 0;
-  while (VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+  while (out.size() < kMaxPointerEntries &&
+         VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
     bool readable = (mbi.State == MEM_COMMIT) &&
         (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
         !(mbi.Protect & PAGE_GUARD);
-    // One bulk read per region instead of one ReadProcessMemory syscall per
+    // One bulk read per chunk instead of one ReadProcessMemory syscall per
     // 8-byte candidate — the latter is hundreds of millions of syscalls
     // against a real game process and makes this look hung (same issue
     // scanFirst had, fixed the same way here).
     if (readable && mbi.RegionSize >= sizeof(uintptr_t)) {
-      std::vector<uint8_t> buffer(mbi.RegionSize);
-      SIZE_T bytesRead = 0;
-      if (ReadProcessMemory(h, mbi.BaseAddress, buffer.data(), mbi.RegionSize, &bytesRead)) {
-        uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        for (SIZE_T offset = 0; offset + sizeof(uintptr_t) <= bytesRead; offset += sizeof(uintptr_t)) {
+      constexpr size_t kWidth = sizeof(uintptr_t);
+      const size_t regionSize = (size_t)mbi.RegionSize;
+      const uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+      std::vector<uint8_t> buffer(std::min(regionSize, kChunkSize + kWidth - 1));
+
+      for (size_t chunkOffset = 0;
+           chunkOffset < regionSize && out.size() < kMaxPointerEntries;
+           chunkOffset += kChunkSize) {
+        const size_t scanSpan = std::min(kChunkSize, regionSize - chunkOffset);
+        const size_t readLen = std::min(kChunkSize + kWidth - 1, regionSize - chunkOffset);
+        SIZE_T bytesRead = 0;
+        if (!ReadProcessMemory(h, (LPCVOID)(regionBase + chunkOffset), buffer.data(), readLen,
+                               &bytesRead)) {
+          continue;
+        }
+        for (size_t offset = 0; offset < scanSpan && offset + kWidth <= bytesRead;
+             offset += kWidth) {
+          if (out.size() >= kMaxPointerEntries) break;
           uintptr_t val;
           memcpy(&val, buffer.data() + offset, sizeof(val));
-          if (val != 0) out.push_back({base + offset, val});
+          if (val != 0) out.push_back({regionBase + chunkOffset + offset, val});
         }
       }
     }
@@ -276,7 +310,21 @@ class ResolvePointerChainWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { result_ = RunResolvePointerChain(handle_, target_, maxLevels_); }
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception here (a
+  // std::bad_alloc from the pointer vector being the realistic one) calls
+  // std::terminate on a libuv worker thread and kills the whole Electron
+  // process. SetError routes to OnError below instead, rejecting the
+  // promise. Pure safety net: the success path is unchanged.
+  void Execute() override {
+    try {
+      result_ = RunResolvePointerChain(handle_, target_, maxLevels_);
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error during resolvePointerChain");
+    }
+  }
 
   void OnOK() override {
     Napi::Env env = Env();
