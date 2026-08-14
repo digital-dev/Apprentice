@@ -426,13 +426,18 @@ function attachTo(pid: number, exeName: string): { handle: number; baseAddress: 
     for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
       scriptRuntime.clear(cheat.id)
     }
-    // The old handle is about to be replaced below — close it now, while
-    // we still have it, rather than leaking it. Safe even though
-    // patchEngine.restoreAll() above already used it: CloseHandle only
-    // releases OUR reference to the kernel object, it doesn't affect the
-    // target process itself.
-    nativeAddon.detach(attachedHandle)
   }
+  // The old handle (if any) is about to be replaced below — close it now,
+  // while we still have it, rather than leaking it. Unconditional on the
+  // branch above: a manual re-attach to the SAME already-attached pid
+  // (reachable via the process:attach IPC handler) skips that branch but
+  // still opens a brand-new HANDLE below, so the old one must be closed
+  // here too or it leaks silently. Safe even when patchEngine.restoreAll()
+  // above already used it: CloseHandle only releases OUR reference to the
+  // kernel object, it doesn't affect the target process itself. Also safe
+  // against any aliasing with the new handle: nativeAddon.attach always
+  // opens a fresh HANDLE value, never reuses the old one.
+  if (attachedHandle !== null) nativeAddon.detach(attachedHandle)
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
   attachedBase = baseAddress
@@ -641,7 +646,14 @@ export function releaseTarget(): void {
   for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
     scriptRuntime.clear(cheat.id)
   }
-  if (attachedHandle !== null) nativeAddon.detach(attachedHandle)
+  // Nulled after closing so a second before-quit call (Electron's quit can
+  // in principle fire more than once if an earlier one is aborted/retried)
+  // is a no-op here instead of calling CloseHandle again on an already-
+  // closed value — same idempotency onVanish already has.
+  if (attachedHandle !== null) {
+    nativeAddon.detach(attachedHandle)
+    attachedHandle = null
+  }
 }
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
