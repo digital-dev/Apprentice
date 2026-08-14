@@ -54,6 +54,16 @@ static volatile int g_tight_running = 0;
 float g_probe_value = 30.0f;
 static volatile int g_probe_running = 0;
 
+// write_watch.test.ts's negative-displacement regression: stored through a
+// base pointer that lands PAST the watched field (base = &g_negdisp_value +
+// 1, i.e. the address just after the float), so the store's own encoded
+// displacement — and, downstream, out.displacement — is negative
+// (`*(end - 1) = v` compiles to `mov [reg-4], v` under /Od). Exercises the
+// signed-vs-unsigned serialization bug: casting a negative int64_t through
+// uintptr_t before hex-formatting turned -4 into a huge positive number.
+float g_negdisp_value = 44.0f;
+static volatile int g_negdisp_running = 0;
+
 static volatile int g_watch_running = 0;
 
 static volatile int g_drain_running = 0;
@@ -218,6 +228,22 @@ static unsigned __stdcall probe_thread(void* arg) {
   float v = 0.0f;
   while (g_probe_running) {
     probe_write(&g_probe_value, v);
+    v += 1.0f;
+    Sleep(10);
+  }
+  return 0;
+}
+#pragma optimize("", on)
+
+#pragma optimize("", off)
+static void write_negdisp(float* end, float v) {
+  *(end - 1) = v; // base register = `end`, encoded displacement = -4
+}
+static unsigned __stdcall negdisp_thread(void* arg) {
+  (void)arg;
+  float v = 0.0f;
+  while (g_negdisp_running) {
+    write_negdisp(&g_negdisp_value + 1, v);
     v += 1.0f;
     Sleep(10);
   }
@@ -406,6 +432,20 @@ int main(void) {
       printf("OK\n");
     } else if (strncmp(line, "stopprobe", 9) == 0) {
       g_probe_running = 0;
+      printf("OK\n");
+    } else if (sscanf(line, "setnegdisp %f", &fval) == 1) {
+      g_negdisp_value = fval;
+      printf("OK\n");
+    } else if (strncmp(line, "getnegdisp", 10) == 0) {
+      printf("OK %f\n", g_negdisp_value);
+    } else if (strncmp(line, "negdisploop", 11) == 0) {
+      if (!g_negdisp_running) {
+        g_negdisp_running = 1;
+        _beginthreadex(NULL, 0, negdisp_thread, NULL, 0, NULL);
+      }
+      printf("OK\n");
+    } else if (strncmp(line, "stopnegdisp", 11) == 0) {
+      g_negdisp_running = 0;
       printf("OK\n");
     } else if (strncmp(line, "get", 3) == 0) {
       printf("OK %d\n", *g_health_ptr);
