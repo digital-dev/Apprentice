@@ -313,4 +313,22 @@ describe('runScript', () => {
     expect(result.success).toBe(false)
     expect(result.error).toContain('writeBytes length must be 1..4096')
   })
+
+  // Regression: LuaWriteValue (backing writeInt8/writeInt16/writeInt32/
+  // writeInt64/writeFloat/writeDouble) had the same bug as LuaWriteBytes and
+  // memory_ops.cc's WriteValue — a direct WriteProcessMemory call with no
+  // protect/restore dance, so a write to a non-writable page (the harness's
+  // own .text section here, same base + 0x1000 convention as the other new
+  // tests in this file) silently returned false. This is the path a script
+  // author reaches for far more often than writeBytes.
+  it('writeInt32 succeeds against a page that is not already writable', async () => {
+    const codeAddr = (BigInt(baseAddress) + 0x1000n).toString()
+    const result = await (addon as any).runScript(
+      handle,
+      `print(writeInt32(${codeAddr}, 0))`,
+      {}
+    )
+    expect(result.success).toBe(true)
+    expect(result.output[0]).toBe('true')
+  })
 })

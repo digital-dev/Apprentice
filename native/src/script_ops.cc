@@ -217,8 +217,7 @@ int LuaWriteValue(lua_State* L, ValueKind kind, size_t size) {
     double value = luaL_checknumber(L, 2);
     EncodeFromDouble(value, ValueSpec{size, kind}, buf);
   }
-  SIZE_T written;
-  bool ok = WriteProcessMemory(h, (LPVOID)address, buf, size, &written) && written == size;
+  bool ok = ProtectedWriteProcessMemory(h, address, buf, size);
   lua_pushboolean(L, ok);
   return 1;
 }
