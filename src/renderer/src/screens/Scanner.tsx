@@ -5,6 +5,8 @@ import type { Candidate, CaughtInstruction } from '../tamper.d'
 type Filter = 'exact' | 'changed' | 'unchanged' | 'increased' | 'decreased'
 type ResolveStatus = 'resolving' | 'resolved' | 'no-chain'
 
+const MAX_RENDERED_CANDIDATES = 500
+
 export default function Scanner({
   exeName,
   onDone,
@@ -412,10 +414,15 @@ export default function Scanner({
         </>
       )}
 
-      {candidates.length > 0 && candidates.length <= 20 && (
+      {candidates.length > 0 && (
         <>
+          <p>
+            {candidates.length} candidate(s)
+            {candidates.length > MAX_RENDERED_CANDIDATES &&
+              ` (showing first ${MAX_RENDERED_CANDIDATES} — narrow further to see the rest)`}
+          </p>
           <ul>
-            {candidates.map((c) => {
+            {candidates.slice(0, MAX_RENDERED_CANDIDATES).map((c) => {
               const status = resolveStatus.get(c.address)
               return (
                 <li key={c.address}>
