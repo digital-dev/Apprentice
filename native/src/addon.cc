@@ -58,6 +58,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("ping", Napi::Function::New(env, Ping));
   exports.Set("listProcesses", Napi::Function::New(env, ListProcesses));
   exports.Set("attach", Napi::Function::New(env, Attach));
+  exports.Set("detach", Napi::Function::New(env, Detach));
   exports.Set("scanFirst", Napi::Function::New(env, ScanFirst));
   exports.Set("scanNext", Napi::Function::New(env, ScanNext));
   exports.Set("resolvePointerChain", Napi::Function::New(env, ResolvePointerChain));

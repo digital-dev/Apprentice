@@ -34,4 +34,10 @@ describe('attach', () => {
   it('throws for a pid that does not exist', () => {
     expect(() => (addon as any).attach(999999)).toThrow()
   })
+
+  it('detach closes the handle attach() returned', () => {
+    const { handle } = (addon as any).attach(harness.pid)
+    const ok = (addon as any).detach(handle)
+    expect(ok).toBe(true)
+  })
 })

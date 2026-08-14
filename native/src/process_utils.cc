@@ -65,3 +65,15 @@ Napi::Value Attach(const Napi::CallbackInfo& info) {
   result.Set("baseAddress", Napi::String::New(env, hex));
   return result;
 }
+
+Napi::Value Detach(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "detach(handle) expects a number").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  HANDLE h = reinterpret_cast<HANDLE>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  bool ok = CloseHandle(h) != 0;
+  return Napi::Boolean::New(env, ok);
+}

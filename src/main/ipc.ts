@@ -426,6 +426,12 @@ function attachTo(pid: number, exeName: string): { handle: number; baseAddress: 
     for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
       scriptRuntime.clear(cheat.id)
     }
+    // The old handle is about to be replaced below — close it now, while
+    // we still have it, rather than leaking it. Safe even though
+    // patchEngine.restoreAll() above already used it: CloseHandle only
+    // releases OUR reference to the kernel object, it doesn't affect the
+    // target process itself.
+    nativeAddon.detach(attachedHandle)
   }
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
@@ -595,6 +601,7 @@ export function startWatching(getWindow: () => BrowserWindow): void {
     for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
       scriptRuntime.clear(cheat.id)
     }
+    if (attachedHandle !== null) nativeAddon.detach(attachedHandle)
     attachedHandle = null
     attachedBase = null
     attachedPid = null
@@ -634,6 +641,7 @@ export function releaseTarget(): void {
   for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
     scriptRuntime.clear(cheat.id)
   }
+  if (attachedHandle !== null) nativeAddon.detach(attachedHandle)
 }
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
