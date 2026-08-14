@@ -232,19 +232,14 @@ class MonoResolveClassWorker : public Napi::AsyncWorker {
       return;
     }
 
+    // ResolveClassSingleThread owns freeing nsAddr/nameAddr from here on:
+    // it has full local visibility into its own RunRemoteCall result (this
+    // caller does not), so it can gate those frees exactly the way it
+    // already gates freeing its own cave — freed on every path that never
+    // started a thread or that confirmed the thread finished, left
+    // unfreed (leaked) on the one path that can't rule out the thread
+    // still running.
     uintptr_t classHandle = ResolveClassSingleThread(handle_, monoDllBase_, nsAddr, nameAddr);
-    // ResolveClassSingleThread's own single continuous thread is, in every
-    // ordinary case, done reading nsAddr/nameAddr by the time it returns
-    // here (found and not-found both run through detach and a normal
-    // `ret`). The one case this can't rule out is the same one every
-    // RunRemoteCall site accepts elsewhere in this file: if that thread's
-    // WaitForRemoteThread call timed out, ResolveClassSingleThread already
-    // returns 0 without knowing whether the thread is still running — and
-    // in that same rare case it also never frees its OWN cave, for the
-    // identical reason. Freeing nsAddr/nameAddr here carries that same,
-    // already-accepted residual risk rather than a new one.
-    platform::FreeMemory(handle_, nsAddr);
-    platform::FreeMemory(handle_, nameAddr);
     if (classHandle) { classHandle_ = classHandle; ok_ = true; }
   }
 
@@ -898,8 +893,15 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero)) ||
       !platform::WriteMemory(handle, bufferAddr, &zero, sizeof(zero)) ||
       !platform::WriteMemory(handle, collectorStubAddr, collectorStub.data(), collectorStub.size())) {
-    // No thread has been created yet — safe to free immediately.
+    // No thread has been created yet — safe to free immediately. nsAddr/
+    // nameAddr (the caller's WriteString results, consumed only by the
+    // stub this function is about to build) are equally untouched by any
+    // thread at this point, so this function — which has full visibility
+    // into whether that thread ever started — owns freeing them too,
+    // rather than leaving it to a caller with no such visibility.
     platform::FreeMemory(handle, cave);
+    platform::FreeMemory(handle, nsAddr);
+    platform::FreeMemory(handle, nameAddr);
     return 0;
   }
 
@@ -908,6 +910,8 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
       collectorStubAddr, bufferAddr, slotsAddr, nsAddr, nameAddr, resultAddr);
   if (!platform::WriteMemory(handle, mainStubAddr, mainStub.data(), mainStub.size())) {
     platform::FreeMemory(handle, cave);
+    platform::FreeMemory(handle, nsAddr);
+    platform::FreeMemory(handle, nameAddr);
     return 0;
   }
 
@@ -918,13 +922,16 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   uint8_t ignored[8];
   // Never free on a false return here: this only fails via the timeout
   // path (every failure above this point already returned), which means
-  // the thread may still be executing inside `cave` — see the
-  // never-free-a-live-cave rule.
+  // the thread may still be executing inside `cave` — and may still be
+  // reading nsAddr/nameAddr via classFromName — see the
+  // never-free-a-live-cave rule. Leak all three together.
   if (!RunRemoteCall(handle, mainStubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
   platform::FreeMemory(handle, cave);
+  platform::FreeMemory(handle, nsAddr);
+  platform::FreeMemory(handle, nameAddr);
   return static_cast<uintptr_t>(result);
 }
 
