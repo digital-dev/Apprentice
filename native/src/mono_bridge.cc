@@ -29,7 +29,11 @@ uintptr_t WriteString(platform::ProcessHandle handle, uintptr_t near, const std:
   if (!cave) return 0;
   std::vector<char> buf(s.begin(), s.end());
   buf.push_back('\0');
-  if (!platform::WriteMemory(handle, cave, buf.data(), buf.size())) return 0;
+  if (!platform::WriteMemory(handle, cave, buf.data(), buf.size())) {
+    // No thread has touched this cave yet — nothing ran, safe to free.
+    platform::FreeMemory(handle, cave);
+    return 0;
+  }
   return cave;
 }
 
@@ -220,9 +224,27 @@ class MonoResolveClassWorker : public Napi::AsyncWorker {
     // than relying on that as a hard guarantee.
     uintptr_t nsAddr = WriteString(handle_, monoDllBase_, namespaceName_);
     uintptr_t nameAddr = WriteString(handle_, monoDllBase_, className_);
-    if (!nsAddr || !nameAddr) return;
+    if (!nsAddr || !nameAddr) {
+      // Whichever of the two succeeded was never handed to any thread —
+      // free it now rather than leaking it.
+      if (nsAddr) platform::FreeMemory(handle_, nsAddr);
+      if (nameAddr) platform::FreeMemory(handle_, nameAddr);
+      return;
+    }
 
     uintptr_t classHandle = ResolveClassSingleThread(handle_, monoDllBase_, nsAddr, nameAddr);
+    // ResolveClassSingleThread's own single continuous thread is, in every
+    // ordinary case, done reading nsAddr/nameAddr by the time it returns
+    // here (found and not-found both run through detach and a normal
+    // `ret`). The one case this can't rule out is the same one every
+    // RunRemoteCall site accepts elsewhere in this file: if that thread's
+    // WaitForRemoteThread call timed out, ResolveClassSingleThread already
+    // returns 0 without knowing whether the thread is still running — and
+    // in that same rare case it also never frees its OWN cave, for the
+    // identical reason. Freeing nsAddr/nameAddr here carries that same,
+    // already-accepted residual risk rather than a new one.
+    platform::FreeMemory(handle_, nsAddr);
+    platform::FreeMemory(handle_, nameAddr);
     if (classHandle) { classHandle_ = classHandle; ok_ = true; }
   }
 
@@ -639,9 +661,17 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
   uintptr_t zero = 0;
   platform::WriteMemory(handle, bufferAddr, &zero, sizeof(zero));
   std::vector<uint8_t> stub = BuildAssemblyCollectorStub();
-  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return {};
+  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
+    // No thread has been created yet — safe to free immediately.
+    platform::FreeMemory(handle, cave);
+    return {};
+  }
 
   uint8_t ignored[8];
+  // Return value deliberately not checked, matching this function's
+  // pre-existing behavior: the collector buffer is read either way, so the
+  // free below waits for RunRemoteCall's own synchronous create-wait-close
+  // cycle to run to completion first, same as every other call site here.
   RunRemoteCall(handle, foreach_, {stubAddr, bufferAddr}, ignored);
 
   uint64_t count = 0;
@@ -651,6 +681,7 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
   if (count > 0) {
     platform::ReadMemory(handle, bufferAddr + 8, slots.data(), count * sizeof(uintptr_t));
   }
+  platform::FreeMemory(handle, cave);
   return slots;
 }
 
@@ -864,26 +895,36 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   uintptr_t mainStubAddr = collectorStubAddr + collectorStub.size();
 
   uint64_t zero = 0;
-  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero))) return 0;
-  if (!platform::WriteMemory(handle, bufferAddr, &zero, sizeof(zero))) return 0;
-  if (!platform::WriteMemory(handle, collectorStubAddr, collectorStub.data(), collectorStub.size())) {
+  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero)) ||
+      !platform::WriteMemory(handle, bufferAddr, &zero, sizeof(zero)) ||
+      !platform::WriteMemory(handle, collectorStubAddr, collectorStub.data(), collectorStub.size())) {
+    // No thread has been created yet — safe to free immediately.
+    platform::FreeMemory(handle, cave);
     return 0;
   }
 
   std::vector<uint8_t> mainStub = BuildResolveClassStub(
       getRootDomain, threadAttach, threadDetach, foreach_, getImage, classFromName,
       collectorStubAddr, bufferAddr, slotsAddr, nsAddr, nameAddr, resultAddr);
-  if (!platform::WriteMemory(handle, mainStubAddr, mainStub.data(), mainStub.size())) return 0;
+  if (!platform::WriteMemory(handle, mainStubAddr, mainStub.data(), mainStub.size())) {
+    platform::FreeMemory(handle, cave);
+    return 0;
+  }
 
   // One RunRemoteCall — one CreateRemoteThread — runs attach, enumerate,
   // search, and detach to completion; its own return value (RAX at the
   // stub's `ret`, always 0) is discarded, since the real answer was
   // written to resultAddr by the stub itself.
   uint8_t ignored[8];
+  // Never free on a false return here: this only fails via the timeout
+  // path (every failure above this point already returned), which means
+  // the thread may still be executing inside `cave` — see the
+  // never-free-a-live-cave rule.
   if (!RunRemoteCall(handle, mainStubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
+  platform::FreeMemory(handle, cave);
   return static_cast<uintptr_t>(result);
 }
 
@@ -1098,25 +1139,42 @@ uintptr_t ResolveMemberSingleThread(platform::ProcessHandle handle, uintptr_t mo
   if (!nameAddr) return 0;
 
   uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + 8 + 512);
-  if (!cave) return 0;
+  if (!cave) {
+    platform::FreeMemory(handle, nameAddr);
+    return 0;
+  }
   uintptr_t resultAddr = cave;
   uintptr_t iterSlotAddr = cave + 8;
   uintptr_t stubAddr = cave + 16;
 
   uint64_t zero = 0;
-  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero))) return 0;
-  if (!platform::WriteMemory(handle, iterSlotAddr, &zero, sizeof(zero))) return 0;
+  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero)) ||
+      !platform::WriteMemory(handle, iterSlotAddr, &zero, sizeof(zero))) {
+    // No thread has been created yet — safe to free both immediately.
+    platform::FreeMemory(handle, cave);
+    platform::FreeMemory(handle, nameAddr);
+    return 0;
+  }
 
   std::vector<uint8_t> stub = BuildMemberSearchStub(getRootDomain, threadAttach, threadDetach,
                                                      getItems, getName, finishFn, classHandle,
                                                      iterSlotAddr, nameAddr, resultAddr, 256);
-  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return 0;
+  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
+    platform::FreeMemory(handle, cave);
+    platform::FreeMemory(handle, nameAddr);
+    return 0;
+  }
 
   uint8_t ignored[8];
+  // Never free on a false return: the thread may still be executing inside
+  // `cave`, or still reading `nameAddr` via its strcmp against the target
+  // name — see the never-free-a-live-cave rule. Leak both, same as above.
   if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
+  platform::FreeMemory(handle, cave);
+  platform::FreeMemory(handle, nameAddr);
   return static_cast<uintptr_t>(result);
 }
 
@@ -1209,17 +1267,26 @@ uintptr_t StaticDataBaseSingleThread(platform::ProcessHandle handle, uintptr_t m
   uintptr_t stubAddr = cave + 8;
 
   uint64_t zero = 0;
-  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero))) return 0;
+  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero))) {
+    platform::FreeMemory(handle, cave);
+    return 0;
+  }
 
   std::vector<uint8_t> stub = BuildStaticDataBaseStub(getRootDomain, threadAttach, threadDetach,
                                                         classVtable, staticData, classHandle, resultAddr);
-  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return 0;
+  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
+    platform::FreeMemory(handle, cave);
+    return 0;
+  }
 
   uint8_t ignored[8];
+  // Never free on a false return: the thread may still be executing inside
+  // `cave` — see the never-free-a-live-cave rule.
   if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
+  platform::FreeMemory(handle, cave);
   return static_cast<uintptr_t>(result);
 }
 
@@ -1379,15 +1446,23 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
   uintptr_t stubAddr = bufferAddr + kMaxMembers * 8;
 
   uint64_t zero = 0;
-  if (!platform::WriteMemory(handle, countAddr, &zero, sizeof(zero))) return {};
-  if (!platform::WriteMemory(handle, iterSlotAddr, &zero, sizeof(zero))) return {};
+  if (!platform::WriteMemory(handle, countAddr, &zero, sizeof(zero)) ||
+      !platform::WriteMemory(handle, iterSlotAddr, &zero, sizeof(zero))) {
+    platform::FreeMemory(handle, cave);
+    return {};
+  }
 
   std::vector<uint8_t> stub = BuildMemberListStub(getRootDomain, threadAttach, threadDetach, getItems,
                                                    getName, classHandle, iterSlotAddr, bufferAddr,
                                                    countAddr, kMaxMembers);
-  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return {};
+  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
+    platform::FreeMemory(handle, cave);
+    return {};
+  }
 
   uint8_t ignored[8];
+  // Never free on a false return: the thread may still be executing inside
+  // `cave` — see the never-free-a-live-cave rule.
   if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
@@ -1403,6 +1478,7 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
     char buf[256] = {0};
     if (platform::ReadMemory(handle, ptr, buf, sizeof(buf) - 1)) names.push_back(buf);
   }
+  platform::FreeMemory(handle, cave);
   return names;
 }
 
@@ -1580,16 +1656,24 @@ std::vector<std::pair<uintptr_t, std::string>> ListAssemblyNamesSingleThread(pla
   uintptr_t mainStubAddr = collectorStubAddr + collectorStub.size();
 
   uint64_t zero = 0;
-  if (!platform::WriteMemory(handle, countAddr, &zero, sizeof(zero))) return {};
-  if (!platform::WriteMemory(handle, assemblyBufAddr, &zero, sizeof(zero))) return {};
-  if (!platform::WriteMemory(handle, collectorStubAddr, collectorStub.data(), collectorStub.size())) return {};
+  if (!platform::WriteMemory(handle, countAddr, &zero, sizeof(zero)) ||
+      !platform::WriteMemory(handle, assemblyBufAddr, &zero, sizeof(zero)) ||
+      !platform::WriteMemory(handle, collectorStubAddr, collectorStub.data(), collectorStub.size())) {
+    platform::FreeMemory(handle, cave);
+    return {};
+  }
 
   std::vector<uint8_t> mainStub = BuildListAssemblyNamesStub(
       getRootDomain, threadAttach, threadDetach, foreach_, getImage, getName, collectorStubAddr,
       assemblyBufAddr, assemblySlotsAddr, imagesBufAddr, namesBufAddr, countAddr);
-  if (!platform::WriteMemory(handle, mainStubAddr, mainStub.data(), mainStub.size())) return {};
+  if (!platform::WriteMemory(handle, mainStubAddr, mainStub.data(), mainStub.size())) {
+    platform::FreeMemory(handle, cave);
+    return {};
+  }
 
   uint8_t ignored[8];
+  // Never free on a false return: the thread may still be executing inside
+  // `cave` — see the never-free-a-live-cave rule.
   if (!RunRemoteCall(handle, mainStubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
@@ -1610,6 +1694,7 @@ std::vector<std::pair<uintptr_t, std::string>> ListAssemblyNamesSingleThread(pla
       results.push_back({images[i], std::string(buf)});
     }
   }
+  platform::FreeMemory(handle, cave);
   return results;
 }
 
@@ -1828,15 +1913,23 @@ std::vector<ClassEntry> ListClassesInImageSingleThread(
   uintptr_t stubAddr = classHandlesBufAddr + kMaxClasses * 8;
 
   uint64_t zero = 0;
-  if (!platform::WriteMemory(handle, countAddr, &zero, sizeof(zero))) return {};
+  if (!platform::WriteMemory(handle, countAddr, &zero, sizeof(zero))) {
+    platform::FreeMemory(handle, cave);
+    return {};
+  }
 
   std::vector<uint8_t> stub =
       BuildListClassesStub(getRootDomain, threadAttach, threadDetach, getTableInfo, getRows, classGet,
                             classGetName, classGetNamespace, imageHandle, namesBufAddr, namespacesBufAddr,
                             classHandlesBufAddr, countAddr);
-  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return {};
+  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
+    platform::FreeMemory(handle, cave);
+    return {};
+  }
 
   uint8_t ignored[8];
+  // Never free on a false return: the thread may still be executing inside
+  // `cave` — see the never-free-a-live-cave rule.
   if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
@@ -1862,6 +1955,7 @@ std::vector<ClassEntry> ListClassesInImageSingleThread(
     if (namespacePtrs[i]) platform::ReadMemory(handle, namespacePtrs[i], nsBuf, sizeof(nsBuf) - 1);
     results.push_back({std::string(nsBuf), std::string(nameBuf), classHandles[i]});
   }
+  platform::FreeMemory(handle, cave);
   return results;
 }
 
@@ -2146,17 +2240,30 @@ bool RunAttachedCall(platform::ProcessHandle handle, uintptr_t monoDllBase, uint
   uintptr_t stubAddr = cave + 16;
 
   uint8_t zero[16] = {0};
-  if (!platform::WriteMemory(handle, resultAddr, zero, sizeof(zero))) return false;
+  if (!platform::WriteMemory(handle, resultAddr, zero, sizeof(zero))) {
+    platform::FreeMemory(handle, cave);
+    return false;
+  }
 
   std::vector<uint8_t> stub = BuildAttachedCallStub(getRootDomain, threadAttach, threadDetach, targetFn,
                                                      args, resultAddr, floatArgIndex, floatArgBits);
-  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) return false;
+  if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
+    platform::FreeMemory(handle, cave);
+    return false;
+  }
 
   uint8_t ignored[8];
+  // Never free on a false return: the thread may still be executing inside
+  // `cave` — see the never-free-a-live-cave rule.
   if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return false;
 
-  if (!platform::ReadMemory(handle, resultAddr, intResult, 8)) return false;
-  return platform::ReadMemory(handle, resultAddr + 8, floatResult, 8);
+  if (!platform::ReadMemory(handle, resultAddr, intResult, 8)) {
+    platform::FreeMemory(handle, cave);
+    return false;
+  }
+  bool ok = platform::ReadMemory(handle, resultAddr + 8, floatResult, 8);
+  platform::FreeMemory(handle, cave);
+  return ok;
 }
 
 } // namespace

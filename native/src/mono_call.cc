@@ -167,11 +167,17 @@ bool RunRemoteCall(platform::ProcessHandle handle, uintptr_t function,
   if (!cave) return false;
 
   std::vector<uint8_t> stub = BuildCallStub(function, args, cave + kResultOffset);
-  if (!platform::WriteMemory(handle, cave + kCodeOffset, stub.data(), stub.size())) return false;
+  if (!platform::WriteMemory(handle, cave + kCodeOffset, stub.data(), stub.size())) {
+    platform::FreeMemory(handle, cave);
+    return false;
+  }
 
   platform::ThreadHandle thread =
       platform::CreateRemoteThread(handle, cave + kCodeOffset, 0);
-  if (!thread) return false;
+  if (!thread) {
+    platform::FreeMemory(handle, cave);
+    return false;
+  }
 
   bool finished = platform::WaitForRemoteThread(thread, 2000);
   platform::CloseRemoteThread(thread);
@@ -197,10 +203,17 @@ bool RunRemoteCall(platform::ProcessHandle handle, uintptr_t function,
   // made for a failed install.
   if (!finished) return false;
 
-  if (!platform::ReadMemory(handle, cave + kResultOffset, result, 8)) return false;
-  if (floatResult != nullptr) {
-    if (!platform::ReadMemory(handle, cave + kResultOffset + 8, floatResult, 8)) return false;
+  if (!platform::ReadMemory(handle, cave + kResultOffset, result, 8)) {
+    platform::FreeMemory(handle, cave);
+    return false;
   }
+  if (floatResult != nullptr) {
+    if (!platform::ReadMemory(handle, cave + kResultOffset + 8, floatResult, 8)) {
+      platform::FreeMemory(handle, cave);
+      return false;
+    }
+  }
+  platform::FreeMemory(handle, cave);
   return true;
 }
 
