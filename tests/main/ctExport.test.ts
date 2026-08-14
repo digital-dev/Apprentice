@@ -128,4 +128,30 @@ describe('buildCheatTable', () => {
       }
     ])
   })
+
+  // fieldOffset can now arrive as write_watch.cc's signed decimal (see
+  // write_watch.cc's displacement fix) as well as ctImport's own legacy
+  // "0x..."-prefixed hex convention. Both existing round-trip tests above
+  // use '0x818'/'0x18', which BigInt parses identically to the OLD
+  // .replace(/^0x/i, '') string-stripping — so neither exercises the branch
+  // this fix actually changes. These two cases do.
+  it('renders a bare-decimal fieldOffset as its hex equivalent, not as literal hex digits', () => {
+    // 16 decimal -> 0x10 hex. The old code stripped a (non-existent) "0x"
+    // prefix from '16' and emitted '+16' verbatim, which Cheat Engine reads
+    // as hex 0x16 (22 decimal) -- silently the wrong offset. +10 (0x10) is
+    // the only correct rendering of decimal 16.
+    const patch = forcePatch({ fieldOffset: '16' })
+    const result = buildCheatTable([patch])
+    expect(result.skipped).toEqual([])
+    expect(result.xml).toContain('mov [rdi+10],')
+    expect(result.xml).not.toContain('mov [rdi+16],')
+  })
+
+  it('renders a negative fieldOffset with an explicit minus sign, not a folded +- sign', () => {
+    const patch = forcePatch({ fieldOffset: '-4' })
+    const result = buildCheatTable([patch])
+    expect(result.skipped).toEqual([])
+    expect(result.xml).toContain('mov [rdi-4],')
+    expect(result.xml).not.toContain('+-4')
+  })
 })
