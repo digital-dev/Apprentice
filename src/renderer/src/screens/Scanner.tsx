@@ -414,13 +414,12 @@ export default function Scanner({
         </>
       )}
 
+      {candidates.length > MAX_RENDERED_CANDIDATES && (
+        <p>Showing first {MAX_RENDERED_CANDIDATES} — narrow further to see the rest.</p>
+      )}
+
       {candidates.length > 0 && (
         <>
-          <p>
-            {candidates.length} candidate(s)
-            {candidates.length > MAX_RENDERED_CANDIDATES &&
-              ` (showing first ${MAX_RENDERED_CANDIDATES} — narrow further to see the rest)`}
-          </p>
           <ul>
             {candidates.slice(0, MAX_RENDERED_CANDIDATES).map((c) => {
               const status = resolveStatus.get(c.address)
