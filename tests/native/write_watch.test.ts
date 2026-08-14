@@ -91,7 +91,9 @@ describe('write watch — capture', () => {
     expect(insn.baseRegister.length).toBeGreaterThan(0)
     expect(insn.baseRegister).not.toBe('rip') // object write goes through a GPR
     // base register held g_player; displacement is the stamina field offset (16).
-    expect(parseInt(insn.displacement, 16)).toBe(16)
+    // displacement is a signed decimal string (see the write-watch fix for
+    // why), not hex — parse it as such.
+    expect(parseInt(insn.displacement, 10)).toBe(16)
     const base = BigInt(insn.baseAddress)
     const disp = BigInt(insn.displacement)
     expect('0x' + (base + disp).toString(16)).toBe(address)
@@ -203,6 +205,87 @@ describe('write watch — covering write (wide store)', () => {
 
     const reply = await send('get')
     expect(reply.startsWith('OK')).toBe(true) // target still alive after the undecoded catch
+  }, 15000)
+})
+
+describe('write watch — negative displacement', () => {
+  // `write_negdisp` stores through a base pointer that lands PAST the
+  // watched field (`&g_negdisp_value + 1`, i.e. `*(end - 1) = v`), so the
+  // caught instruction's base register holds an address AHEAD of the
+  // watched address and out.displacement (watched - base) is negative.
+  // This is exactly the shape that exposed the signed-vs-unsigned
+  // serialization bug: casting a negative int64_t through uintptr_t before
+  // hex-formatting turned e.g. -4 into "0xfffffffffffffffc", a huge
+  // positive number once BigInt(...)'d on the JS side.
+  it('reports a negative displacement as a signed value, not a huge unsigned one', async () => {
+    let candidates = await (addon as any).scanFirst(handle, 'float', 44.0)
+    await send('setnegdisp 91')
+    candidates = (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 91 })
+    expect(candidates.length).toBe(1)
+    const address = candidates[0].address
+
+    ;(addon as any).startWriteWatch(harness.pid, address)
+    await send('negdisploop')
+
+    let list: any[] = []
+    for (let i = 0; i < 40 && list.length === 0; i++) {
+      await sleep(50)
+      list = (addon as any).pollWriteWatch()
+    }
+    await send('stopnegdisp')
+    const final = (addon as any).stopWriteWatch()
+
+    expect(list.length).toBeGreaterThan(0)
+    expect(final.length).toBeGreaterThan(0)
+
+    const insn = final[0]
+    expect(insn.baseRegister.length).toBeGreaterThan(0)
+    // Not hex — a signed decimal string. Confirms the fix: the old
+    // ToHex((uintptr_t)displacement) would have produced a huge unsigned
+    // hex value here instead.
+    expect(insn.displacement).toMatch(/^-\d+$/)
+    expect(BigInt(insn.displacement)).toBeLessThan(0n)
+    const base = BigInt(insn.baseAddress)
+    const disp = BigInt(insn.displacement)
+    expect('0x' + (base + disp).toString(16)).toBe(address)
+
+    const reply = await send('get')
+    expect(reply.startsWith('OK')).toBe(true)
+  }, 15000)
+})
+
+describe('write watch — DLL load/unload during a session', () => {
+  // A live game loading assemblies is hard to simulate deterministically in
+  // a unit test; this instead confirms the LOAD_DLL_DEBUG_EVENT branch
+  // exists and compiles/dispatches correctly by driving an actual DLL
+  // load/unload while a watch session is armed (loaddll/unloaddll load
+  // test-harness/probe.dll, already used by mono_call.test.ts's own
+  // scenarios) and confirming the session completes cleanly — no hang, no
+  // crash, and a normal stop still returns an array. Node has no portable
+  // per-process handle-count API to assert the leak directly from a Vitest
+  // test, so this guards against a regression in the debug-event dispatch's
+  // control flow rather than asserting a handle count.
+  it('does not hang or crash a session that sees a DLL load and unload', async () => {
+    const address = await staminaAddress()
+
+    ;(addon as any).startWriteWatch(harness.pid, address)
+    await send('loaddll')
+    await send('unloaddll')
+    await send('watchloop')
+
+    let list: any[] = []
+    for (let i = 0; i < 40 && list.length === 0; i++) {
+      await sleep(50)
+      list = (addon as any).pollWriteWatch()
+    }
+    await send('stoploop')
+    const final = (addon as any).stopWriteWatch()
+
+    expect(Array.isArray(final)).toBe(true)
+    expect(list.length).toBeGreaterThan(0)
+
+    const reply = await send('get')
+    expect(reply.startsWith('OK')).toBe(true)
   }, 15000)
 })
 
