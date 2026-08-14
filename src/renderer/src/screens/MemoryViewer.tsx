@@ -132,10 +132,14 @@ export default function MemoryViewer({
     const byteAddress = '0x' + (BigInt(baseAddress) + BigInt(offset)).toString(16)
     setEditingOffset(null)
     try {
-      await window.tamper.writeMemoryByte(byteAddress, value)
+      const ok = await window.tamper.writeMemoryByte(byteAddress, value)
+      if (!ok) {
+        setDetachedError(`Write to ${byteAddress} failed — the page may be read-only.`)
+      } else {
+        setDetachedError(null)
+      }
       const refreshed = await window.tamper.readMemoryBlock(baseAddress, PAGE_SIZE)
       setBlock(refreshed ? toArrayBuffer(refreshed) : null)
-      setDetachedError(null)
     } catch {
       setDetachedError('Lost connection to the attached process.')
     }

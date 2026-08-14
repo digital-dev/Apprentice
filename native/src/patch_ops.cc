@@ -1,4 +1,5 @@
 #include "patch_ops.h"
+#include "protected_write.h"
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -245,6 +246,10 @@ Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
 // pages: temporarily make the page writable, write, put the original
 // protection back, then flush the target's instruction cache so the CPU
 // doesn't keep executing a stale cached copy of the bytes we just changed.
+// See protected_write.h's ProtectedWriteProcessMemory for the full dance
+// (including why a range that straddles a page boundary is refused rather
+// than silently mishandled) — this addon only ever patches a single
+// captured instruction, so that refusal should never trigger in normal use.
 Napi::Value WriteBytes(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   HANDLE h = reinterpret_cast<HANDLE>(
@@ -255,40 +260,7 @@ Napi::Value WriteBytes(const Napi::CallbackInfo& info) {
   std::vector<uint8_t> bytes;
   if (!HexToBytes(hex, bytes)) return Napi::Boolean::New(env, false);
 
-  // VirtualProtectEx changes every page touched by [address, address+size),
-  // but it reports only the FIRST page's prior protection in oldProtect.
-  // If the range straddled a page boundary (an instruction can span one),
-  // restoring oldProtect across the whole range would stamp page 1's
-  // protection onto page 2 — leaving that page with wrong, unintended
-  // protection permanently, which is exactly the residue this feature
-  // promises never to leave. This addon only ever patches a single
-  // captured instruction, so a straddling range is an anomaly: refuse it
-  // rather than add per-page VirtualQueryEx/restore machinery for a case
-  // that should not arise in normal use.
-  static const uintptr_t pageSize = [] {
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    return static_cast<uintptr_t>(si.dwPageSize);
-  }();
-  uintptr_t firstPage = address & ~(pageSize - 1);
-  uintptr_t lastPage = (address + bytes.size() - 1) & ~(pageSize - 1);
-  if (firstPage != lastPage) return Napi::Boolean::New(env, false);
-
-  DWORD oldProtect = 0;
-  if (!VirtualProtectEx(h, (LPVOID)address, bytes.size(), PAGE_EXECUTE_READWRITE, &oldProtect))
-    return Napi::Boolean::New(env, false);
-
-  SIZE_T written = 0;
-  bool ok = WriteProcessMemory(h, (LPVOID)address, bytes.data(), bytes.size(), &written) &&
-            written == bytes.size();
-
-  // Restore protection regardless of whether the write succeeded — leaving
-  // a game's code page permanently writable is exactly the kind of residue
-  // this feature promises never to leave behind.
-  DWORD ignored = 0;
-  VirtualProtectEx(h, (LPVOID)address, bytes.size(), oldProtect, &ignored);
-  FlushInstructionCache(h, (LPCVOID)address, bytes.size());
-
+  bool ok = ProtectedWriteProcessMemory(h, address, bytes.data(), bytes.size());
   return Napi::Boolean::New(env, ok);
 }
 

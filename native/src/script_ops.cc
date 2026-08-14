@@ -13,6 +13,7 @@
 
 #include "value_type.h"
 #include "chain_walk.h"
+#include "protected_write.h"
 
 #include <windows.h>
 
@@ -256,9 +257,9 @@ int LuaWriteBytes(lua_State* L) {
   uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
   size_t length;
   const char* data = luaL_checklstring(L, 2, &length);
+  if (length == 0 || length > 4096) return luaL_error(L, "writeBytes length must be 1..4096");
   HANDLE h = HandleFromRegistry(L);
-  SIZE_T written;
-  bool ok = WriteProcessMemory(h, (LPVOID)address, data, length, &written) && written == length;
+  bool ok = ProtectedWriteProcessMemory(h, address, data, length);
   lua_pushboolean(L, ok);
   return 1;
 }

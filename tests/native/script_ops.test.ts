@@ -9,6 +9,7 @@ import addon from '../../native/build/Release/memory_addon.node'
 describe('runScript', () => {
   let harness: ChildProcessWithoutNullStreams
   let handle: number
+  let baseAddress: string
 
   function send(cmd: string): Promise<string> {
     return new Promise((resolve) => {
@@ -20,7 +21,9 @@ describe('runScript', () => {
   beforeAll(async () => {
     harness = spawn(path.resolve('test-harness/harness.exe'))
     await new Promise((r) => harness.stdout.once('data', r))
-    handle = (addon as any).attach(harness.pid).handle
+    const attached = (addon as any).attach(harness.pid)
+    handle = attached.handle
+    baseAddress = attached.baseAddress
   })
 
   afterAll(() => {
@@ -281,5 +284,33 @@ describe('runScript', () => {
       first.stateOut
     )
     expect(second.output[0]).toBe('42')
+  })
+
+  // Regression: LuaWriteBytes used to call WriteProcessMemory directly with
+  // no protect/restore dance, unlike patch_ops.cc's WriteBytes — a write to
+  // a non-writable page (the harness's own .text section here, matching
+  // memory_ops.test.ts's and patch_ops.test.ts's `base + 0x1000`
+  // past-the-headers convention) silently failed.
+  it('writeBytes succeeds against a page that is not already writable', async () => {
+    const codeAddr = (BigInt(baseAddress) + 0x1000n).toString()
+    const result = await (addon as any).runScript(
+      handle,
+      `print(writeBytes(${codeAddr}, string.char(0x90)))`,
+      {}
+    )
+    expect(result.success).toBe(true)
+    expect(result.output[0]).toBe('true')
+  })
+
+  // Regression: LuaWriteBytes had no length cap, unlike LuaReadBytes's
+  // existing 4096-byte cap.
+  it('rejects a writeBytes call over the 4096-byte cap', async () => {
+    const result = await (addon as any).runScript(
+      handle,
+      `writeBytes(${BigInt(baseAddress).toString()}, string.rep("A", 4097))`,
+      {}
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('writeBytes length must be 1..4096')
   })
 })

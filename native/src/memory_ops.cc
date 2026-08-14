@@ -1,6 +1,7 @@
 #include "memory_ops.h"
 #include "value_type.h"
 #include "chain_walk.h"
+#include "protected_write.h"
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -63,7 +64,10 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
 
   uint8_t buf[8];
   EncodeFromDouble(value, *specOpt, buf);
-  SIZE_T written;
-  bool ok = WriteProcessMemory(h, (LPVOID)*addr, buf, specOpt->size, &written) && written == specOpt->size;
+  // Routed through the same protect/restore/flush dance patch_ops.cc's
+  // WriteBytes uses: a value cheat can target a read-only data page or, via
+  // the Memory Viewer's byte editor, a page inside the target's own code —
+  // a plain WriteProcessMemory silently fails on either without this.
+  bool ok = ProtectedWriteProcessMemory(h, *addr, buf, specOpt->size);
   return Napi::Boolean::New(env, ok);
 }

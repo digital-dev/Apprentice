@@ -5,6 +5,7 @@ import addon from '../../native/build/Release/memory_addon.node'
 
 let harness: ChildProcessWithoutNullStreams
 let handle: number
+let baseAddress: string
 
 function send(cmd: string): Promise<string> {
   return new Promise((resolve) => {
@@ -16,7 +17,9 @@ function send(cmd: string): Promise<string> {
 beforeAll(async () => {
   harness = spawn(path.resolve('test-harness/harness.exe'))
   await new Promise((r) => harness.stdout.once('data', r))
-  handle = (addon as any).attach(harness.pid).handle
+  const attached = (addon as any).attach(harness.pid)
+  handle = attached.handle
+  baseAddress = attached.baseAddress
 })
 
 afterAll(() => {
@@ -112,5 +115,18 @@ describe('readValue / writeValue', () => {
 
     const reply = await send('geti8')
     expect(reply).toBe('OK 77')
+  })
+
+  // Regression: WriteValue used to call WriteProcessMemory directly with no
+  // protect/restore dance, unlike patch_ops.cc's WriteBytes — a write to a
+  // non-writable page (the harness's own .text section here, matching
+  // patch_ops.test.ts's `probe.base + 0x1000` past-the-headers convention)
+  // silently failed. 0x1000 is past the PE headers (which sit on a
+  // non-executable page) and into the harness's own .text, which is
+  // PAGE_EXECUTE_READ, not writable.
+  it('writeValue succeeds against a page that is not already writable', () => {
+    const codeAddr = '0x' + (BigInt(baseAddress) + 0x1000n).toString(16)
+    const ok = (addon as any).writeValue(handle, codeAddr, [], 'int8', 0x90)
+    expect(ok).toBe(true)
   })
 })
