@@ -1015,12 +1015,19 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   // instruction boundaries with an external disassembler. Safe as a
   // fixed-length snapshot regardless of mode: locate()'s mismatch check
   // only ever compares these bytes byte-for-byte against what's there now
-  // (detecting "something else changed this code"), and installInjection
-  // (every mode but nop) independently finds its own real instruction
-  // boundary via decodeRun — patch.length never governs how many bytes get
-  // overwritten there. nop mode is the one exception: its length directly
-  // becomes the NOP run, so a nop-mode patch must still have its length
-  // trimmed to a whole-instruction boundary by hand before saving.
+  // (detecting "something else changed this code"). nop mode's length
+  // directly becomes the NOP run, so a nop-mode patch must still have its
+  // length trimmed to a whole-instruction boundary by hand before saving.
+  //
+  // patch.length governs how many bytes get NOP'd/overwritten only in
+  // 'nop' mode — but for 'force' mode specifically, patchEngine.ts's
+  // installInjection now REQUIRES patch.length to exactly match the
+  // first decoded instruction's length (refusing to install otherwise),
+  // since force mode slices the displaced run at that boundary. This
+  // auto-fill is a fixed snapshot size, not a decoded boundary — if the
+  // user picks force mode with an auto-filled length, installInjection's
+  // own guard is what catches a mismatch, not this comment's old claim
+  // that length "never" matters.
   ipcMain.handle(
     'mono:resolveMethodBytes',
     async (

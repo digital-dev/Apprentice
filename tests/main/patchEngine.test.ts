@@ -52,6 +52,13 @@ class FakeOps implements PatchOps {
   resumed = 0
   suspendShouldFail = false
   runLength = 5
+  // The length decodeRun(address, 1) reports for the FIRST instruction
+  // alone — independent of runLength, which is the whole (possibly
+  // rounded-up) run decodeRun(address, JUMP_LENGTH) reports. Defaults to
+  // the same 5 bytes as ORIGINAL/forcePatch.length so every pre-existing
+  // test, most of which never touch this field, keeps passing the new
+  // force-mode boundary guard by construction.
+  firstInsnLength = 5
   runDecodable = true
   runRelocatable = true
   encodeJumpCalls: { from: string; to: string }[] = []
@@ -63,14 +70,17 @@ class FakeOps implements PatchOps {
     return address
   }
   runClobbers: string[] = []
-  decodeRun(): {
+  decodeRun(
+    _address: string,
+    minBytes: number
+  ): {
     length: number
     decodable: boolean
     relocatable: boolean
     clobbers: string[]
   } {
     return {
-      length: this.runLength,
+      length: minBytes === 1 ? this.firstInsnLength : this.runLength,
       decodable: this.runDecodable,
       relocatable: this.runRelocatable,
       clobbers: this.runClobbers
@@ -289,6 +299,19 @@ describe('PatchEngine — force injection', () => {
     ops.runDecodable = false
     const result = await engine.apply(forcePatch)
     expect(result.ok).toBe(false)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses to install a force patch whose length does not match the first decoded instruction', async () => {
+    // Mono's auto-filled length (mono:resolveMethodBytes in ipc.ts) is a
+    // fixed snapshot size, not a decoded boundary: here the first real
+    // instruction at the address is 3 bytes, but the patch's own `length`
+    // (from forcePatch, 5) disagrees with it.
+    ops.firstInsnLength = 3
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('instruction boundary')
+    expect(ops.caves).toHaveLength(0)
     expect(ops.writes).toHaveLength(0)
   })
 

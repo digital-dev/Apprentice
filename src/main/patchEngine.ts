@@ -584,6 +584,38 @@ export class PatchEngine {
       }
     }
 
+    if (mode === 'force') {
+      // patch.length must be exactly the byte length of the FIRST
+      // instruction in the displaced run — decodeRun with minBytes=1
+      // reports that length. A Mono-anchored patch's auto-filled length
+      // (mono:resolveMethodBytes in ipc.ts) is a fixed snapshot size, not a
+      // decoded instruction boundary, and can disagree with it. Slicing at
+      // the wrong boundary starts the replayed run mid-instruction —
+      // undefined behavior in a live game. Checked before allocateCave, like
+      // every other pre-flight refusal above, so a bad patch never leaks an
+      // allocated cave.
+      //
+      // Note: run.length (the whole, possibly rounded-up displaced run) is
+      // always >= a decodable firstInsn.length by construction of decodeRun
+      // — it either equals firstInsn.length (nothing swallowed) or is
+      // strictly greater (more instructions pulled in to reach the jmp's
+      // minimum). So once this check passes, patch.length can never exceed
+      // run.length, and patch.length === run.length simply means there is
+      // nothing left to replay after the effect — a legitimate, common case
+      // (see the base "writes a jump" test), not a bug. No separate
+      // "patch.length >= run.length" guard is needed or correct here.
+      const firstInsn = this.ops.decodeRun(address, 1)
+      if (!firstInsn.decodable || firstInsn.length !== patch.length) {
+        return {
+          ok: false,
+          error:
+            "This patch's recorded length does not match a real instruction boundary at this address — re-capture it.",
+          caveAddress: null,
+          displaced: null
+        }
+      }
+    }
+
     const cave = this.ops.allocateCave(address)
     if (cave === null) {
       return {
