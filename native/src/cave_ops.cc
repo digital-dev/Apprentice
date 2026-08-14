@@ -159,6 +159,22 @@ Napi::Value AllocateCave(const Napi::CallbackInfo& info) {
   return Napi::String::New(env, ToHex(cave));
 }
 
+// Hex-string-taking JS export for platform::FreeMemory, mirroring
+// AllocateCave's own handle+hex-string convention (ParseHex on the way in,
+// nothing on the way out but the boolean result). Used to release a cave
+// installInjection allocated but never redirected the game into — see
+// patchEngine.ts's PatchOps.freeCave for the safety argument that makes
+// that specific window safe to free in.
+Napi::Value FreeCave(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  platform::ProcessHandle h = static_cast<platform::ProcessHandle>(
+      info[0].As<Napi::Number>().Int64Value());
+  uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
+
+  bool ok = platform::FreeMemory(h, address);
+  return Napi::Boolean::New(env, ok);
+}
+
 Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   platform::ProcessHandle h = static_cast<platform::ProcessHandle>(

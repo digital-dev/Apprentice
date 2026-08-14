@@ -73,6 +73,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("scanAob", Napi::Function::New(env, ScanAob));
   exports.Set("platformName", Napi::Function::New(env, PlatformName));
   exports.Set("allocateCave", Napi::Function::New(env, AllocateCave));
+  exports.Set("freeMemory", Napi::Function::New(env, FreeCave));
   exports.Set("decodeRun", Napi::Function::New(env, DecodeRun));
   exports.Set("encodeStore", Napi::Function::New(env, EncodeStore));
   exports.Set("encodeCaptureOnce", Napi::Function::New(env, EncodeCaptureOnce));

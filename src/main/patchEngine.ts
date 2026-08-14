@@ -15,6 +15,13 @@ export interface PatchOps {
   // Widened so PatchOps satisfies AnchorOps structurally.
   scanAob(signature: string, rangeStart?: string, rangeEnd?: string): Promise<string[]>
   allocateCave(nearAddress: string): string | null
+  // Releases a cave allocateCave reserved, when installation failed before
+  // the site redirect ever pointed the game at it — safe to call in that
+  // window specifically, since no thread can be executing inside a cave
+  // the game was never redirected to. See platform::FreeMemory's own
+  // safety comment for the general rule this is a narrow, provably-safe
+  // instance of.
+  freeCave(address: string): void
   decodeRun(
     address: string,
     minBytes: number
@@ -754,6 +761,7 @@ export class PatchEngine {
     // installation gets here.
     if ((mode === 'guard' || mode === 'immune') && effectiveArmValue) {
       if (!this.ops.writeBytes(cave, pointerToSlotHex(effectiveArmValue))) {
+        this.ops.freeCave(cave)
         return {
           ok: false,
           error: mode === 'immune' ? 'Failed to arm the immune check.' : 'Failed to arm the guard.',
@@ -764,6 +772,7 @@ export class PatchEngine {
     }
 
     if (!this.ops.writeBytes(codeAddress, body)) {
+      this.ops.freeCave(cave)
       return { ok: false, error: 'Failed to write the injected code.', caveAddress: null, displaced: null }
     }
 
@@ -777,6 +786,7 @@ export class PatchEngine {
     const suspended = this.ops.suspendThreads()
     try {
       if (!suspended) {
+        this.ops.freeCave(cave)
         return {
           ok: false,
           error: "Couldn't pause the game safely enough to redirect the instruction — not writing to running code.",
@@ -785,6 +795,7 @@ export class PatchEngine {
         }
       }
       if (!this.ops.writeBytes(address, padded)) {
+        this.ops.freeCave(cave)
         return {
           ok: false,
           error: 'Failed to redirect the instruction.',

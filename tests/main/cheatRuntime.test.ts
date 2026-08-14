@@ -40,6 +40,7 @@ class FakeDeps implements RuntimeDeps {
   verified = true
   restored: string[] = []
   applyCalls = 0
+  restoreShouldFail = false
 
   async locate(): Promise<{ address: string | null; reason: AnchorReason | null }> {
     return this.located
@@ -48,8 +49,9 @@ class FakeDeps implements RuntimeDeps {
     this.applyCalls++
     return this.applyResult
   }
-  restore(p: PatchCheat): void {
+  restore(p: PatchCheat): boolean {
     this.restored.push(p.id)
+    return !this.restoreShouldFail
   }
   isVerified(): boolean {
     return this.verified
@@ -165,6 +167,18 @@ describe('CheatRuntime', () => {
     expect(clock.pending).toHaveLength(0)
     expect(deps.restored).toContain('p1')
     expect(runtime.status('p1').state).toBe('idle')
+  })
+
+  it('does not report idle when disarm\'s restore write fails', async () => {
+    runtime.arm(patch)
+    await settle()
+    expect(runtime.status('p1').state).toBe('active')
+    deps.restoreShouldFail = true
+    runtime.disarm('p1', patch)
+    const status = runtime.status('p1')
+    expect(status.state).not.toBe('idle')
+    expect(status.state).toBe('failed')
+    expect(status.reason).toBe('restore-failed')
   })
 
   it('re-arming a failed cheat starts over', async () => {

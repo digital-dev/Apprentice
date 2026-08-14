@@ -301,6 +301,10 @@ const patchOps: PatchOps = {
       : nativeAddon.scanAob(attachedHandle, signature, rangeStart, rangeEnd),
   allocateCave: (nearAddress) =>
     attachedHandle === null ? null : nativeAddon.allocateCave(attachedHandle, nearAddress),
+  freeCave: (address) => {
+    if (attachedHandle === null) return
+    nativeAddon.freeMemory(attachedHandle, address)
+  },
   decodeRun: (address, minBytes) => {
     if (attachedHandle === null)
       return { length: 0, decodable: false, relocatable: false, clobbers: [] }
@@ -468,9 +472,7 @@ const cheatRuntime = new CheatRuntime({
     return { address: status.address, reason: status.reason ?? null }
   },
   apply: (patch) => patchEngine.apply(patch),
-  restore: (patch) => {
-    patchEngine.restore(patch)
-  },
+  restore: (patch) => patchEngine.restore(patch),
   isVerified: (patch) =>
     patch.moduleName === null || !changedModules.includes(patch.moduleName.toLowerCase())
 })

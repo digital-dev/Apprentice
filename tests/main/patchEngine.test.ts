@@ -38,6 +38,7 @@ class FakeOps implements PatchOps {
   }
   writeBytes(address: string, hexBytes: string): boolean {
     if (this.writeShouldFail) return false
+    if (this.failWriteAddresses.has(address)) return false
     this.memory.set(address, hexBytes)
     this.writes.push({ address, bytes: hexBytes })
     return true
@@ -47,6 +48,12 @@ class FakeOps implements PatchOps {
   }
 
   caves: string[] = []
+  freedCaves: string[] = []
+  // Lets a test fail a write at one specific address (e.g. the cave's body
+  // write) while leaving every other write — including the cave's own
+  // allocation, which is not a write — unaffected. writeShouldFail above
+  // remains the blunt "fail every write" switch existing tests use.
+  failWriteAddresses = new Set<string>()
   nextCave = 0x50000000
   suspended = 0
   resumed = 0
@@ -68,6 +75,9 @@ class FakeOps implements PatchOps {
     const address = '0x' + (this.nextCave += 0x1000).toString(16)
     this.caves.push(address)
     return address
+  }
+  freeCave(address: string): void {
+    this.freedCaves.push(address)
   }
   runClobbers: string[] = []
   decodeRun(
@@ -247,6 +257,35 @@ describe('PatchEngine — force injection', () => {
     expect(ops.writes).toHaveLength(1)
     expect(ops.resumed).toBe(1)
     expect(engine.isApplied('patch-stamina')).toBe(false)
+  })
+
+  it('frees the allocated cave when suspension fails before the site redirect', async () => {
+    ops.suspendShouldFail = true
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(ops.freedCaves).toEqual([ops.caves[0]])
+  })
+
+  it('frees the allocated cave when the site redirect write itself fails', async () => {
+    // The cave (and its body write) succeed; only the final jump write at
+    // the original site is made to fail — a failure at the LAST step, which
+    // per Task 10's brief is still safe to free: the game was never
+    // actually redirected.
+    ops.failWriteAddresses.add('0x400100')
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(ops.freedCaves).toEqual([ops.caves[0]])
+  })
+
+  it('frees the allocated cave when the body write fails before any thread reaches it', async () => {
+    // The cave allocation itself deterministically lands at caves[0]; the
+    // body is written 8 bytes into it (the first 8 bytes are the
+    // capture/guard slot). Fail exactly that write.
+    const codeAddress = '0x' + (0x50001000n + 8n).toString(16)
+    ops.failWriteAddresses.add(codeAddress)
+    const result = await engine.apply(forcePatch)
+    expect(result.ok).toBe(false)
+    expect(ops.freedCaves).toEqual(['0x50001000'])
   })
 
   it('suspends threads around the site write and resumes them', async () => {
@@ -881,6 +920,17 @@ describe('PatchEngine — guard injection', () => {
     const slot = ops.memory.get(ops.caves[0]) as string
     expect(slot).toBe('e4756d98c6010000') // little-endian 0x1c6986d75e4 — the FRESH value
     expect(slot).not.toBe('addeaddeadde0000') // NOT the stale armValue
+  })
+
+  it('frees the allocated cave when arming the guard slot fails', async () => {
+    const armed: PatchCheat = { ...guardPatch, id: 'patch-godmode-armfail', armValue: '0x1234' }
+    // The cave allocates deterministically at 0x50001000 for the first
+    // allocation in a fresh FakeOps; the arm write targets the slot at the
+    // cave's own address (the first 8 bytes).
+    ops.failWriteAddresses.add('0x50001000')
+    const result = await engine.apply(armed)
+    expect(result.ok).toBe(false)
+    expect(ops.freedCaves).toEqual(['0x50001000'])
   })
 })
 

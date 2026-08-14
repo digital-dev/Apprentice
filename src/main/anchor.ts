@@ -18,6 +18,12 @@ export type AnchorReason =
   // The runtime is up but the named class's assembly hasn't loaded yet
   // (a scene not yet entered, content not yet active).
   | 'mono-assembly-not-loaded'
+  // Added: disarm()'s restore write failed — the game's code is still
+  // patched even though the user asked to turn it off. Distinct from every
+  // other reason above, which all describe a FAILED ARM; this describes a
+  // failed DISARM, surfaced through the same CheatStatus.reason field
+  // since CheatRuntime already has no separate channel for it.
+  | 'restore-failed'
 
 export interface AnchorResult {
   address: string | null

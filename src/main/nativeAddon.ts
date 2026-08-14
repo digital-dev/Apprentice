@@ -145,6 +145,10 @@ export const nativeAddon = {
   stopWriteWatch: (): CaughtInstruction[] => addon.stopWriteWatch(),
   allocateCave: (handle: number, nearAddress: string): string | null =>
     addon.allocateCave(handle, nearAddress),
+  // Releases a cave allocateCave reserved. Hex-string counterpart to Task
+  // 1's platform::FreeMemory (which takes a raw uintptr_t) — see
+  // cave_ops.cc's FreeCave for the ParseHex wrapper this calls through.
+  freeMemory: (handle: number, address: string): boolean => addon.freeMemory(handle, address),
   decodeRun: (
     handle: number,
     address: string,

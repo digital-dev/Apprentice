@@ -2,6 +2,7 @@
 #include <napi.h>
 
 Napi::Value AllocateCave(const Napi::CallbackInfo& info);
+Napi::Value FreeCave(const Napi::CallbackInfo& info);
 Napi::Value DecodeRun(const Napi::CallbackInfo& info);
 Napi::Value EncodeStore(const Napi::CallbackInfo& info);
 Napi::Value EncodeCaptureOnce(const Napi::CallbackInfo& info);

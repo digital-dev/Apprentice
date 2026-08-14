@@ -17,7 +17,7 @@ export interface CheatStatus {
 export interface RuntimeDeps {
   locate(patch: PatchCheat): Promise<{ address: string | null; reason: AnchorReason | null }>
   apply(patch: PatchCheat): Promise<{ ok: boolean; error: string | null }>
-  restore(patch: PatchCheat): void
+  restore(patch: PatchCheat): boolean
   isVerified(patch: PatchCheat): boolean
 }
 
@@ -107,9 +107,21 @@ export class CheatRuntime {
     const target = this.armed.get(patchId) ?? patch
     this.armed.delete(patchId)
     this.generations.set(patchId, (this.generations.get(patchId) ?? 0) + 1)
-    if (target) this.deps.restore(target)
-    this.states.set(patchId, idle())
-    this.changeCb?.(patchId, idle())
+    const restored = target ? this.deps.restore(target) : true
+    if (restored) {
+      this.states.set(patchId, idle())
+      this.changeCb?.(patchId, idle())
+    } else {
+      const failedStatus: CheatStatus = {
+        state: 'failed',
+        unverified: false,
+        reason: 'restore-failed',
+        address: null,
+        attempts: 0
+      }
+      this.states.set(patchId, failedStatus)
+      this.changeCb?.(patchId, failedStatus)
+    }
   }
 
   markDegraded(patchId: string): void {
