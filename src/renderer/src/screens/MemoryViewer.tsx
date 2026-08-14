@@ -5,10 +5,19 @@ import type { DataType } from '../../../main/store'
 const PAGE_SIZE = 256 // 16 bytes/row x 16 rows
 const POLL_MS = 250
 
+const MAX_ADDRESS = 0xffffffffffffffffn // 64-bit ceiling
+
 function normalizeAddress(input: string): string | null {
   const trimmed = input.trim()
   if (!/^(0x)?[0-9a-fA-F]+$/.test(trimmed)) return null
-  return trimmed.startsWith('0x') || trimmed.startsWith('0X') ? trimmed : `0x${trimmed}`
+  const hex = trimmed.startsWith('0x') || trimmed.startsWith('0X') ? trimmed : `0x${trimmed}`
+  // The regex above already forbids a leading '-', so this only guards the
+  // upper bound: a value that parses fine as a BigInt but is wider than a
+  // real pointer would otherwise sail through and blow up later math (e.g.
+  // page() or the dissect offset add) the same way a negative one does.
+  const value = BigInt(hex)
+  if (value < 0n || value > MAX_ADDRESS) return null
+  return hex
 }
 
 export default function MemoryViewer({
@@ -101,7 +110,9 @@ export default function MemoryViewer({
 
   function page(deltaPages: number) {
     if (!baseAddress) return
-    const next = BigInt(baseAddress) + BigInt(deltaPages * PAGE_SIZE)
+    const delta = BigInt(deltaPages * PAGE_SIZE)
+    let next = BigInt(baseAddress) + delta
+    if (next < 0n) next = 0n
     const normalized = '0x' + next.toString(16)
     setBaseAddress(normalized)
     setAddressInput(normalized)
