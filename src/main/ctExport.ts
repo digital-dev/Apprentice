@@ -70,11 +70,23 @@ const REQUIRED_FIELDS: (keyof PatchCheat)[] = [
 function buildEntry(patch: PatchCheat, label: string): string {
   const offset = patch.signatureOffset ?? 0
   const offsetSuffix = offset !== 0 ? `+${offset.toString(16)}` : ''
-  const fieldOffsetHex = (patch.fieldOffset as string).replace(/^0x/i, '')
+  // fieldOffset is a signed value, stored either as an "0x..."-prefixed hex
+  // string (ctImport's own convention, which never produces a negative
+  // offset) or as write_watch.cc's signed decimal (a Scanner capture can be
+  // negative — see write_watch.cc's displacement fix). BigInt parses both
+  // forms; plain string-stripping the "0x" prefix does NOT — a bare decimal
+  // string has no prefix to strip and would be reinterpreted as literal hex
+  // digits verbatim (e.g. captured offset 16 becoming CE offset 0x16 = 22),
+  // and a negative decimal string has no valid hex spelling at all. Signing
+  // the CE syntax explicitly (`+18` vs `-4`) rather than folding the sign
+  // into the digits keeps this correct for both directions.
+  const fieldOffsetVal = BigInt(patch.fieldOffset as string)
+  const fieldOffsetSign = fieldOffsetVal < 0n ? '-' : '+'
+  const fieldOffsetHex = (fieldOffsetVal < 0n ? -fieldOffsetVal : fieldOffsetVal).toString(16)
   const script = `[ENABLE]
 aobscan(${label},${patch.signature})
 ${label}${offsetSuffix}:
-  mov [${patch.baseRegister}+${fieldOffsetHex}],${formatValue(patch.value as number, patch.dataType as DataType)}
+  mov [${patch.baseRegister}${fieldOffsetSign}${fieldOffsetHex}],${formatValue(patch.value as number, patch.dataType as DataType)}
 
 [DISABLE]
 ${label}${offsetSuffix}:
