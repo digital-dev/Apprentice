@@ -26,6 +26,7 @@ bool ReadMemory(ProcessHandle, uintptr_t, void*, size_t) { return false; }
 bool WriteMemory(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
 bool QueryRegion(ProcessHandle, uintptr_t, Region&) { return false; }
 uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }
+bool FreeMemory(ProcessHandle, uintptr_t) { return false; }
 bool SuspendAll(ProcessHandle, uint32_t) { return false; }
 void ResumeAll() {}
 void SleepMs(uint32_t) {}

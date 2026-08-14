@@ -170,6 +170,11 @@ uintptr_t AllocateNear(ProcessHandle handle, uintptr_t nearAddr, size_t size) {
   return 0;
 }
 
+bool FreeMemory(ProcessHandle handle, uintptr_t address) {
+  if (!address) return false;
+  return VirtualFreeEx((HANDLE)handle, (LPVOID)address, 0, MEM_RELEASE) != 0;
+}
+
 // Refuses to run while a previous SuspendAll's threads are still held (i.e.
 // g_suspended is non-empty), rather than appending to them: g_suspended is
 // one flat list shared by all callers, so a second, unrelated SuspendAll

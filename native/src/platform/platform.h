@@ -72,6 +72,15 @@ bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out);
 // as an empty legacy macro for 16-bit segment compatibility, which silently
 // eats the identifier wherever it appears.)
 uintptr_t AllocateNear(ProcessHandle handle, uintptr_t nearAddr, size_t size);
+// Releases memory a prior AllocateNear call reserved. ONLY call this once
+// the thread that ran inside the cave has provably finished (WaitForRemoteThread
+// returned true) — freeing a cave a thread might still be executing inside
+// is the "never free a live cave" hazard AllocateNear's own callers already
+// reason about. A *patch* cave (code the game jumps into on every hit of a
+// hooked instruction, potentially forever) must NEVER be freed at all —
+// this is only for scratch caves used for one throwaway remote call/string
+// and then done with.
+bool FreeMemory(ProcessHandle handle, uintptr_t address);
 // All-or-nothing: on failure nothing stays suspended.
 // Not reentrant: a second call before the matching ResumeAll() refuses
 // (returns false, touches nothing) rather than adding to the held set,
