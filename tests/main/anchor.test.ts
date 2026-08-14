@@ -277,3 +277,13 @@ describe('resolvePatchAddress — mono path', () => {
     expect(monoOps.resolveClassCalls).toBe(0)
   })
 })
+
+describe('resolvePatchAddress — module-missing short-circuit', () => {
+  it('does not scan when the anchored module is not loaded', async () => {
+    const ops = new FakeOps()
+    const emptyModules = new Map<string, LoadedModule>() // modules map deliberately does NOT include the patch's moduleName
+    const result = await resolvePatchAddress(modulePatch, emptyModules, new Set(), ops)
+    expect(result.reason).toBe('module-missing')
+    expect(ops.scanCalls).toHaveLength(0)
+  })
+})

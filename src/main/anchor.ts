@@ -139,6 +139,17 @@ export async function resolvePatchAddress(
   const module =
     patch.moduleName === null ? undefined : modules.get(patch.moduleName.toLowerCase())
 
+  // A patch anchored to a specific module that isn't loaded at all cannot
+  // possibly be found by scanning — the code simply isn't mapped into the
+  // process yet (or ever, for a build that dropped the DLL). Scanning
+  // gigabytes of unrelated executable memory to reach the same conclusion
+  // 'module-missing' would report anyway is pure waste, and since
+  // CheatRuntime retries 'module-missing' on a 5-second backoff forever,
+  // that waste repeats indefinitely for as long as the patch stays armed.
+  if (patch.moduleName !== null && module === undefined) {
+    return { address: null, matchCount: null, reason: 'module-missing', relearnedOffset: null, scanned: false }
+  }
+
   // Path 1: module base + RVA, for a module whose fingerprint still matches.
   if (
     patch.moduleName !== null &&
