@@ -11,6 +11,8 @@ import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
 import type { PendingMonoSelection } from '../App'
 import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
+import CheatRow, { type CheatRowVM, type RailState } from '../components/CheatRow'
+import ScriptEditor from '../components/ScriptEditor'
 import { playOn, playOff, playError } from '../sound'
 
 // Deliberately re-declared here instead of importing store.ts's
@@ -448,10 +450,22 @@ export default function CheatList({
   // Live-captures a hotkey combo while `capturingHotkeyId` is set. A
   // window-level listener (not one scoped to an input) because the whole
   // point is capturing the raw combo, not typing into a text field.
+  //
+  // Auto-saves the instant a valid combo is pressed — no separate confirm
+  // step. The row's ⋮ menu is closed at this point (RowMenu closes itself
+  // before its item's onClick fires), so there is nowhere for a "Confirm"
+  // button to live without asking the user to reopen the menu after
+  // pressing the combo, which is what this replaced. Escape cancels.
   useEffect(() => {
     if (capturingHotkeyId === null) return
     function onKeyDown(e: KeyboardEvent) {
       e.preventDefault()
+      if (e.key === 'Escape') {
+        setCapturingHotkeyId(null)
+        setCapturedHotkey(null)
+        setHotkeyError(null)
+        return
+      }
       const accelerator = buildAccelerator(e)
       if (!accelerator) {
         setHotkeyError(
@@ -461,10 +475,15 @@ export default function CheatList({
       }
       setHotkeyError(null)
       setCapturedHotkey(accelerator)
+      const target: StoredCheat | undefined =
+        cheats.find((c) => c.id === capturingHotkeyId) ??
+        patches.find((p) => p.id === capturingHotkeyId) ??
+        scripts.find((s) => s.id === capturingHotkeyId)
+      if (target) void saveHotkey(target, accelerator)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [capturingHotkeyId])
+  }, [capturingHotkeyId, cheats, patches, scripts])
 
   useEffect(() => {
     async function loadAndRevalidate() {
@@ -1409,339 +1428,396 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
         </div>
       )}
 
-      <ul>
-        {cheats.map((cheat) => {
-          const live = liveCount(cheat)
-          const result = statuses.get(cheat.id)
-          const deadCount = result ? result.length - result.filter((s) => s.alive).length : 0
-          return (
-            <li key={cheat.id} style={{ flexWrap: 'wrap' }}>
-              {renamingId === cheat.id ? (
+      {cheats.length > 0 && (
+        <>
+          <div className="section-head">
+            <h3>Cheats</h3>
+          </div>
+          <div className="cheat-table">
+            <div className="cheat-table-head">
+              <span>Name</span>
+              <span>Hotkey</span>
+              <span>Target</span>
+              <span>Mode</span>
+              <span>Status</span>
+              <span />
+              <span />
+            </div>
+            {cheats.map((cheat) => {
+              const live = liveCount(cheat)
+              const result = statuses.get(cheat.id)
+              const deadCount = result ? result.length - result.filter((s) => s.alive).length : 0
+              const isEnabled = enabled.has(cheat.id)
+              const isDegraded = degraded.has(cheat.id)
+              const isRenaming = renamingId === cheat.id
+              const isCapturingHotkey = capturingHotkeyId === cheat.id
+              const isVerifying = verifyOpen === cheat.id
+
+              const railState: RailState = isDegraded
+                ? 'failed'
+                : isEnabled && live === 0
+                  ? 'failed'
+                  : isEnabled
+                    ? 'active'
+                    : 'idle'
+
+              const status: CheatRowVM['status'] = isDegraded
+                ? { text: 'Not resolving — retrying, will resume if it comes back', tone: 'failed' }
+                : live !== null
+                  ? { text: `${live}/${cheat.targets.length} live`, tone: live === 0 ? 'failed' : 'muted' }
+                  : { text: isEnabled ? 'enabled' : 'ready', tone: 'muted' }
+
+              const subrowContent = (
                 <>
-                  <input
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    style={{ maxWidth: 200 }}
-                  />
-                  <button
-                    onClick={() => renameCheat(cheat, renameValue)}
-                    disabled={renameValue.trim() === ''}
-                  >
-                    Save
-                  </button>
-                  <button onClick={() => setRenamingId(null)}>Cancel</button>
-                </>
-              ) : (
-                <>
-                  <span>{cheat.name}</span>
-                  <button
-                    onClick={() => {
-                      setRenamingId(cheat.id)
-                      setRenameValue(cheat.name)
-                    }}
-                  >
-                    Rename
-                  </button>
-                </>
-              )}
-              {capturingHotkeyId === cheat.id ? (
-                <>
-                  <span className="address-chip">{capturedHotkey ?? 'Press keys…'}</span>
-                  <button
-                    onClick={() => saveHotkey(cheat, capturedHotkey)}
-                    disabled={capturedHotkey === null}
-                  >
-                    Save
-                  </button>
-                  <button onClick={() => setCapturingHotkeyId(null)}>Cancel</button>
-                </>
-              ) : (
-                <>
-                  {cheat.hotkey && <span className="address-chip">{cheat.hotkey}</span>}
-                  <button onClick={() => startCapturingHotkey(cheat.id)}>
-                    {cheat.hotkey ? 'Change hotkey' : 'Set hotkey'}
-                  </button>
-                  {cheat.hotkey && (
-                    <button onClick={() => saveHotkey(cheat, null)}>Clear hotkey</button>
+                  {hotkeyError && isCapturingHotkey && (
+                    <p style={{ color: 'var(--error)', margin: '0 0 8px' }}>{hotkeyError}</p>
+                  )}
+                  {isVerifying && (
+                    <div>
+                      <button onClick={() => verify(cheat, false)}>Check readability</button>
+                      <input
+                        placeholder="Current in-game value"
+                        value={verifyValue}
+                        onChange={(e) => setVerifyValue(e.target.value)}
+                        style={{ marginLeft: 8 }}
+                      />
+                      <button onClick={() => verify(cheat, true)}>Verify against value</button>
+                      {result && (
+                        <>
+                          <ul>
+                            {cheat.targets.map((t, i) => (
+                              <li key={targetKey(t, i)}>
+                                <span className="address-chip">{targetLabel(t)}</span>
+                                <span
+                                  style={{
+                                    color: result[i]?.alive ? 'var(--active)' : 'var(--error)'
+                                  }}
+                                >
+                                  {result[i]?.alive
+                                    ? `✓ ${result[i]?.value}`
+                                    : result[i]?.value === null
+                                      ? '✗ not resolving'
+                                      : `✗ ${result[i]?.value} (mismatch)`}
+                                </span>
+                                {!isAnchor(t) && !isMono(t) && 'offsets' in t && t.offsets.length === 0 && (
+                                  <button
+                                    onClick={async () => {
+                                      // t.baseOffset is module-relative, never an
+                                      // absolute address on its own — resolve it
+                                      // against the attached process's actual
+                                      // module base before navigating, or this
+                                      // jumps to a bogus address (see
+                                      // ipc.ts's memory:resolveTargetAddress).
+                                      const resolved = await window.tamper.resolveTargetAddress(
+                                        t.moduleName,
+                                        t.baseOffset
+                                      )
+                                      if (resolved === null) {
+                                        console.warn(
+                                          `Could not resolve ${t.moduleName}+${t.baseOffset} — is the module loaded?`
+                                        )
+                                        return
+                                      }
+                                      onViewInMemory(resolved)
+                                    }}
+                                  >
+                                    View in Memory
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                          {deadCount > 0 && (live ?? 0) > 0 && (
+                            <button onClick={() => pruneDead(cheat)}>
+                              Remove {deadCount} non-matching target(s)
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   )}
                 </>
-              )}
-              {hotkeyError && capturingHotkeyId === cheat.id && (
-                <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{hotkeyError}</span>
-              )}
-              <AddressChip
-                label={
+              )
+
+              const vm: CheatRowVM = {
+                id: cheat.id,
+                name: cheat.name,
+                hotkey: cheat.hotkey,
+                targetLabel:
                   cheat.targets.length === 1
                     ? targetLabel(cheat.targets[0])
-                    : `${cheat.targets.length} targets`
-                }
-                pulsing={enabled.has(cheat.id) && !degraded.has(cheat.id)}
-              />
-              {live !== null && (
-                <span
-                  className="address-chip"
-                  style={{ color: live === 0 ? 'var(--error)' : 'var(--muted)' }}
-                >
-                  {live}/{cheat.targets.length} live
-                </span>
-              )}
-              {degraded.has(cheat.id) && (
-                <span style={{ color: 'var(--error)' }}>
-                  Not resolving — retrying, will resume if it comes back
-                </span>
-              )}
-              {cheat.mode === 'freeze' ? (
-                <Toggle enabled={enabled.has(cheat.id)} onChange={() => toggle(cheat)} />
-              ) : (
-                <button onClick={() => window.tamper.oneShot(cheat)}>Apply</button>
-              )}
-              <button onClick={() => setVerifyOpen(verifyOpen === cheat.id ? null : cheat.id)}>
-                Verify
-              </button>
-              <button onClick={() => remove(cheat)}>Delete</button>
+                    : `${cheat.targets.length} targets`,
+                mode: cheat.mode,
+                status,
+                railState,
+                control:
+                  cheat.mode === 'freeze' ? (
+                    <Toggle enabled={isEnabled} onChange={() => toggle(cheat)} />
+                  ) : (
+                    <button className="btn-sm" onClick={() => window.tamper.oneShot(cheat)}>
+                      Apply
+                    </button>
+                  ),
+                menuItems: [
+                  {
+                    label: 'Rename',
+                    onClick: () => {
+                      setRenamingId(cheat.id)
+                      setRenameValue(cheat.name)
+                    }
+                  },
+                  {
+                    label: cheat.hotkey ? 'Change hotkey' : 'Set hotkey',
+                    onClick: () => startCapturingHotkey(cheat.id)
+                  },
+                  ...(cheat.hotkey
+                    ? [{ label: 'Clear hotkey', onClick: () => saveHotkey(cheat, null) }]
+                    : []),
+                  {
+                    label: isVerifying ? 'Hide verify' : 'Verify…',
+                    onClick: () => setVerifyOpen(isVerifying ? null : cheat.id)
+                  },
+                  { label: 'Delete', danger: true, onClick: () => remove(cheat) }
+                ],
+                subrow: hotkeyError && isCapturingHotkey ? subrowContent : isVerifying ? subrowContent : undefined,
+                renaming: isRenaming
+                  ? {
+                      value: renameValue,
+                      onChange: setRenameValue,
+                      onCommit: () => renameCheat(cheat, renameValue),
+                      onCancel: () => setRenamingId(null)
+                    }
+                  : undefined,
+                hotkeyCapturing: isCapturingHotkey
+                  ? { value: capturedHotkey, onCancel: () => setCapturingHotkeyId(null) }
+                  : undefined,
+                onStartHotkeyCapture: () => startCapturingHotkey(cheat.id)
+              }
 
-              {verifyOpen === cheat.id && (
-                <div style={{ flexBasis: '100%', marginTop: 8, paddingLeft: 12 }}>
-                  <button onClick={() => verify(cheat, false)}>Check readability</button>
-                  <input
-                    placeholder="Current in-game value"
-                    value={verifyValue}
-                    onChange={(e) => setVerifyValue(e.target.value)}
-                    style={{ marginLeft: 8 }}
-                  />
-                  <button onClick={() => verify(cheat, true)}>Verify against value</button>
-                  {result && (
-                    <>
-                      <ul>
-                        {cheat.targets.map((t, i) => (
-                          <li key={targetKey(t, i)}>
-                            <span className="address-chip">{targetLabel(t)}</span>
-                            <span
-                              style={{ color: result[i]?.alive ? 'var(--active)' : 'var(--error)' }}
-                            >
-                              {result[i]?.alive
-                                ? `✓ ${result[i]?.value}`
-                                : result[i]?.value === null
-                                  ? '✗ not resolving'
-                                  : `✗ ${result[i]?.value} (mismatch)`}
-                            </span>
-                            {!isAnchor(t) && !isMono(t) && 'offsets' in t && t.offsets.length === 0 && (
-                              <button
-                                onClick={async () => {
-                                  // t.baseOffset is module-relative, never an
-                                  // absolute address on its own — resolve it
-                                  // against the attached process's actual
-                                  // module base before navigating, or this
-                                  // jumps to a bogus address (see
-                                  // ipc.ts's memory:resolveTargetAddress).
-                                  const resolved = await window.tamper.resolveTargetAddress(
-                                    t.moduleName,
-                                    t.baseOffset
-                                  )
-                                  if (resolved === null) {
-                                    console.warn(
-                                      `Could not resolve ${t.moduleName}+${t.baseOffset} — is the module loaded?`
-                                    )
-                                    return
-                                  }
-                                  onViewInMemory(resolved)
-                                }}
-                              >
-                                View in Memory
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                      {deadCount > 0 && (live ?? 0) > 0 && (
-                        <button onClick={() => pruneDead(cheat)}>
-                          Remove {deadCount} non-matching target(s)
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </li>
-          )
-        })}
-      </ul>
-      {patches.length > 0 && (
-        <ul>
-          {/* Capture patches created to anchor a value cheat are plumbing,
-              not something to toggle: the cheat they belong to drives them.
-              Showing them would put two rows in the list for one cheat. */}
-          {patches.filter((p) => !p.internal).map((patch) => {
-            const status = patchStatuses.get(patch.id)
-            const runtimeStatus = cheatStates.get(patch.id)
-            const error = patchError.get(patch.id)
-            const slotInfo = patchSlots.get(patch.id)
-            return (
-              <li key={patch.id} style={{ flexWrap: 'wrap' }}>
-                {renamingId === patch.id ? (
-                  <>
-                    <input
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      style={{ maxWidth: 200 }}
-                    />
-                    <button
-                      onClick={() => renamePatch(patch, renameValue)}
-                      disabled={renameValue.trim() === ''}
-                    >
-                      Save
-                    </button>
-                    <button onClick={() => setRenamingId(null)}>Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    <span>{patch.name}</span>
-                    <button
-                      onClick={() => {
-                        setRenamingId(patch.id)
-                        setRenameValue(patch.name)
-                      }}
-                    >
-                      Rename
-                    </button>
-                  </>
-                )}
-                {capturingHotkeyId === patch.id ? (
-                  <>
-                    <span className="address-chip">{capturedHotkey ?? 'Press keys…'}</span>
-                    <button
-                      onClick={() => saveHotkey(patch, capturedHotkey)}
-                      disabled={capturedHotkey === null}
-                    >
-                      Save
-                    </button>
-                    <button onClick={() => setCapturingHotkeyId(null)}>Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    {patch.hotkey && <span className="address-chip">{patch.hotkey}</span>}
-                    <button onClick={() => startCapturingHotkey(patch.id)}>
-                      {patch.hotkey ? 'Change hotkey' : 'Set hotkey'}
-                    </button>
-                    {patch.hotkey && (
-                      <button onClick={() => saveHotkey(patch, null)}>Clear hotkey</button>
-                    )}
-                  </>
-                )}
-                {hotkeyError && capturingHotkeyId === patch.id && (
-                  <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{hotkeyError}</span>
-                )}
-                <AddressChip
-                  label={
-                    patch.moduleName
-                      ? `${patch.moduleName}+${patch.moduleOffset}`
-                      : `AOB ${patch.length}b`
+              return <CheatRow key={cheat.id} vm={vm} />
+            })}
+          </div>
+        </>
+      )}
+
+      {patches.filter((p) => !p.internal).length > 0 && (
+        <>
+          <div className="section-head">
+            <h3>Code patches</h3>
+          </div>
+          <div className="cheat-table">
+            <div className="cheat-table-head">
+              <span>Name</span>
+              <span>Hotkey</span>
+              <span>Target</span>
+              <span>Mode</span>
+              <span>Status</span>
+              <span />
+              <span />
+            </div>
+            {/* Capture patches created to anchor a value cheat are plumbing,
+                not something to toggle: the cheat they belong to drives them.
+                Showing them would put two rows in the list for one cheat. */}
+            {patches.filter((p) => !p.internal).map((patch) => {
+              const status = patchStatuses.get(patch.id)
+              const runtimeStatus = cheatStates.get(patch.id)
+              const error = patchError.get(patch.id)
+              const slotInfo = patchSlots.get(patch.id)
+              const isEnabled = patchEnabled.has(patch.id)
+              const isRenaming = renamingId === patch.id
+              const isCapturingHotkey = capturingHotkeyId === patch.id
+
+              const railState: RailState = runtimeStatus
+                ? runtimeStatus.state === 'failed' || runtimeStatus.state === 'degraded'
+                  ? 'failed'
+                  : runtimeStatus.state === 'arming'
+                    ? 'arming'
+                    : runtimeStatus.state === 'active'
+                      ? runtimeStatus.unverified
+                        ? 'stale'
+                        : 'active'
+                      : 'idle'
+                : error
+                  ? 'failed'
+                  : isEnabled
+                    ? 'active'
+                    : 'idle'
+
+              const rowStatus: CheatRowVM['status'] = runtimeStatus
+                ? {
+                    text: cheatStateLabel(runtimeStatus),
+                    tone:
+                      runtimeStatus.state === 'failed' || runtimeStatus.state === 'degraded'
+                        ? 'failed'
+                        : runtimeStatus.state === 'active'
+                          ? 'active'
+                          : 'muted'
                   }
-                  pulsing={patchEnabled.has(patch.id)}
-                />
-                <span className="address-chip">
-                  {patch.mode === 'capture'
+                : status
+                  ? { text: patchStatusLabel(status), tone: status.applicable ? 'muted' : 'failed' }
+                  : { text: isEnabled ? 'enabled' : 'ready', tone: 'muted' }
+
+              const captureLabel =
+                (patch.mode === 'capture' || patch.mode === 'guard') && isEnabled
+                  ? slotInfo?.pointer
+                    ? `${patch.mode === 'guard' ? 'protecting' : 'captured'} ${slotInfo.pointer}`
+                    : 'waiting for the game to run this code'
+                  : null
+
+              const targetLbl = patch.moduleName
+                ? `${patch.moduleName}+${patch.moduleOffset}`
+                : `AOB ${patch.length}b`
+
+              const vm: CheatRowVM = {
+                id: patch.id,
+                name: patch.name,
+                hotkey: patch.hotkey,
+                targetLabel: captureLabel ? `${targetLbl} — ${captureLabel}` : targetLbl,
+                mode:
+                  patch.mode === 'capture'
                     ? 'capture'
                     : patch.mode === 'force'
                       ? 'force'
                       : patch.mode === 'guard'
                         ? 'guard'
-                        : 'code patch'}
-                </span>
-                {(patch.mode === 'capture' || patch.mode === 'guard') &&
-                  patchEnabled.has(patch.id) && (
-                  // The address an anchored cheat resolves through. Shown so
-                  // authoring one doesn't mean inferring the object's address
-                  // from a pair of value scans and some subtraction.
-                  <span className="address-chip" title="Use this patch's id as an anchor patchId">
-                    {slotInfo?.pointer
-                      ? `${patch.mode === 'guard' ? 'protecting' : 'captured'} ${slotInfo.pointer}`
-                      : 'waiting for the game to run this code'}
-                  </span>
-                  )}
-                {runtimeStatus ? (
-                  // Once a patch has been toggled on at least once, the
-                  // runtime's state machine is the more informative readout
-                  // — it covers what patchStatusLabel can't: arming/backoff,
-                  // degraded-after-active, and "active but the game build
-                  // changed since capture".
-                  <span
-                    className="address-chip"
-                    style={{
-                      color:
-                        runtimeStatus.state === 'failed' || runtimeStatus.state === 'degraded'
-                          ? 'var(--error)'
-                          : runtimeStatus.state === 'active'
-                            ? 'var(--active)'
-                            : 'var(--muted)'
-                    }}
-                  >
-                    {cheatStateLabel(runtimeStatus)}
-                  </span>
-                ) : (
-                  status && (
-                    <span
-                      className="address-chip"
-                      style={{ color: status.applicable ? 'var(--muted)' : 'var(--error)' }}
-                    >
-                      {patchStatusLabel(status)}
-                    </span>
-                  )
-                )}
-                <Toggle
-                  enabled={patchEnabled.has(patch.id)}
-                  onChange={() => togglePatch(patch)}
-                  disabled={patchBusy.has(patch.id)}
-                />
-                <button onClick={() => removePatch(patch)}>Delete</button>
-                {error && (
-                  <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{error}</span>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+                        : 'nop',
+                status: rowStatus,
+                railState,
+                control: (
+                  <Toggle
+                    enabled={isEnabled}
+                    onChange={() => togglePatch(patch)}
+                    disabled={patchBusy.has(patch.id)}
+                  />
+                ),
+                menuItems: [
+                  {
+                    label: 'Rename',
+                    onClick: () => {
+                      setRenamingId(patch.id)
+                      setRenameValue(patch.name)
+                    }
+                  },
+                  {
+                    label: patch.hotkey ? 'Change hotkey' : 'Set hotkey',
+                    onClick: () => startCapturingHotkey(patch.id)
+                  },
+                  ...(patch.hotkey
+                    ? [{ label: 'Clear hotkey', onClick: () => saveHotkey(patch, null) }]
+                    : []),
+                  { label: 'Delete', danger: true, onClick: () => removePatch(patch) }
+                ],
+                subrow:
+                  error || (hotkeyError && isCapturingHotkey) ? (
+                    <>
+                      {hotkeyError && isCapturingHotkey && (
+                        <p style={{ color: 'var(--error)', margin: 0 }}>{hotkeyError}</p>
+                      )}
+                      {error && <p style={{ color: 'var(--error)', margin: 0 }}>{error}</p>}
+                    </>
+                  ) : undefined,
+                renaming: isRenaming
+                  ? {
+                      value: renameValue,
+                      onChange: setRenameValue,
+                      onCommit: () => renamePatch(patch, renameValue),
+                      onCancel: () => setRenamingId(null)
+                    }
+                  : undefined,
+                hotkeyCapturing: isCapturingHotkey
+                  ? { value: capturedHotkey, onCancel: () => setCapturingHotkeyId(null) }
+                  : undefined,
+                onStartHotkeyCapture: () => startCapturingHotkey(patch.id)
+              }
+
+              return <CheatRow key={patch.id} vm={vm} />
+            })}
+          </div>
+        </>
       )}
-      <h3>Scripts</h3>
-      <ul>
-        {scripts.map((script) => (
-          <li key={script.id} style={{ flexWrap: 'wrap' }}>
-            <input
-              type="checkbox"
-              checked={scriptEnabled[script.id] ?? false}
-              onChange={(e) => void toggleScript(script, e.target.checked)}
-            />
-            <span>{script.name}</span>
-            <button onClick={() => setEditingScript(script)}>Edit script</button>
-            {capturingHotkeyId === script.id ? (
-              <>
-                <span className="address-chip">{capturedHotkey ?? 'Press keys…'}</span>
-                <button
-                  onClick={() => saveHotkey(script, capturedHotkey)}
-                  disabled={capturedHotkey === null}
-                >
-                  Save
-                </button>
-                <button onClick={() => setCapturingHotkeyId(null)}>Cancel</button>
-              </>
-            ) : (
-              <>
-                {script.hotkey && <span className="address-chip">{script.hotkey}</span>}
-                <button onClick={() => startCapturingHotkey(script.id)}>
-                  {script.hotkey ? 'Change hotkey' : 'Set hotkey'}
-                </button>
-                {script.hotkey && (
-                  <button onClick={() => saveHotkey(script, null)}>Clear hotkey</button>
-                )}
-              </>
-            )}
-            <button onClick={() => removeScript(script)}>Delete</button>
-            {hotkeyError && capturingHotkeyId === script.id && (
-              <span style={{ color: 'var(--error)', flexBasis: '100%' }}>{hotkeyError}</span>
-            )}
-          </li>
-        ))}
-        <li>
+
+      <div className="section-head">
+        <h3>Scripts</h3>
+      </div>
+      <div className="cheat-table">
+        <div className="cheat-table-head">
+          <span>Name</span>
+          <span>Hotkey</span>
+          <span>Target</span>
+          <span>Mode</span>
+          <span>Status</span>
+          <span />
+          <span />
+        </div>
+        {scripts.map((script) => {
+          const isEnabled = scriptEnabled[script.id] ?? false
+          const isRenaming = renamingId === script.id
+          const isCapturingHotkey = capturingHotkeyId === script.id
+          const vm: CheatRowVM = {
+            id: script.id,
+            name: script.name,
+            hotkey: script.hotkey,
+            targetLabel: '—',
+            mode: 'script',
+            status: { text: isEnabled ? 'enabled' : 'ready', tone: 'muted' },
+            railState: isEnabled ? 'active' : 'idle',
+            control: (
+              <input
+                type="checkbox"
+                checked={isEnabled}
+                onChange={(e) => void toggleScript(script, e.target.checked)}
+              />
+            ),
+            menuItems: [
+              { label: 'Edit script…', onClick: () => setEditingScript(script) },
+              {
+                label: isRenaming ? 'Renaming…' : 'Rename',
+                disabled: isRenaming,
+                onClick: () => {
+                  setRenamingId(script.id)
+                  setRenameValue(script.name)
+                }
+              },
+              {
+                label: script.hotkey ? 'Change hotkey' : 'Set hotkey',
+                onClick: () => startCapturingHotkey(script.id)
+              },
+              ...(script.hotkey
+                ? [{ label: 'Clear hotkey', onClick: () => saveHotkey(script, null) }]
+                : []),
+              { label: 'Delete', danger: true, onClick: () => removeScript(script) }
+            ],
+            subrow:
+              hotkeyError && isCapturingHotkey ? (
+                <p style={{ color: 'var(--error)', margin: 0 }}>{hotkeyError}</p>
+              ) : undefined,
+            renaming: isRenaming
+              ? {
+                  value: renameValue,
+                  onChange: setRenameValue,
+                  onCommit: () => {
+                    const trimmed = renameValue.trim()
+                    if (trimmed === '') {
+                      setRenamingId(null)
+                      return
+                    }
+                    void saveScript({ ...script, name: trimmed }).then(() => setRenamingId(null))
+                  },
+                  onCancel: () => setRenamingId(null)
+                }
+              : undefined,
+            hotkeyCapturing: isCapturingHotkey
+              ? { value: capturedHotkey, onCancel: () => setCapturingHotkeyId(null) }
+              : undefined,
+            onStartHotkeyCapture: () => startCapturingHotkey(script.id)
+          }
+          return (
+            <div key={script.id} onDoubleClick={() => setEditingScript(script)}>
+              <CheatRow vm={vm} />
+            </div>
+          )
+        })}
+        <div className="toolbar" style={{ padding: '8px 12px' }}>
           <button
             onClick={() =>
               setEditingScript({
@@ -1755,45 +1831,19 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
           >
             + New Script
           </button>
-        </li>
-      </ul>
-
-      {scriptError && (
-        <div className="banner banner-error">
-          {scriptError}
-          <button onClick={() => setScriptError(null)}>Dismiss</button>
         </div>
-      )}
-      {scriptOutput && scriptOutput.length > 0 && (
-        <div className="banner">
-          <pre>{scriptOutput.join('\n')}</pre>
-          <button onClick={() => setScriptOutput(null)}>Dismiss</button>
-        </div>
-      )}
+      </div>
 
       {editingScript && (
-        <div className="script-editor">
-          <input
-            value={editingScript.name}
-            onChange={(e) => setEditingScript({ ...editingScript, name: e.target.value })}
-          />
-          <label>Enable script</label>
-          <textarea
-            value={editingScript.enableScript}
-            onChange={(e) => setEditingScript({ ...editingScript, enableScript: e.target.value })}
-          />
-          <button onClick={() => void testScript(editingScript.enableScript)}>Run enable now</button>
-          <label>Disable script</label>
-          <textarea
-            value={editingScript.disableScript}
-            onChange={(e) => setEditingScript({ ...editingScript, disableScript: e.target.value })}
-          />
-          <button onClick={() => void testScript(editingScript.disableScript)}>Run disable now</button>
-          <div>
-            <button onClick={() => void saveScript(editingScript)}>Save</button>
-            <button onClick={() => setEditingScript(null)}>Cancel</button>
-          </div>
-        </div>
+        <ScriptEditor
+          script={editingScript}
+          onChange={setEditingScript}
+          onSave={() => void saveScript(editingScript)}
+          onClose={() => setEditingScript(null)}
+          onRun={(source) => void testScript(source)}
+          output={scriptOutput}
+          error={scriptError}
+        />
       )}
 
       {cheats.length === 0 && patches.length === 0 && scripts.length === 0 && (

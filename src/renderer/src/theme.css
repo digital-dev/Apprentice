@@ -1,13 +1,37 @@
 :root {
   --bg: #0a0b0a;
   --panel: #161816;
+  --panel-2: #1d201d; /* raised surfaces: menus, modals, gutters */
   --accent: #ffb000;
+  --accent-soft: rgba(255, 176, 0, 0.1);
+  --accent-line: rgba(255, 176, 0, 0.32);
   --active: #3ecf8e;
   --error: #ff5c5c;
+  --warn: #e0a33e;
   --muted: #8a8f87;
+  --text: #eceee9;
+  --text-dim: #b3b8ae;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.12);
+
   --font-display: 'IBM Plex Mono', monospace;
   --font-body: 'IBM Plex Sans', sans-serif;
   --font-data: 'IBM Plex Mono', monospace;
+
+  /* Spacing scale — use these instead of ad-hoc px margins/paddings. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  --r1: 4px; /* chips, inputs */
+  --r2: 6px; /* buttons, panels */
+  --r3: 10px; /* modals */
+
+  --control-height: 34px;
 }
 
 * { box-sizing: border-box; }
@@ -15,7 +39,7 @@
 body {
   margin: 0;
   background: var(--bg);
-  color: #eceee9;
+  color: var(--text);
   font-family: var(--font-body);
 }
 
@@ -33,7 +57,7 @@ h1, h2, h3 {
 
 .sidebar {
   background: var(--panel);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid var(--line);
   padding: 16px 12px;
 }
 
@@ -68,7 +92,7 @@ h1, h2, h3 {
   border-radius: 0;
   padding: 10px 12px;
   font-size: 14px;
-  color: #eceee9;
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -80,7 +104,7 @@ h1, h2, h3 {
 .nav-item.active {
   border-left-color: var(--accent);
   color: var(--accent);
-  background: rgba(255, 176, 0, 0.08);
+  background: var(--accent-soft);
 }
 
 .nav-item:disabled {
@@ -90,8 +114,42 @@ h1, h2, h3 {
 }
 
 .main {
-  padding: 24px;
+  padding: var(--s6);
   overflow-y: auto;
+}
+
+/* A bare `.screen` wrapper used by MemoryViewer/Scanner — previously
+   undefined, so those screens rendered with zero vertical rhythm between
+   their own top-level blocks. */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.screen h2 {
+  margin: 0;
+}
+
+/* Row of controls above a table/grid (address bar, scan controls, script
+   toolbar). Also previously undefined. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: var(--s3) 0;
+}
+
+.eyebrow {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 4px;
 }
 
 .address-chip {
@@ -102,49 +160,141 @@ h1, h2, h3 {
   background: rgba(255, 255, 255, 0.04);
   border-radius: 999px;
   padding: 2px 10px;
+  white-space: nowrap;
+}
+
+/* Truncates from the LEFT (keeps the tail — the meaningful offset — always
+   visible) instead of the browser default of truncating the end. */
+.address-chip.truncate {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
 }
 
 .muted {
   color: var(--muted);
 }
 
-input, select {
+input, select, textarea {
   font-family: var(--font-body);
   font-size: 14px;
-  color: #eceee9;
+  color: var(--text);
   background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r2);
   padding: 8px 12px;
   outline: none;
 }
 
-input::placeholder {
+textarea {
+  font-family: var(--font-data);
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 140px;
+}
+
+input::placeholder, textarea::placeholder {
   color: var(--muted);
 }
 
-input:focus, select:focus {
+input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
 }
 
+/* --- Buttons: a real hierarchy instead of one identical style for
+   Rename/Delete/Save/Import/etc. Amber is spent ONLY on .btn-primary and
+   focus rings from here on — plain hover no longer turns amber. --- */
 button {
   font-family: var(--font-body);
   font-size: 14px;
-  color: #eceee9;
+  font-weight: 500;
+  color: var(--text);
   background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r2);
   padding: 8px 14px;
+  height: var(--control-height);
   cursor: pointer;
+  transition: background-color 90ms ease, border-color 90ms ease, color 90ms ease;
 }
 
-button:hover {
-  border-color: var(--accent);
+button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--line-strong);
 }
 
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #12130f;
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+  border-color: var(--accent);
+}
+
+.btn-quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: transparent;
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--error);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 92, 92, 0.1);
+  border-color: var(--error);
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--r1);
+  color: var(--muted);
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.btn-sm {
+  height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 ul {
@@ -155,26 +305,430 @@ ul {
 
 li {
   padding: 10px 12px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  cursor: pointer;
+  border-radius: var(--r2);
 }
 
 li:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* --- Cheat / patch / script row grid. One shared template so all three
+   lists line up into a single continuous table, replacing the old
+   `li { justify-content: space-between }` rule (which spaced out however
+   many flex children a given row happened to have — different rows had
+   different chip counts, so nothing ever actually aligned). --- */
+.cheat-table {
+  margin: var(--s3) 0 var(--s6);
+  border-top: 1px solid var(--line);
+}
+
+.cheat-table-head,
+.cheat-row {
+  display: grid;
+  grid-template-columns:
+    3px
+    minmax(0, 1.6fr)
+    104px
+    minmax(140px, 1.4fr)
+    76px
+    minmax(120px, 1fr)
+    48px
+    32px;
+  align-items: center;
+  column-gap: var(--s3);
+}
+
+.cheat-table-head {
+  height: 28px;
+  padding: 0 var(--s3);
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.cheat-table-head > span:first-child {
+  grid-column: 1 / 3;
+}
+
+.cheat-row {
+  position: relative;
+  min-height: 40px;
+  padding: 0 var(--s3);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  cursor: default;
+}
+
+.cheat-row:hover,
+.cheat-row:focus-within {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.cheat-row:hover .row-reveal,
+.cheat-row:focus-within .row-reveal {
+  opacity: 1;
+}
+
+.row-rail {
+  align-self: stretch;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.row-rail.rail-arming {
+  background: var(--accent);
+  animation: rail-pulse 1.6s ease-in-out infinite;
+}
+
+.row-rail.rail-active {
+  background: var(--active);
+}
+
+.row-rail.rail-stale {
+  background: var(--active);
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+
+.row-rail.rail-failed {
+  background: var(--error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-rail.rail-arming {
+    animation: none;
+  }
+}
+
+.row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.row-mode {
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.row-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-status.tone-active { color: var(--active); }
+.row-status.tone-failed { color: var(--error); }
+.row-status.tone-muted { color: var(--muted); }
+
+/* Buttons that only appear on hover/focus (row overflow trigger, the empty
+   hotkey cell's ghost "set hotkey" affordance). */
+.row-reveal {
+  opacity: 0;
+  transition: opacity 90ms ease;
+}
+
+.row-reveal:focus {
+  opacity: 1;
+}
+
+/* A sub-row spanning the full grid width, for errors/verify panels/import
+   results that used to force the row above to wrap (flexBasis: '100%'
+   inside a flex li). Indented to align under the name column. */
+.row-subrow {
+  grid-column: 1 / -1;
+  padding: var(--s3) var(--s3) var(--s3) calc(3px + var(--s3) + var(--s3));
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: var(--s6) 0 0;
+}
+
+.section-head h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.section-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* --- Row overflow menu (Rename / Change hotkey / Clear hotkey / Delete,
+   tucked behind the row's ⋮ button instead of sitting exposed at all
+   times). --- */
+.menu {
+  position: absolute;
+  right: var(--s3);
+  top: 100%;
+  z-index: 10;
+  min-width: 190px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r2);
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--r1);
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  height: auto;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+}
+
+.menu-item-danger {
+  color: var(--error);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--line);
+}
+
+/* --- Script editor modal --- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 7, 6, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  width: min(900px, 92vw);
+  height: 80vh;
+  min-height: 420px;
+  max-height: 92vh;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r3);
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto;
+  overflow: hidden;
+  resize: both;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: 56px;
+  padding: 0 var(--s4);
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-head input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  font-family: var(--font-display);
+  font-size: 16px;
+  padding: 0;
+}
+
+.modal-head input:focus {
+  border: none;
+}
+
+.tabbar {
+  display: flex;
+  gap: 2px;
+  height: 34px;
+  padding: 0 var(--s3);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  height: 34px;
+  padding: 0 var(--s3);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tab:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+.editor-shell {
+  min-height: 0;
+  padding: var(--s3) var(--s4);
+  overflow: auto;
+}
+
+.editor-shell textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  resize: none;
+  tab-size: 2;
+}
+
+.editor-shell textarea:focus {
+  border: none;
+}
+
+.output-drawer {
+  border-top: 1px solid var(--line);
+  max-height: 160px;
+  overflow: auto;
+  padding: var(--s2) var(--s4);
+  font-family: var(--font-data);
+  font-size: 12px;
+}
+
+.output-drawer summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s2);
+  height: 48px;
+  padding: 0 var(--s4);
+  border-top: 1px solid var(--line);
+}
+
+.modal-foot .modal-foot-status {
+  margin-right: auto;
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* --- Memory Viewer hex grid — previously entirely unstyled. --- */
+.hex-grid {
+  border-collapse: collapse;
+  font-family: var(--font-data);
+  font-size: 12px;
+  width: 100%;
+}
+
+.hex-grid td {
+  padding: 3px 6px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.hex-grid td span {
+  cursor: pointer;
+  padding: 1px 3px;
+  border-radius: var(--r1);
+}
+
+.hex-grid td span:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.hex-grid .addr {
+  color: var(--muted);
+  text-align: right;
+  padding-right: var(--s3);
+}
+
+.hex-grid .ascii {
+  color: var(--muted);
+  text-align: left;
+  padding-left: var(--s3);
+  white-space: pre;
+}
+
+.hex-grid tr:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.dissect-panel {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s4);
+}
+
+.dissect-panel h3 {
+  margin: 0 0 var(--s2);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
 .banner {
   font-size: 13px;
   color: var(--accent);
-  background: rgba(255, 176, 0, 0.08);
-  border: 1px solid rgba(255, 176, 0, 0.3);
-  border-radius: 6px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r2);
   padding: 10px 14px;
   margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.banner-error {
+  color: var(--error);
+  background: rgba(255, 92, 92, 0.08);
+  border-color: rgba(255, 92, 92, 0.3);
 }
 
 .pulse-dot {
@@ -186,7 +740,18 @@ li:hover {
   animation: pulse 1s ease-in-out infinite;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot {
+    animation: none;
+  }
+}
+
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255, 176, 0, 0.5); }
   50% { box-shadow: 0 0 0 6px rgba(255, 176, 0, 0); }
+}
+
+@keyframes rail-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
