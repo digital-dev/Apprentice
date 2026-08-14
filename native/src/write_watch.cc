@@ -535,13 +535,28 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
     size_t lookBack = kLookBack;
 
     // Reading from before the instruction can fail outright when it sits
-    // near the start of a mapping. That is not fatal — fall back to the
-    // instruction itself with no lead-in, which is the old behaviour.
+    // near the start of a mapping. That is not fatal — retry with a
+    // smaller forward-only window (halving each time, like DecodeRun's own
+    // read-shrinking strategy in cave_ops.cc) rather than falling straight
+    // to a bare, near-zero-length signature the moment the FIRST fallback
+    // attempt also fails or comes up short. The old behaviour ignored
+    // ReadProcessMemory's return value entirely on this path, so a failed
+    // or short forward read silently produced a near-zero-length signature
+    // that could match hundreds of unrelated places (see the windowing
+    // comment above) and report "ambiguous" forever.
     if (!ReadProcessMemory(proc, (LPCVOID)(insnAddr - kLookBack), win, sizeof(win), &winGot) ||
         winGot <= kLookBack) {
       lookBack = 0;
       winGot = 0;
-      ReadProcessMemory(proc, (LPCVOID)insnAddr, win, kForward, &winGot);
+      size_t tryForward = kForward;
+      while (tryForward >= kMinSigBytes && winGot == 0) {
+        SIZE_T got = 0;
+        if (ReadProcessMemory(proc, (LPCVOID)insnAddr, win, tryForward, &got) && got >= kMinSigBytes) {
+          winGot = got;
+          break;
+        }
+        tryForward /= 2;
+      }
     }
 
     // x86 cannot be decoded backward, so the lead-in is found by trying
@@ -757,6 +772,14 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
       SetHwBreakpointAllThreads(pid, address);
       armed = true;
       if (ev.u.CreateProcessInfo.hFile) CloseHandle(ev.u.CreateProcessInfo.hFile);
+    } else if (ev.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) {
+      // The debug API contract requires the debugger to close this handle;
+      // leaving it open both leaks a handle in Apprentice's own process AND
+      // keeps the loaded DLL file locked on disk for as long as the
+      // write-watch session stays armed. A Mono/Unity game loading
+      // assemblies continuously would otherwise leak one handle per DLL
+      // load for the duration of the session.
+      if (ev.u.LoadDll.hFile) CloseHandle(ev.u.LoadDll.hFile);
     } else if (ev.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT) {
       // A thread born mid-capture must get the breakpoint too.
       if (armed) SetHwBreakpointOnThread(ev.dwThreadId, address);
@@ -844,6 +867,12 @@ void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
       if (code != EXCEPTION_SINGLE_STEP && code != EXCEPTION_BREAKPOINT) {
         status = DBG_EXCEPTION_NOT_HANDLED;
       }
+    } else if (drain.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) {
+      // Same handle-close obligation as the main loop above — DLL loads
+      // keep arriving right up to detach (a Mono/Unity game loads
+      // assemblies continuously), and this drain loop is exactly the place
+      // those trailing loads land.
+      if (drain.u.LoadDll.hFile) CloseHandle(drain.u.LoadDll.hFile);
     }
     ContinueDebugEvent(drain.dwProcessId, drain.dwThreadId, status);
     waitMs = 20; // subsequent waits: re-check the deadline often, not block on it
@@ -914,7 +943,15 @@ static Napi::Array SnapshotToArray(Napi::Env env) {
     o.Set("signature", Napi::String::New(env, c.signature));
     o.Set("signatureOffset", Napi::Number::New(env, c.signatureOffset));
     o.Set("baseRegister", Napi::String::New(env, c.baseRegister));
-    o.Set("displacement", Napi::String::New(env, ToHex((uintptr_t)c.displacement)));
+    // Signed decimal, not hex-of-the-unsigned-cast: c.displacement is a
+    // signed int64_t and can legitimately be negative (the caught
+    // instruction's base register pointing past the watched field), and
+    // casting through uintptr_t before hex-formatting turned e.g. -16 into
+    // "0xfffffffffffffff0" — a huge positive number once the JS side does
+    // BigInt("0x..."). BigInt(...) already parses a signed decimal string
+    // correctly, so std::to_string is both correct and requires no
+    // consumer-side change.
+    o.Set("displacement", Napi::String::New(env, std::to_string(c.displacement)));
     o.Set("baseAddress", Napi::String::New(env, ToHex(c.baseAddress)));
     o.Set("effectiveAddress", Napi::String::New(env, ToHex(c.effectiveAddress)));
     o.Set("accessBytes", Napi::Number::New(env, c.accessBytes));
