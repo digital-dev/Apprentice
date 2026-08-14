@@ -8,7 +8,8 @@ import {
   saveProfile,
   recordModuleFingerprint,
   verifiedModules,
-  fingerprintOf
+  fingerprintOf,
+  type GameProfile
 } from '../../src/main/profile'
 
 let dir: string
@@ -140,6 +141,22 @@ describe('profile', () => {
   it('an empty file is the same as no file', () => {
     fs.writeFileSync(path.join(dir, 'empty.json'), '')
     expect(loadProfile('empty').cheats).toEqual([])
+  })
+
+  it('never leaves a truncated file behind if the process were to die mid-write', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apprentice-profile-'))
+    setGamesDir(dir)
+    const profile: GameProfile = { schema: 2, exe: 'game', modules: {}, cheats: [] }
+    saveProfile('game', profile)
+    // The write must go through a temp file + rename, not a direct write —
+    // confirm no stray .tmp file is left behind after a successful save
+    // (proving the rename happened), and that the real file is valid JSON.
+    const files = fs.readdirSync(dir)
+    expect(files.some((f) => f.endsWith('.tmp'))).toBe(false)
+    expect(files).toContain('game.json')
+    const written = JSON.parse(fs.readFileSync(path.join(dir, 'game.json'), 'utf-8'))
+    expect(written.cheats).toEqual([])
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })
 

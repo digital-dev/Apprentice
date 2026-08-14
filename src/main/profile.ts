@@ -108,8 +108,17 @@ function migrateByteDataType(cheats: StoredCheat[]): StoredCheat[] {
 }
 
 export function saveProfile(exeName: string, profile: GameProfile): void {
+  const target = filePathFor(exeName)
+  const tmp = target + '.tmp'
   fs.mkdirSync(gamesDir, { recursive: true })
-  fs.writeFileSync(filePathFor(exeName), JSON.stringify(profile, null, 2))
+  // Write to a temp file first, then rename over the target. A rename on
+  // the same filesystem is atomic on both Windows (ReplaceFile-backed) and
+  // POSIX — a crash or power loss mid-write leaves the .tmp file
+  // incomplete/absent and the ORIGINAL file untouched, instead of a
+  // half-written target that loadProfile then correctly refuses to open
+  // with no way to recover short of hand-editing JSON.
+  fs.writeFileSync(tmp, JSON.stringify(profile, null, 2))
+  fs.renameSync(tmp, target)
 }
 
 export function recordModuleFingerprint(
