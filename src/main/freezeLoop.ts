@@ -89,6 +89,14 @@ export class FreezeLoop {
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    // The re-entrancy guard belongs to the timer, not to the object: a stop()
+    // during an in-flight tick leaves that tick's promise still pending, and
+    // its .finally is the only thing that would clear this flag. A fresh
+    // start() before it settles would then find `ticking` still true and skip
+    // every tick until it did — silently, for as long as the orphaned write
+    // took. Clearing here is safe: the .finally sets it to false too, so the
+    // worst it can do is race to the same value.
+    this.ticking = false
   }
 
   // Every active cheat's write is STARTED in the same synchronous pass

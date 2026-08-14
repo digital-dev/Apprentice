@@ -111,6 +111,13 @@ function cheatStateLabel(status: CheatStatus): string {
           return 'module not loaded'
         case 'no-match':
           return 'no signature match — re-capture'
+        // The one reason here that describes a failed DISARM rather than a
+        // failed arm: the game's code is STILL patched even though the user
+        // asked to turn the cheat off. A bare 'failed' would read as "the
+        // cheat is off and something went wrong", which is the exact
+        // opposite of the truth and the whole point of this reason existing.
+        case 'restore-failed':
+          return 'still patched — restore failed, try again'
         default:
           return 'failed'
       }

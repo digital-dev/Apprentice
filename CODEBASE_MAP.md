@@ -191,7 +191,7 @@ from one game's evidence. A Cheat Engine table for the same game used an
 
 ---
 
-## Tests — 213, and what they can't tell you
+## Tests — 412, and what they can't tell you
 
 `npx vitest run` · `npx tsc --noEmit` · `npm run build`
 

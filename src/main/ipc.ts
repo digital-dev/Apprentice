@@ -53,6 +53,37 @@ import type { LoadedModule, MonoOps } from './anchor'
 let attachedHandle: number | null = null
 let attachedBase: string | null = null
 let attachedPid: number | null = null
+
+// How many scan-family native async operations are currently in flight.
+//
+// ScanFirstWorker, ScanNextWorker, ScanAobWorker and ResolvePointerChain
+// Worker each capture the raw HANDLE by value when they are dispatched and
+// then use it minutes later on a libuv worker thread. If a re-attach closes
+// that handle while one is still running, Windows is free to reissue the
+// exact same handle VALUE to the next OpenProcess — handle values are
+// recycled aggressively, immediately after a close — and the in-flight
+// worker would then read the WRONG process without any error. Tracking the
+// count lets attachTo say so out loud instead of switching silently.
+let scanOpsInFlight = 0
+
+function trackScanOp<T>(run: () => Promise<T>): Promise<T> {
+  scanOpsInFlight++
+  let p: Promise<T>
+  try {
+    p = run()
+  } catch (err) {
+    // Some of these throw synchronously (argument validation happens before
+    // the AsyncWorker is queued), in which case nothing is ever in flight.
+    scanOpsInFlight--
+    throw err
+  }
+  // Promise.resolve rather than p.finally directly: these are declared
+  // async but a test double (or a future sync fast path) may hand back a
+  // plain value, and the counter must still come back down.
+  return Promise.resolve(p).finally(() => {
+    scanOpsInFlight--
+  })
+}
 // The exe this session is attached to (no .exe suffix — matches profile file
 // naming), and what refreshModuleContext worked out about its modules on the
 // most recent attach: which are loaded now, and which of the ones cheats in
@@ -295,10 +326,11 @@ const patchOps: PatchOps = {
     attachedHandle === null ? null : nativeAddon.tryReadBytes(attachedHandle, address, length),
   writeBytes: (address, hexBytes) =>
     attachedHandle === null ? false : nativeAddon.writeBytes(attachedHandle, address, hexBytes),
-  scanAob: async (signature, rangeStart, rangeEnd) =>
-    attachedHandle === null
-      ? []
-      : nativeAddon.scanAob(attachedHandle, signature, rangeStart, rangeEnd),
+  scanAob: async (signature, rangeStart, rangeEnd) => {
+    if (attachedHandle === null) return []
+    const h = attachedHandle
+    return trackScanOp(() => nativeAddon.scanAob(h, signature, rangeStart, rangeEnd))
+  },
   allocateCave: (nearAddress) =>
     attachedHandle === null ? null : nativeAddon.allocateCave(attachedHandle, nearAddress),
   freeCave: (address) => {
@@ -438,10 +470,33 @@ function attachTo(pid: number, exeName: string): { handle: number; baseAddress: 
   // still opens a brand-new HANDLE below, so the old one must be closed
   // here too or it leaks silently. Safe even when patchEngine.restoreAll()
   // above already used it: CloseHandle only releases OUR reference to the
-  // kernel object, it doesn't affect the target process itself. Also safe
-  // against any aliasing with the new handle: nativeAddon.attach always
-  // opens a fresh HANDLE value, never reuses the old one.
-  if (attachedHandle !== null) nativeAddon.detach(attachedHandle)
+  // kernel object, it doesn't affect the target process itself.
+  //
+  // NOT safe against aliasing, though — this used to claim it was. Windows
+  // recycles handle VALUES aggressively, and can hand the very next
+  // OpenProcess the exact value we just closed. Anything still holding the
+  // old value would then silently address the NEW process. In this module
+  // everything reads `attachedHandle` live through a closure, so the only
+  // real exposure is a native scan-family AsyncWorker that captured the raw
+  // handle by value at dispatch time and is still running. That is narrow
+  // but real, so at minimum it is reported rather than hidden.
+  if (scanOpsInFlight > 0) {
+    console.warn(
+      `[attach] re-attaching to pid ${pid} while ${scanOpsInFlight} scan operation(s) are still in flight; ` +
+        'their results may belong to the previous process and should be discarded'
+    )
+  }
+  // Clear attachedHandle BEFORE closing and before the attach attempt. If
+  // the target died between being listed and now, nativeAddon.attach throws
+  // (process_utils.cc's Attach throws for a dead pid) — and leaving
+  // attachedHandle pointing at a handle we just CLOSED is strictly worse
+  // than leaving it stale: every later use (patchEngine.restoreAll, freeze
+  // writes, stopWriteWatch) would operate on a dead handle value that the
+  // OS may already have reissued to something else. Nulling first means a
+  // thrown attach leaves this module cleanly "not attached".
+  const previousHandle = attachedHandle
+  attachedHandle = null
+  if (previousHandle !== null) nativeAddon.detach(previousHandle)
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
   attachedBase = baseAddress
@@ -841,19 +896,25 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   )
 
+  // Each of these is wrapped in trackScanOp so attachTo can tell whether a
+  // native worker still holds a by-value copy of the handle it is about to
+  // close — see scanOpsInFlight's comment.
   ipcMain.handle('scan:first', (_e, dataType: string, value: number) => {
     if (attachedHandle === null) throw new Error('not attached')
-    return nativeAddon.scanFirst(attachedHandle, dataType, value)
+    const h = attachedHandle
+    return trackScanOp(() => nativeAddon.scanFirst(h, dataType, value))
   })
 
   ipcMain.handle('scan:next', (_e, candidates: Candidate[], dataType: string, filter: unknown) => {
     if (attachedHandle === null) throw new Error('not attached')
-    return nativeAddon.scanNext(attachedHandle, candidates, dataType, filter as never)
+    const h = attachedHandle
+    return trackScanOp(() => nativeAddon.scanNext(h, candidates, dataType, filter as never))
   })
 
   ipcMain.handle('scan:resolveChain', (_e, target: string, maxLevels: number) => {
     if (attachedHandle === null) throw new Error('not attached')
-    return nativeAddon.resolvePointerChain(attachedHandle, target, maxLevels)
+    const h = attachedHandle
+    return trackScanOp(() => nativeAddon.resolvePointerChain(h, target, maxLevels))
   })
 
   ipcMain.handle('writeWatch:start', (_e, address: string) => {
