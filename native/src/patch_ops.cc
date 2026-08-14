@@ -106,6 +106,14 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
                                    uintptr_t rangeStart, uintptr_t rangeEnd) {
   std::vector<uintptr_t> out;
   const size_t plen = pattern.size();
+  // `overlap = plen - 1` below is size_t arithmetic, so an empty pattern
+  // would wrap to SIZE_MAX and turn the chunk loop into nonsense. Not
+  // reachable today (HexToBytes rejects an empty signature before we get
+  // here), but this function should not depend on a caller-side check for
+  // its own memory safety — the sibling scanners in scanner.cc/pointer.cc
+  // pin their equivalent invariant with a static_assert; this one is a
+  // runtime size, so it gets a runtime guard.
+  if (plen == 0) return out;
 
   MEMORY_BASIC_INFORMATION mbi;
   uintptr_t addr = rangeStart;
@@ -246,10 +254,12 @@ Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
 // pages: temporarily make the page writable, write, put the original
 // protection back, then flush the target's instruction cache so the CPU
 // doesn't keep executing a stale cached copy of the bytes we just changed.
-// See protected_write.h's ProtectedWriteProcessMemory for the full dance
-// (including why a range that straddles a page boundary is refused rather
-// than silently mishandled) — this addon only ever patches a single
-// captured instruction, so that refusal should never trigger in normal use.
+// See protected_write.h's ProtectedCodeWrite for the full dance (including
+// why a range that straddles a page boundary is refused rather than
+// silently mishandled) — this addon only ever patches a single captured
+// instruction, so that refusal should never trigger in normal use. Data
+// writers use ProtectedDataWrite instead, which handles a straddle per
+// page rather than refusing it.
 Napi::Value WriteBytes(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   HANDLE h = reinterpret_cast<HANDLE>(
@@ -260,7 +270,7 @@ Napi::Value WriteBytes(const Napi::CallbackInfo& info) {
   std::vector<uint8_t> bytes;
   if (!HexToBytes(hex, bytes)) return Napi::Boolean::New(env, false);
 
-  bool ok = ProtectedWriteProcessMemory(h, address, bytes.data(), bytes.size());
+  bool ok = ProtectedCodeWrite(h, address, bytes.data(), bytes.size());
   return Napi::Boolean::New(env, ok);
 }
 

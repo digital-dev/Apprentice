@@ -129,4 +129,42 @@ describe('readValue / writeValue', () => {
     const ok = (addon as any).writeValue(handle, codeAddr, [], 'int8', 0x90)
     expect(ok).toBe(true)
   })
+
+  // Regression: the shared protect/restore helper originally refused ANY
+  // write straddling a page boundary — a rule that is load-bearing for
+  // patch_ops.cc's code patching but wrong for ordinary data writes, which
+  // spanned pages happily through a bare WriteProcessMemory before that
+  // helper existed. An 8-byte value landing in the last few bytes of a page
+  // is rare but perfectly legal, and silently failing it would break a value
+  // cheat permanently with no explanation. The straddle is now handled per
+  // page instead of refused.
+  //
+  // The module base is page-aligned, so base + 0x1000 - 4 puts 4 bytes on the
+  // PE-header page and 4 on the first .text page — two different, both
+  // non-writable, protections: exactly the case that used to fail.
+  function straddlingWriteRoundTrip(dataType: string, value: number): void {
+    const straddle = '0x' + (BigInt(baseAddress) + 0x1000n - 4n).toString(16)
+    const original: string = (addon as any).readBytes(handle, straddle, 8)
+
+    expect((addon as any).writeValue(handle, straddle, [], dataType, value)).toBe(true)
+    expect((addon as any).readValue(handle, straddle, [], dataType)).toBe(value)
+
+    // Put the harness's own bytes back, one byte at a time so each write
+    // stays within a single page, so later tests in this file (and the
+    // harness process itself) see the binary they expect.
+    for (let i = 0; i < 8; i++) {
+      const byteAddr = '0x' + (BigInt(straddle) + BigInt(i)).toString(16)
+      const byte = parseInt(original.slice(i * 2, i * 2 + 2), 16)
+      expect((addon as any).writeValue(handle, byteAddr, [], 'int8', byte)).toBe(true)
+    }
+    expect((addon as any).readBytes(handle, straddle, 8)).toBe(original)
+  }
+
+  it('writeValue of an int64 straddling a page boundary succeeds', () => {
+    straddlingWriteRoundTrip('int64', 1234567)
+  })
+
+  it('writeValue of a double straddling a page boundary succeeds', () => {
+    straddlingWriteRoundTrip('double', 2.5)
+  })
 })

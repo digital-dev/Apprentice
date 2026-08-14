@@ -217,7 +217,7 @@ int LuaWriteValue(lua_State* L, ValueKind kind, size_t size) {
     double value = luaL_checknumber(L, 2);
     EncodeFromDouble(value, ValueSpec{size, kind}, buf);
   }
-  bool ok = ProtectedWriteProcessMemory(h, address, buf, size);
+  bool ok = ProtectedDataWrite(h, address, buf, size);
   lua_pushboolean(L, ok);
   return 1;
 }
@@ -258,7 +258,10 @@ int LuaWriteBytes(lua_State* L) {
   const char* data = luaL_checklstring(L, 2, &length);
   if (length == 0 || length > 4096) return luaL_error(L, "writeBytes length must be 1..4096");
   HANDLE h = HandleFromRegistry(L);
-  bool ok = ProtectedWriteProcessMemory(h, address, data, length);
+  // Data variant, not the code one: a 256-byte writeBytes straddles a page
+  // boundary a few percent of the time, and before this dance existed it
+  // went through a plain WriteProcessMemory with no page restriction.
+  bool ok = ProtectedDataWrite(h, address, data, length);
   lua_pushboolean(L, ok);
   return 1;
 }

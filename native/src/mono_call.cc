@@ -2,6 +2,7 @@
 #include "platform/platform.h"
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -229,7 +230,22 @@ class RemoteCallWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     ok_ = RunRemoteCall(handle_, function_, args_, result_);
   }
 
@@ -304,7 +320,22 @@ class RemoteCallFloatWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     ok_ = RunRemoteCall(handle_, function_, args_, intResult_, floatResult_);
   }
 

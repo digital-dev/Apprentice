@@ -68,6 +68,9 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
   // WriteBytes uses: a value cheat can target a read-only data page or, via
   // the Memory Viewer's byte editor, a page inside the target's own code —
   // a plain WriteProcessMemory silently fails on either without this.
-  bool ok = ProtectedWriteProcessMemory(h, *addr, buf, specOpt->size);
+  // The DATA variant specifically: an 8-byte value landing in the last few
+  // bytes of a page must keep working, as it always did before this dance
+  // existed. See protected_write.h.
+  bool ok = ProtectedDataWrite(h, *addr, buf, specOpt->size);
   return Napi::Boolean::New(env, ok);
 }

@@ -148,6 +148,40 @@ describe('writeBytes rejects malformed hex', () => {
   })
 })
 
+describe('writeBytes refuses a write straddling a page boundary', () => {
+  // The counterpart to memory_ops.test.ts's straddling-writeValue tests.
+  // Data writes were split off onto a per-page protect/restore path so they
+  // stop failing at a page boundary — but CODE patching must keep refusing,
+  // and that refusal must not regress along with the data-path fix.
+  //
+  // Why it stays a refusal here: VirtualProtectEx reports only the FIRST
+  // page's prior protection, so restoring it across a two-page range would
+  // stamp page 1's protection onto page 2 permanently. A patched
+  // instruction is a single indivisible unit — there is no safe partial
+  // outcome — so writeBytes declines rather than mishandle it.
+  //
+  // base + 0x1000 - 4 sits 4 bytes before the first .text page, so an
+  // 8-byte write spans the header page and the code page.
+  it('returns false and leaves memory untouched', () => {
+    const straddle = '0x' + (BigInt(baseAddress) + 0x1000n - 4n).toString(16)
+    const before = (addon as any).readBytes(handle, straddle, 8)
+
+    expect((addon as any).writeBytes(handle, straddle, 'aa'.repeat(8))).toBe(false)
+
+    expect((addon as any).readBytes(handle, straddle, 8)).toBe(before)
+  })
+
+  it('still succeeds for the same length fully inside one page', () => {
+    const inside = '0x' + (BigInt(baseAddress) + 0x1000n).toString(16)
+    const before = (addon as any).readBytes(handle, inside, 8)
+
+    expect((addon as any).writeBytes(handle, inside, '90'.repeat(8))).toBe(true)
+    expect((addon as any).readBytes(handle, inside, 8)).toBe('90'.repeat(8))
+
+    expect((addon as any).writeBytes(handle, inside, before)).toBe(true)
+  })
+})
+
 describe('readBytes on an unreadable address', () => {
   it('throws instead of returning garbage', () => {
     // Low, unmapped addresses in the target's address space are never

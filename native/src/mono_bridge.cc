@@ -3,6 +3,7 @@
 #include "platform/platform.h"
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -193,7 +194,22 @@ class MonoResolveClassWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     // Real mono_class_from_name takes a MonoImage*, not a domain — and a
     // class lives in exactly one assembly's image, which we don't know in
     // advance. Enumerate every loaded assembly and try each one's image in
@@ -289,7 +305,22 @@ class MonoResolveFieldWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     // Attach, iterate, and call mono_field_get_offset on the match, all on
     // one continuous injected thread, via ResolveMemberSingleThread — see
     // ResolveClassSingleThread's comment for why per-call throwaway threads
@@ -404,7 +435,22 @@ class MonoCompileMethodWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     // Attach, iterate methods, and call mono_compile_method on the match —
     // all on one continuous injected thread. See
     // ResolveClassSingleThread's comment for why.
@@ -468,7 +514,22 @@ class MonoListFieldNamesWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     // Attach, walk every field (no early exit — every item is collected),
     // detach: all on one continuous injected thread, via
     // ListMemberNamesSingleThread. See ResolveClassSingleThread's comment
@@ -521,7 +582,22 @@ class MonoListMethodNamesWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     // Same rewrite as MonoListFieldNamesWorker, for the same reason — see
     // its comment.
     names_ = ListMemberNamesSingleThread(handle_, monoDllBase_, classHandle_,
@@ -663,11 +739,24 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
   }
 
   uint8_t ignored[8];
-  // Return value deliberately not checked, matching this function's
-  // pre-existing behavior: the collector buffer is read either way, so the
-  // free below waits for RunRemoteCall's own synchronous create-wait-close
-  // cycle to run to completion first, same as every other call site here.
-  RunRemoteCall(handle, foreach_, {stubAddr, bufferAddr}, ignored);
+  // RunRemoteCall returns false either because the call never got going or
+  // because its 2-second wait timed out — and on timeout it does NOT
+  // terminate the injected thread (see mono_call.cc: the cave is
+  // deliberately leaked rather than freed out from under a thread that
+  // might still be running inside it). That distinction matters more here
+  // than anywhere else in this file: the collector stub the injected thread
+  // executes lives INSIDE this cave, and the buffer it writes into is in
+  // this cave too. Freeing it while that thread is still running would rip
+  // out code the target process is executing and memory it is writing —
+  // an access violation in the GAME, not in us.
+  //
+  // So: the buffer is still READ either way (a partially-filled collector
+  // buffer is the pre-existing behavior and is harmless — the count field
+  // is only ever incremented after a slot is written), but the cave is
+  // FREED only when RunRemoteCall returned true, i.e. the thread provably
+  // finished. Otherwise the cave is leaked, exactly as every other
+  // RunRemoteCall site in this file does.
+  bool finished = RunRemoteCall(handle, foreach_, {stubAddr, bufferAddr}, ignored);
 
   uint64_t count = 0;
   platform::ReadMemory(handle, bufferAddr, &count, sizeof(count));
@@ -676,7 +765,7 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
   if (count > 0) {
     platform::ReadMemory(handle, bufferAddr + 8, slots.data(), count * sizeof(uintptr_t));
   }
-  platform::FreeMemory(handle, cave);
+  if (finished) platform::FreeMemory(handle, cave);
   return slots;
 }
 
@@ -1976,7 +2065,22 @@ class MonoListAssembliesWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     MonoContext ctx = AttachToMono(handle_, monoDllBase_);
     if (!ctx.ok) return;
 
@@ -2027,7 +2131,22 @@ class MonoListAssemblyNamesWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { results_ = ListAssemblyNamesSingleThread(handle_, monoDllBase_); }
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
+  void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() { results_ = ListAssemblyNamesSingleThread(handle_, monoDllBase_); }
 
   void OnOK() override {
     Napi::Env env = Env();
@@ -2079,7 +2198,22 @@ class MonoListClassesInImageWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
-  void Execute() override { results_ = ListClassesInImageSingleThread(handle_, monoDllBase_, imageHandle_); }
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
+  void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() { results_ = ListClassesInImageSingleThread(handle_, monoDllBase_, imageHandle_); }
 
   void OnOK() override {
     Napi::Env env = Env();
@@ -2286,7 +2420,22 @@ class MonoCallAttachedWorker : public Napi::AsyncWorker {
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
 
+  // binding.gyp defines NAPI_DISABLE_CPP_EXCEPTIONS, so node-addon-api does
+  // NOT wrap Execute() in a try/catch — an escaped C++ exception on this
+  // libuv worker thread calls std::terminate and kills the whole Electron
+  // process. SetError routes to OnError instead. Pure safety net: the
+  // success path is unchanged. Same shape as scanner.cc/pointer.cc.
   void Execute() override {
+    try {
+      Run();
+    } catch (const std::exception& e) {
+      SetError(e.what());
+    } catch (...) {
+      SetError("unknown native error");
+    }
+  }
+
+  void Run() {
     ok_ = RunAttachedCall(handle_, monoDllBase_, targetFn_, args_, intResult_, floatResult_,
                           floatArgIndex_, floatArgBits_);
   }
