@@ -140,4 +140,30 @@ describe('FreezeLoop', () => {
     loop.disable('c1')
     expect(loop.isEnabled('c1')).toBe(false)
   })
+
+  it('does not start a new tick while the previous one is still resolving', async () => {
+    let resolveFirst: (v: boolean) => void
+    let callCount = 0
+    const writeFn = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        return new Promise<boolean>((resolve) => { resolveFirst = resolve })
+      }
+      return Promise.resolve(true)
+    })
+    const loop = new FreezeLoop(writeFn, 50, DEGRADE_AFTER)
+    loop.start()
+    loop.enable(cheat)
+
+    // Advance well past several tick intervals while the first tick's write
+    // is still unresolved.
+    await vi.advanceTimersByTimeAsync(500)
+    expect(writeFn).toHaveBeenCalledTimes(1) // not piled up — still waiting on tick 1
+
+    resolveFirst!(true)
+    await vi.advanceTimersByTimeAsync(50)
+    expect(writeFn).toHaveBeenCalledTimes(2) // resumes normally once tick 1 settles
+
+    loop.stop()
+  })
 })

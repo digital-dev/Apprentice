@@ -30,6 +30,11 @@ export class FreezeLoop {
   private degraded = new Set<string>()
   private degradedCb: ((cheatId: string) => void) | null = null
   private recoveredCb: ((cheatId: string) => void) | null = null
+  // Guards against a tick overlapping the previous one — a slow write (a
+  // Mono target's resolve can legitimately exceed the tick interval) must
+  // not stack a second dispatch on top of a still-in-flight one, which
+  // would corrupt the degrade counter and flood writeFn with duplicate work.
+  private ticking = false
 
   constructor(writeFn: WriteFn, intervalMs = 100, degradeAfterTicks = DEFAULT_DEGRADE_AFTER_TICKS) {
     this.writeFn = writeFn
@@ -71,10 +76,13 @@ export class FreezeLoop {
   start(): void {
     if (this.timer) return
     this.timer = setInterval(() => {
-      // WriteFn is contractually non-rejecting (see its doc comment), so
-      // this catch only guards against something slipping through that
-      // contract — it must never take the interval down.
-      void this.tick().catch((err) => console.warn(`[freezeLoop] tick failed: ${String(err)}`))
+      if (this.ticking) return
+      this.ticking = true
+      void this.tick()
+        .catch((err) => console.warn(`[freezeLoop] tick failed: ${String(err)}`))
+        .finally(() => {
+          this.ticking = false
+        })
     }, this.intervalMs)
   }
 
