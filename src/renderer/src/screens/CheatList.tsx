@@ -13,6 +13,8 @@ import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
 import CheatRow, { type CheatRowVM, type RailState } from '../components/CheatRow'
 import ScriptEditor from '../components/ScriptEditor'
+import EditCheatModal from '../components/EditCheatModal'
+import EditPatchModal from '../components/EditPatchModal'
 import { playOn, playOff, playError } from '../sound'
 
 // Deliberately re-declared here instead of importing store.ts's
@@ -224,6 +226,14 @@ export default function CheatList({
   // Modules whose on-disk fingerprint no longer matches what was captured
   // against — drives the "this game has updated" banner.
   const [changedModules, setChangedModules] = useState<string[]>([])
+
+  // "Edit…" on a value cheat/patch's ⋮ menu — a scratch copy edited in
+  // place (EditCheatModal/EditPatchModal mutate it via onChange) and only
+  // written back to the profile + list state on Save, same edit-in-a-copy
+  // shape as editingScript below.
+  const [editingCheat, setEditingCheat] = useState<CheatDefinition | null>(null)
+  const [editingPatch, setEditingPatch] = useState<PatchCheat | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
 
   const [scripts, setScripts] = useState<ScriptCheat[]>([])
   const [scriptEnabled, setScriptEnabled] = useState<Record<string, boolean>>({})
@@ -830,6 +840,53 @@ export default function CheatList({
     setRenamingId(null)
   }
 
+  // Writes editingCheat back to the profile. If the cheat is enabled,
+  // restart the freeze loop on it — targets, dataType, mode, or value may
+  // all have just changed, and toggleFreeze(cheat, false) then true keeps
+  // a running cheat from writing through a stale definition until it's
+  // next manually toggled.
+  async function saveEditedCheat() {
+    if (!editingCheat) return
+    setEditError(null)
+    try {
+      const wasEnabled = enabled.has(editingCheat.id)
+      if (wasEnabled) await window.tamper.toggleFreeze(editingCheat, false)
+      await window.tamper.saveCheat(exeName, editingCheat)
+      setCheats((prev) => prev.map((c) => (c.id === editingCheat.id ? editingCheat : c)))
+      if (wasEnabled) await window.tamper.toggleFreeze(editingCheat, true)
+      setEditingCheat(null)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function saveEditedPatch() {
+    if (!editingPatch) return
+    setEditError(null)
+    try {
+      // Unlike a value cheat, an enabled patch's install IS its value —
+      // force mode encodes `value` straight into the installed bytes (see
+      // cave_ops.cc's encodeStore) — so a live-toggled patch must be
+      // restored and reapplied for a new value to actually take effect,
+      // not just have its saved definition updated underneath it.
+      const wasEnabled = patchEnabled.has(editingPatch.id)
+      if (wasEnabled) await window.tamper.restorePatch(editingPatch)
+      await window.tamper.saveCheat(exeName, editingPatch)
+      setPatches((prev) => prev.map((p) => (p.id === editingPatch.id ? editingPatch : p)))
+      if (wasEnabled) {
+        const result = await window.tamper.applyPatch(editingPatch)
+        if (!result.ok) {
+          setPatchError((prev) =>
+            new Map(prev).set(editingPatch.id, result.error ?? 'Reapply after edit failed')
+          )
+        }
+      }
+      setEditingPatch(null)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
 // Only a restricted, unambiguous key set is accepted — see this feature's
 // design doc for why (avoids needing a full browser-KeyEvent-to-Electron-
 // accelerator mapping table for punctuation/media keys nobody's asking
@@ -1202,6 +1259,13 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
             Hotkey for "{hotkeyFireError.cheatName}" failed: {hotkeyFireError.message}
           </p>
           <button onClick={() => setHotkeyFireError(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {editError && (
+        <div className="banner banner-error" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>Couldn't save the edit: {editError}</p>
+          <button onClick={() => setEditError(null)}>Dismiss</button>
         </div>
       )}
 
@@ -1585,6 +1649,7 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                     </button>
                   ),
                 menuItems: [
+                  { label: 'Edit…', onClick: () => setEditingCheat(cheat) },
                   {
                     label: 'Rename',
                     onClick: () => {
@@ -1718,6 +1783,13 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                   />
                 ),
                 menuItems: [
+                  // Only force/immune patches carry a value/dataType of
+                  // their own to retune — nop has neither, and
+                  // capture/guard's value lives on the anchored value cheat
+                  // instead (edit that cheat's "Edit…" to change it).
+                  ...((patch.mode ?? 'nop') === 'force' || patch.mode === 'immune'
+                    ? [{ label: 'Edit…', onClick: () => setEditingPatch(patch) }]
+                    : []),
                   {
                     label: 'Rename',
                     onClick: () => {
@@ -1868,6 +1940,30 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
           </button>
         </div>
       </div>
+
+      {editingCheat && (
+        <EditCheatModal
+          cheat={editingCheat}
+          onChange={setEditingCheat}
+          onSave={() => void saveEditedCheat()}
+          onClose={() => {
+            setEditingCheat(null)
+            setEditError(null)
+          }}
+        />
+      )}
+
+      {editingPatch && (
+        <EditPatchModal
+          patch={editingPatch}
+          onChange={setEditingPatch}
+          onSave={() => void saveEditedPatch()}
+          onClose={() => {
+            setEditingPatch(null)
+            setEditError(null)
+          }}
+        />
+      )}
 
       {editingScript && (
         <ScriptEditor

@@ -574,6 +574,61 @@ li:hover {
   border: none;
 }
 
+/* A shorter modal (edit-cheat/edit-patch forms) — no tab bar, no output
+   drawer, just head/body/foot. Same shell as .modal, different row count. */
+.modal.compact {
+  height: auto;
+  max-height: 85vh;
+  grid-template-rows: auto 1fr auto;
+}
+
+.modal-body {
+  min-height: 0;
+  padding: var(--s4);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.field-row > label {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 84px;
+}
+
+.field-row input,
+.field-row select {
+  flex: 1;
+  min-width: 120px;
+}
+
+.target-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.target-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.target-card-head .eyebrow {
+  margin: 0;
+}
+
 .tabbar {
   display: flex;
   gap: 2px;
