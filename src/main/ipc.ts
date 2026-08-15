@@ -883,7 +883,18 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   ipcMain.handle(
     'threads:registers',
     (_e, tid: number): Record<string, string> | null => {
-      if (attachedHandle === null) return null
+      if (attachedHandle === null || attachedPid === null) return null
+      // Only ever read a thread that actually belongs to the attached
+      // process — the native read resolves purely by tid (OpenThread does
+      // not scope to a process), so an unvalidated tid could target any
+      // thread this app has rights to, including Tamper's own Electron
+      // main thread. Suspending that from inside this very IPC handler
+      // (which runs ON the main thread) would freeze the app permanently:
+      // it would never reach ResumeThread. Re-enumerate on every call
+      // rather than trusting a tid handed back from an earlier
+      // listThreads() call — threads churn, and a stale/attacker-influenced
+      // renderer value must never bypass this check.
+      if (!nativeAddon.listThreads(attachedPid).some((t) => t.tid === tid)) return null
       return nativeAddon.getThreadRegisters(tid)
     }
   )

@@ -160,8 +160,6 @@ export default function MemoryViewer({
   const [threads, setThreads] = useState<{ tid: number }[]>([])
   const [selectedTid, setSelectedTid] = useState<number | null>(null)
   const [registers, setRegisters] = useState<Record<string, string> | null>(null)
-  const selectedTidRef = useRef<number | null>(null)
-  selectedTidRef.current = selectedTid
 
   // Thread list refresh — independent of baseAddress/windowStart, since
   // threads aren't tied to any address range. Runs whenever a process is
@@ -193,10 +191,9 @@ export default function MemoryViewer({
       setRegisters(null)
       return
     }
+    const tid = selectedTid
     let cancelled = false
     async function poll() {
-      const tid = selectedTidRef.current
-      if (tid === null) return
       const regs = await window.tamper.getThreadRegisters(tid)
       if (cancelled) return
       if (regs === null) {
@@ -683,10 +680,15 @@ export default function MemoryViewer({
         <div className="toolbar">
           <select
             value={selectedTid ?? ''}
-            onChange={(e) => setSelectedTid(e.target.value === '' ? null : Number(e.target.value))}
+            onChange={(e) => {
+              setSelectedTid(e.target.value === '' ? null : Number(e.target.value))
+              setRegisters(null)
+            }}
             disabled={threads.length === 0}
           >
-            {threads.length === 0 && <option value="">No threads</option>}
+            {selectedTid === null && (
+              <option value="">{threads.length === 0 ? 'No threads' : ''}</option>
+            )}
             {threads.map((t) => (
               <option key={t.tid} value={t.tid}>
                 Thread {t.tid}
