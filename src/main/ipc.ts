@@ -871,6 +871,23 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       nativeAddon.disassembleBuffer(buffer, baseAddress, maxCount)
   )
 
+  // Memory Viewer's Registers panel: which threads exist right now, and
+  // one thread's live register snapshot. Both null/empty rather than
+  // throwing when nothing is attached — same convention every other
+  // memory:*/patch:* handler in this file follows.
+  ipcMain.handle('threads:list', (): { tid: number }[] => {
+    if (attachedPid === null) return []
+    return nativeAddon.listThreads(attachedPid)
+  })
+
+  ipcMain.handle(
+    'threads:registers',
+    (_e, tid: number): Record<string, string> | null => {
+      if (attachedHandle === null) return null
+      return nativeAddon.getThreadRegisters(tid)
+    }
+  )
+
   ipcMain.handle('memory:writeByte', (_e, address: string, value: number): boolean => {
     if (attachedHandle === null) throw new Error('not attached')
     // Same call writeCheat makes for an int8 target — int8 is this app's

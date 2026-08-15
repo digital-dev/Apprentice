@@ -320,5 +320,15 @@ export const nativeAddon = {
     output: string[]
     error: string | null
     stateOut: Record<string, LuaValue>
-  }> => addon.runScript(handle, source, stateIn)
+  }> => addon.runScript(handle, source, stateIn),
+  // Every thread belonging to `pid`, via a point-in-time OS snapshot — for
+  // the Memory Viewer's thread picker. `pid` is the attached process's
+  // pid (ipc.ts's attachedPid), not a handle.
+  listThreads: (pid: number): { tid: number }[] => addon.listThreads(pid),
+  // One thread's live general-purpose registers (rax..r15, rip, rsp, rbp,
+  // rflags), each an 0x-prefixed hex string. null if the thread has
+  // already exited (listThreads' snapshot is a point-in-time copy — same
+  // race SuspendAll's own thread-open failure handling documents).
+  getThreadRegisters: (tid: number): Record<string, string> | null =>
+    addon.getThreadRegisters(tid)
 }
