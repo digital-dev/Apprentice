@@ -104,4 +104,39 @@ void ResumeAll();
 // of thread churn, not the total call count, is the target of this.
 void SleepMs(uint32_t ms);
 
+// One thread belonging to a process, as enumerated by ListThreads. Only
+// the id — everything else (start address, etc.) neither this feature nor
+// any caller today needs.
+struct ThreadInfo {
+  uint32_t tid = 0;
+};
+
+// Every thread's register file, as GetThreadRegisters reads it. General
+// purpose registers plus rip/rsp/rbp and eflags — enough to make sense of
+// a disassembly view (cmp/mov operands, the current instruction pointer)
+// without reaching for the full CONTEXT structure's FPU/XMM state, which
+// nothing in this codebase decodes or displays.
+struct ThreadRegisters {
+  uint64_t rax = 0, rbx = 0, rcx = 0, rdx = 0;
+  uint64_t rsi = 0, rdi = 0, rbp = 0, rsp = 0, rip = 0;
+  uint64_t r8 = 0, r9 = 0, r10 = 0, r11 = 0;
+  uint64_t r12 = 0, r13 = 0, r14 = 0, r15 = 0;
+  uint64_t rflags = 0;
+};
+
+// Every thread owned by `pid`, via a point-in-time Toolhelp32 snapshot —
+// same source SuspendAll already walks. False only if the snapshot itself
+// couldn't be taken (out param left empty either way); an empty-but-valid
+// result (process has no threads left, or none matched) is `true` with an
+// empty `out`, not a failure.
+bool ListThreads(uint32_t pid, std::vector<ThreadInfo>& out);
+
+// One thread's register file, read via a brief suspend/GetThreadContext/
+// resume (the same three-call shape SetHwBreakpointOnThread in
+// write_watch.cc already uses to read/modify debug registers). False when
+// the thread has already exited (the snapshot ListThreads read it from is
+// a point-in-time copy — same race SuspendAll's own OpenThread failure
+// handling documents) or the platform doesn't support this.
+bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out);
+
 } // namespace platform

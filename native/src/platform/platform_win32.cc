@@ -351,4 +351,43 @@ void CloseRemoteThread(ThreadHandle thread) {
   CloseHandle(reinterpret_cast<HANDLE>(thread));
 }
 
+bool ListThreads(uint32_t pid, std::vector<ThreadInfo>& out) {
+  out.clear();
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+  if (snap == INVALID_HANDLE_VALUE) return false;
+
+  THREADENTRY32 te{};
+  te.dwSize = sizeof(te);
+  if (Thread32First(snap, &te)) {
+    do {
+      if (te.th32OwnerProcessID == pid) out.push_back(ThreadInfo{te.th32ThreadID});
+    } while (Thread32Next(snap, &te));
+  }
+  CloseHandle(snap);
+  return true;
+}
+
+bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out) {
+  HANDLE th = OpenThread(THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, tid);
+  if (!th) return false;
+
+  bool ok = false;
+  if (SuspendThread(th) != (DWORD)-1) {
+    CONTEXT ctx{};
+    ctx.ContextFlags = CONTEXT_INTEGER | CONTEXT_CONTROL;
+    if (GetThreadContext(th, &ctx)) {
+      out.rax = ctx.Rax; out.rbx = ctx.Rbx; out.rcx = ctx.Rcx; out.rdx = ctx.Rdx;
+      out.rsi = ctx.Rsi; out.rdi = ctx.Rdi; out.rbp = ctx.Rbp; out.rsp = ctx.Rsp;
+      out.rip = ctx.Rip;
+      out.r8 = ctx.R8; out.r9 = ctx.R9; out.r10 = ctx.R10; out.r11 = ctx.R11;
+      out.r12 = ctx.R12; out.r13 = ctx.R13; out.r14 = ctx.R14; out.r15 = ctx.R15;
+      out.rflags = ctx.EFlags; // 32-bit in CONTEXT; zero-extended into the 64-bit field
+      ok = true;
+    }
+    ResumeThread(th);
+  }
+  CloseHandle(th);
+  return ok;
+}
+
 } // namespace platform

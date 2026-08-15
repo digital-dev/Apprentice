@@ -40,5 +40,10 @@ uintptr_t ResolveExport(ProcessHandle, uintptr_t, const std::string&) {
 ThreadHandle CreateRemoteThread(ProcessHandle, uintptr_t, uintptr_t) { return 0; }
 bool WaitForRemoteThread(ThreadHandle, uint32_t) { return false; }
 void CloseRemoteThread(ThreadHandle) {}
+bool ListThreads(uint32_t, std::vector<ThreadInfo>& out) {
+  out.clear();
+  return false;
+}
+bool GetThreadRegisters(uint32_t, ThreadRegisters&) { return false; }
 
 } // namespace platform
