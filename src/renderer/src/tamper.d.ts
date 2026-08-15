@@ -8,6 +8,7 @@ export {}
 // process ends up in the renderer bundle.
 export type { PatchState, PatchStatus } from '../../main/patchEngine'
 export type { CheatState, CheatStatus } from '../../main/cheatRuntime'
+export type { DisasmRow } from '../../main/nativeAddon'
 
 export interface Candidate {
   address: string
@@ -98,6 +99,16 @@ declare global {
       // Writes a single unsigned byte (0-255) at `address` — the memory
       // viewer's inline byte editor.
       writeMemoryByte: (address: string, value: number) => Promise<boolean>
+      // Decodes a block already fetched via readMemoryBlock into x86-64
+      // instruction rows (Zydis, Intel syntax) — no address/process args
+      // beyond what's needed to label each row, since it never reads memory
+      // itself. maxCount bounds how many instructions to decode (default 200
+      // on the main-process side).
+      disassemble: (
+        buffer: ArrayBuffer,
+        baseAddress: string,
+        maxCount?: number
+      ) => Promise<DisasmRow[]>
       // Resolves a ChainTarget's absolute address (moduleBase + baseOffset)
       // for the "View in Memory" button — only valid for a target with no
       // remaining offsets (offsets.length === 0), where baseOffset is the

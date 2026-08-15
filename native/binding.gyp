@@ -15,6 +15,7 @@
         "src/mono_call.cc",
         "src/mono_bridge.cc",
         "src/script_ops.cc",
+        "src/disasm_ops.cc",
         "third_party/zydis/Zydis.c",
         # The vendored Lua sources are shipped as .cpp (renamed from Lua's
         # own .c) so every compiler builds them as C++ without a

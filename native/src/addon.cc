@@ -10,6 +10,7 @@
 #include "mono_call.h"
 #include "mono_bridge.h"
 #include "script_ops.h"
+#include "disasm_ops.h"
 #include "platform/platform.h"
 
 #include <string>
@@ -98,6 +99,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monoListClassesInImage", Napi::Function::New(env, MonoListClassesInImage));
   exports.Set("monoCallAttached", Napi::Function::New(env, MonoCallAttached));
   exports.Set("runScript", Napi::Function::New(env, RunScript));
+  exports.Set("disassembleBuffer", Napi::Function::New(env, DisassembleBuffer));
   return exports;
 }
 

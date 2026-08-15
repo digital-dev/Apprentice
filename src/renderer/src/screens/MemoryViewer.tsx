@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { decodeAt, toArrayBuffer } from '../dissect'
 import type { DataType } from '../../../main/store'
+import type { DisasmRow } from '../tamper.d'
 
-const PAGE_SIZE = 256 // 16 bytes/row x 16 rows
+const HEX_BLOCK_SIZE = 2048 // 16 bytes/row x 128 rows — scrolls inside .hex-grid-scroll
+const DISASM_BLOCK_SIZE = 4096 // raw bytes fetched, then decoded into instruction rows
+const DISASM_MAX_ROWS = 400
 const POLL_MS = 250
 
 const MAX_ADDRESS = 0xffffffffffffffffn // 64-bit ceiling
+
+type ViewMode = 'hex' | 'disasm'
 
 function normalizeAddress(input: string): string | null {
   const trimmed = input.trim()
@@ -38,7 +43,9 @@ export default function MemoryViewer({
   const [baseAddress, setBaseAddress] = useState<string | null>(
     initialAddress ? normalizeAddress(initialAddress) : null
   )
+  const [viewMode, setViewMode] = useState<ViewMode>('hex')
   const [block, setBlock] = useState<ArrayBuffer | null>(null)
+  const [disasmRows, setDisasmRows] = useState<DisasmRow[]>([])
   // Distinct from "block is null" (reachable process, address unreadable):
   // this means the attached process itself is gone — a read/write rejected
   // rather than resolving. The stale grid is left on screen; only this
@@ -78,11 +85,23 @@ export default function MemoryViewer({
     let cancelled = false
     async function poll() {
       if (editingRef.current !== null) return
+      const fetchSize = viewMode === 'disasm' ? DISASM_BLOCK_SIZE : HEX_BLOCK_SIZE
       try {
-        const result = await window.tamper.readMemoryBlock(baseAddress!, PAGE_SIZE)
+        const result = await window.tamper.readMemoryBlock(baseAddress!, fetchSize)
         if (cancelled) return
-        setBlock(result ? toArrayBuffer(result) : null)
+        if (!result) {
+          setBlock(null)
+          setDisasmRows([])
+          setDetachedError(null)
+          return
+        }
+        const buf = toArrayBuffer(result)
+        setBlock(buf)
         setDetachedError(null)
+        if (viewMode === 'disasm') {
+          const rows = await window.tamper.disassemble(buf, baseAddress!, DISASM_MAX_ROWS)
+          if (!cancelled) setDisasmRows(rows)
+        }
       } catch (err) {
         // The attached process is gone (memory:readBlock throws 'not
         // attached' once ipc.ts's watcher.onVanish/attachTo paths null out
@@ -101,7 +120,7 @@ export default function MemoryViewer({
       cancelled = true
       clearInterval(id)
     }
-  }, [baseAddress])
+  }, [baseAddress, viewMode])
 
   function jump() {
     const normalized = normalizeAddress(addressInput)
@@ -110,8 +129,23 @@ export default function MemoryViewer({
 
   function page(deltaPages: number) {
     if (!baseAddress) return
-    const delta = BigInt(deltaPages * PAGE_SIZE)
-    let next = BigInt(baseAddress) + delta
+    let next: bigint
+    if (viewMode === 'disasm' && deltaPages > 0 && disasmRows.length > 0) {
+      // Exact resync: the address right after the last decoded instruction,
+      // rather than a guessed byte delta — instructions aren't fixed-width,
+      // so anything else risks landing mid-instruction on the next page.
+      const last = disasmRows[disasmRows.length - 1]
+      next = BigInt(last.address) + BigInt(last.length)
+    } else {
+      // Backward paging (either mode) and all of hex mode: a fixed byte
+      // delta. For disassembly this can land mid-instruction — the decoder
+      // resyncs with the real byte stream within a row or two (each
+      // misaligned byte is shown as its own "??" row, same as any other
+      // undecodable byte), so a stray row at the top of a page-up is a
+      // known, self-correcting cosmetic wrinkle, not a bug.
+      const delta = BigInt(deltaPages * (viewMode === 'disasm' ? DISASM_BLOCK_SIZE : HEX_BLOCK_SIZE))
+      next = BigInt(baseAddress) + delta
+    }
     if (next < 0n) next = 0n
     const normalized = '0x' + next.toString(16)
     setBaseAddress(normalized)
@@ -138,7 +172,7 @@ export default function MemoryViewer({
       } else {
         setDetachedError(null)
       }
-      const refreshed = await window.tamper.readMemoryBlock(baseAddress, PAGE_SIZE)
+      const refreshed = await window.tamper.readMemoryBlock(baseAddress, HEX_BLOCK_SIZE)
       setBlock(refreshed ? toArrayBuffer(refreshed) : null)
     } catch {
       setDetachedError('Lost connection to the attached process.')
@@ -164,65 +198,102 @@ export default function MemoryViewer({
         <button onClick={() => page(1)} disabled={!baseAddress}>
           Next page
         </button>
-        <button onClick={onDone}>Done</button>
+        <div className="tabbar" style={{ height: 34, border: 'none' }}>
+          <button
+            className={`tab btn-sm ${viewMode === 'hex' ? 'active' : ''}`}
+            onClick={() => setViewMode('hex')}
+          >
+            Hex
+          </button>
+          <button
+            className={`tab btn-sm ${viewMode === 'disasm' ? 'active' : ''}`}
+            onClick={() => setViewMode('disasm')}
+          >
+            Disassembly
+          </button>
+        </div>
+        <button className="btn-quiet" onClick={onDone}>
+          Done
+        </button>
       </div>
 
-      {detachedError && (
-        <p className="muted" style={{ color: 'var(--error)' }}>
-          {detachedError}
-        </p>
-      )}
+      {detachedError && <p className="banner banner-error">{detachedError}</p>}
 
       {baseAddress && !bytes && <p className="muted">Unreadable at this address.</p>}
 
-      {baseAddress && bytes && (
-        <table className="hex-grid">
-          <tbody>
-            {Array.from({ length: PAGE_SIZE / 16 }, (_, row) => {
-              const rowOffset = row * 16
-              const rowAddress = '0x' + (BigInt(baseAddress) + BigInt(rowOffset)).toString(16)
-              return (
-                <tr key={row}>
-                  <td className="addr">{rowAddress}</td>
-                  {Array.from({ length: 16 }, (_, col) => {
-                    const offset = rowOffset + col
-                    const value = bytes[offset]
-                    return (
-                      <td key={col}>
-                        {editingOffset === offset ? (
-                          <input
-                            autoFocus
-                            size={2}
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') void commitEdit(offset)
-                              if (e.key === 'Escape') setEditingOffset(null)
-                            }}
-                            onBlur={() => setEditingOffset(null)}
-                          />
-                        ) : (
-                          <span onClick={() => startEdit(offset, value)}>
-                            {value.toString(16).padStart(2, '0')}
-                          </span>
-                        )}
-                      </td>
-                    )
-                  })}
-                  <td className="ascii">
+      {baseAddress && bytes && viewMode === 'hex' && (
+        <div className="hex-grid-scroll">
+          <table className="hex-grid">
+            <tbody>
+              {Array.from({ length: HEX_BLOCK_SIZE / 16 }, (_, row) => {
+                const rowOffset = row * 16
+                const rowAddress = '0x' + (BigInt(baseAddress) + BigInt(rowOffset)).toString(16)
+                return (
+                  <tr key={row}>
+                    <td className="addr">{rowAddress}</td>
                     {Array.from({ length: 16 }, (_, col) => {
-                      const value = bytes[rowOffset + col]
-                      return value >= 32 && value < 127 ? String.fromCharCode(value) : '.'
-                    }).join('')}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                      const offset = rowOffset + col
+                      const value = bytes[offset]
+                      return (
+                        <td key={col}>
+                          {editingOffset === offset ? (
+                            <input
+                              autoFocus
+                              size={2}
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') void commitEdit(offset)
+                                if (e.key === 'Escape') setEditingOffset(null)
+                              }}
+                              onBlur={() => setEditingOffset(null)}
+                            />
+                          ) : (
+                            <span onClick={() => startEdit(offset, value)}>
+                              {value.toString(16).padStart(2, '0')}
+                            </span>
+                          )}
+                        </td>
+                      )
+                    })}
+                    <td className="ascii">
+                      {Array.from({ length: 16 }, (_, col) => {
+                        const value = bytes[rowOffset + col]
+                        return value >= 32 && value < 127 ? String.fromCharCode(value) : '.'
+                      }).join('')}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      {baseAddress && bytes && (
+      {baseAddress && bytes && viewMode === 'disasm' && (
+        <div className="disasm-scroll">
+          <table className="disasm-list">
+            <tbody>
+              {disasmRows.map((row) => (
+                <tr key={row.address} className={row.text === '??' ? 'undecoded' : undefined}>
+                  <td className="addr">{row.address}</td>
+                  <td className="disasm-bytes">{row.bytes}</td>
+                  <td className="disasm-text">{row.text}</td>
+                </tr>
+              ))}
+              {disasmRows.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="muted">
+                    Decoding…
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {baseAddress && bytes && viewMode === 'hex' && (
         <div className="dissect-panel">
           <h3>Structure Dissect</h3>
           <div className="toolbar">

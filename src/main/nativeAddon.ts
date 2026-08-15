@@ -11,6 +11,12 @@ export interface ModuleInfo {
   version: string | null
 }
 export interface AttachResult { handle: number; baseAddress: string }
+export interface DisasmRow {
+  address: string
+  bytes: string // unspaced hex
+  text: string // formatted Intel-syntax instruction, e.g. "mov rax, [rbx+0x8]"
+  length: number
+}
 export interface Candidate { address: string; value: number }
 export type ScanFilter =
   | { mode: 'exact'; value: number }
@@ -127,6 +133,16 @@ export const nativeAddon = {
       return null
     }
   },
+  // Interprets an already-fetched block (from readMemoryBlock) as x86-64
+  // instructions via the same Zydis decoder write_watch.cc uses to catch
+  // writes — no process handle, no new memory read, just decoding bytes the
+  // Memory Viewer already has. Synchronous: decoding a viewer-sized block
+  // (a few KB) takes well under a millisecond, not worth a worker thread.
+  disassembleBuffer: (
+    buffer: Buffer,
+    baseAddress: string,
+    maxCount?: number
+  ): DisasmRow[] => addon.disassembleBuffer(buffer, baseAddress, maxCount),
   writeBytes: (handle: number, address: string, hexBytes: string): boolean =>
     addon.writeBytes(handle, address, hexBytes),
   // Runs on a background thread in the addon (Napi::AsyncWorker) and returns

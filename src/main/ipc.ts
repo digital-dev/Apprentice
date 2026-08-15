@@ -862,6 +862,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   )
 
+  // No attach check: this only decodes a buffer the renderer already read
+  // via memory:readBlock — it never touches the process itself, so it works
+  // (or fails on its own bytes-related terms) regardless of attach state.
+  ipcMain.handle(
+    'memory:disassemble',
+    (_e, buffer: Buffer, baseAddress: string, maxCount?: number) =>
+      nativeAddon.disassembleBuffer(buffer, baseAddress, maxCount)
+  )
+
   ipcMain.handle('memory:writeByte', (_e, address: string, value: number): boolean => {
     if (attachedHandle === null) throw new Error('not attached')
     // Same call writeCheat makes for an int8 target — int8 is this app's

@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('memory:readBlock', address, length),
   writeMemoryByte: (address: string, value: number) =>
     ipcRenderer.invoke('memory:writeByte', address, value),
+  disassemble: (buffer: ArrayBuffer, baseAddress: string, maxCount?: number) =>
+    ipcRenderer.invoke('memory:disassemble', Buffer.from(buffer), baseAddress, maxCount),
   resolveTargetAddress: (moduleName: string, baseOffset: string) =>
     ipcRenderer.invoke('memory:resolveTargetAddress', moduleName, baseOffset),
   verifyCheat: (cheat: CheatDefinition, expectedValue: number | null) =>

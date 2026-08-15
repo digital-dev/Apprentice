@@ -657,7 +657,18 @@ li:hover {
   color: var(--muted);
 }
 
-/* --- Memory Viewer hex grid — previously entirely unstyled. --- */
+/* --- Memory Viewer: scrollable hex grid + disassembly list. Both fetch a
+   window bigger than fits on screen (see MemoryViewer.tsx's
+   HEX_BLOCK_SIZE/DISASM_BLOCK_SIZE) and rely on the browser's own scroll —
+   Prev/Next page jump by a whole window once you reach an edge. --- */
+.hex-grid-scroll,
+.disasm-scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+}
+
 .hex-grid {
   border-collapse: collapse;
   font-family: var(--font-data);
@@ -697,6 +708,47 @@ li:hover {
 
 .hex-grid tr:hover {
   background: rgba(255, 255, 255, 0.025);
+}
+
+/* --- Disassembly list: address | raw bytes | Intel-syntax instruction,
+   Cheat-Engine-style. Kept as a plain table like .hex-grid (not a full
+   CheatRow grid) — this is a dense read-mostly listing, not an actions
+   row. --- */
+.disasm-list {
+  border-collapse: collapse;
+  font-family: var(--font-data);
+  font-size: 12px;
+  width: 100%;
+}
+
+.disasm-list td {
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.disasm-list .addr {
+  color: var(--muted);
+  text-align: right;
+}
+
+.disasm-list .disasm-bytes {
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  min-width: 160px;
+}
+
+.disasm-list .disasm-text {
+  color: var(--text);
+  width: 100%;
+}
+
+.disasm-list tr:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.disasm-list tr.undecoded .disasm-text {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .dissect-panel {
