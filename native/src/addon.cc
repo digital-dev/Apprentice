@@ -66,6 +66,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getModuleBase", Napi::Function::New(env, GetModuleBase));
   exports.Set("readValue", Napi::Function::New(env, ReadValue));
   exports.Set("writeValue", Napi::Function::New(env, WriteValue));
+  exports.Set("resolveAddress", Napi::Function::New(env, ResolveAddress));
   exports.Set("startWriteWatch", Napi::Function::New(env, StartWriteWatch));
   exports.Set("pollWriteWatch", Napi::Function::New(env, PollWriteWatch));
   exports.Set("stopWriteWatch", Napi::Function::New(env, StopWriteWatch));

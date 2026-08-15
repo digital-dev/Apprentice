@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat } from '../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat, CheatTarget } from '../main/store'
 
 contextBridge.exposeInMainWorld('tamper', {
   listProcesses: () => ipcRenderer.invoke('process:list'),
@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('memory:disassemble', Buffer.from(buffer), baseAddress, maxCount),
   resolveTargetAddress: (moduleName: string, baseOffset: string) =>
     ipcRenderer.invoke('memory:resolveTargetAddress', moduleName, baseOffset),
+  resolveCheatTargetAddress: (target: CheatTarget) =>
+    ipcRenderer.invoke('cheats:resolveTargetAddress', target),
   verifyCheat: (cheat: CheatDefinition, expectedValue: number | null) =>
     ipcRenderer.invoke('cheats:verify', cheat, expectedValue),
   scanFirst: (dataType: string, value: number) => ipcRenderer.invoke('scan:first', dataType, value),

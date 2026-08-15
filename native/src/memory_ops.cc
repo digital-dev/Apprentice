@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 
 namespace {
@@ -73,4 +74,25 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
   // existed. See protected_write.h.
   bool ok = ProtectedDataWrite(h, *addr, buf, specOpt->size);
   return Napi::Boolean::New(env, ok);
+}
+
+// Address-only counterpart to ReadValue/WriteValue: walks the same forward
+// base+offsets chain but returns the resolved address itself instead of
+// reading or writing through it — the Memory Viewer's "View in Memory" on a
+// saved cheat wants to land ON the value's address, not read its current
+// contents (readValue already exists for that, and would additionally
+// require a dataType this caller has no reason to know).
+Napi::Value ResolveAddress(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  HANDLE h = reinterpret_cast<HANDLE>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  uintptr_t base = ParseHex(info[1].As<Napi::String>().Utf8Value());
+  auto offsets = ParseOffsets(info[2].As<Napi::Array>());
+
+  auto addr = ResolveChain(h, base, offsets);
+  if (!addr) return env.Null();
+
+  char buf[32];
+  snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)*addr);
+  return Napi::String::New(env, buf);
 }

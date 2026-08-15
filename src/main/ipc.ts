@@ -897,6 +897,25 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   )
 
+  // General "View in Memory" resolver for a saved value cheat's target —
+  // unlike memory:resolveTargetAddress above (module+baseOffset only, no
+  // dereference), this handles all three target shapes a cheat can have:
+  // anchor (capture patch slot), mono (class/field), and a full module+
+  // offsets pointer chain (walked via the same ResolveChain readValue/
+  // writeValue use, but returning the address itself — see nativeAddon.ts's
+  // resolveAddress and memory_ops.cc's native counterpart).
+  ipcMain.handle(
+    'cheats:resolveTargetAddress',
+    async (_e, target: ChainTarget): Promise<string | null> => {
+      if (attachedHandle === null) return null
+      if (isAnchorTarget(target)) return resolveAnchor(attachedHandle, target)
+      if (isMonoTarget(target)) return resolveMonoTarget(attachedHandle, target)
+      const moduleBase = nativeAddon.getModuleBase(attachedHandle, target.moduleName)
+      if (moduleBase === null) return null
+      return nativeAddon.resolveAddress(attachedHandle, moduleBase, fullOffsets(target))
+    }
+  )
+
   ipcMain.handle(
     'cheats:verify',
     async (_e, cheat: CheatDefinition, expectedValue: number | null): Promise<TargetStatus[]> => {

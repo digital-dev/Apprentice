@@ -198,6 +198,25 @@ export default function CheatList({
   const [hotkeyFireError, setHotkeyFireError] = useState<{ cheatName: string; message: string } | null>(
     null
   )
+  // "View in Memory" on a value cheat's own ⋮ menu — unlike a patch (whose
+  // located address is already sitting in patchStatuses from locatePatch),
+  // a value cheat has no address to hand until asked: resolve it fresh
+  // against whichever of its targets currently works, same fallback order
+  // toggle()/writeCheat use (first target that resolves wins).
+  const [memViewError, setMemViewError] = useState<string | null>(null)
+  async function viewCheatInMemory(cheat: CheatDefinition) {
+    setMemViewError(null)
+    for (const target of cheat.targets) {
+      const address = await window.tamper.resolveCheatTargetAddress(target)
+      if (address) {
+        onViewInMemory(address)
+        return
+      }
+    }
+    setMemViewError(
+      `Could not resolve a live address for "${cheat.name}" — is the game attached and this target currently resolving?`
+    )
+  }
   // Runtime state pushed by cheatRuntime for each armed patch — keyed by
   // patch id, same as patchStatuses. Populated only once a patch has been
   // toggled on at least once; patchStatusLabel covers the pre-arm readout.
@@ -1186,6 +1205,13 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
         </div>
       )}
 
+      {memViewError && (
+        <div className="banner banner-error" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>{memViewError}</p>
+          <button onClick={() => setMemViewError(null)}>Dismiss</button>
+        </div>
+      )}
+
       {pendingMonoSelection?.kind === 'value' && (
         <div className="banner" style={{ flexWrap: 'wrap' }}>
           <p style={{ flexBasis: '100%' }}>
@@ -1577,6 +1603,7 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                     label: isVerifying ? 'Hide verify' : 'Verify…',
                     onClick: () => setVerifyOpen(isVerifying ? null : cheat.id)
                   },
+                  { label: 'View in Memory', onClick: () => viewCheatInMemory(cheat) },
                   { label: 'Delete', danger: true, onClick: () => remove(cheat) }
                 ],
                 subrow: hotkeyError && isCapturingHotkey ? subrowContent : isVerifying ? subrowContent : undefined,
@@ -1704,6 +1731,14 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                   },
                   ...(patch.hotkey
                     ? [{ label: 'Clear hotkey', onClick: () => saveHotkey(patch, null) }]
+                    : []),
+                  // status.address is already resolved (locatePatch ran on
+                  // attach/toggle) — no fresh IPC round-trip needed, unlike
+                  // a value cheat's viewCheatInMemory above. Absent when
+                  // the patch hasn't located at all (module not loaded, no
+                  // signature match) — nothing to navigate to yet.
+                  ...(status?.address
+                    ? [{ label: 'View in Memory', onClick: () => onViewInMemory(status.address as string) }]
                     : []),
                   { label: 'Delete', danger: true, onClick: () => removePatch(patch) }
                 ],

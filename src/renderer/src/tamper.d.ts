@@ -1,4 +1,4 @@
-import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat } from '../../main/store'
+import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat, CheatTarget } from '../../main/store'
 
 export {}
 
@@ -116,6 +116,13 @@ declare global {
       // not attached or the module isn't loaded. baseOffset is
       // module-relative, never an address to navigate to directly.
       resolveTargetAddress: (moduleName: string, baseOffset: string) => Promise<string | null>
+      // General counterpart for a saved value cheat's own CheatTarget —
+      // handles all three target shapes (anchor, mono, module+offsets
+      // chain), unlike resolveTargetAddress above which only covers the
+      // simplest module+baseOffset case. Used by CheatList's "View in
+      // Memory" menu item. null when not attached or the target doesn't
+      // currently resolve (module not loaded, chain broken, etc).
+      resolveCheatTargetAddress: (target: CheatTarget) => Promise<string | null>
       verifyCheat: (
         cheat: CheatDefinition,
         expectedValue: number | null

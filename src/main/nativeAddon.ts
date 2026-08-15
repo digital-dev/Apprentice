@@ -105,6 +105,11 @@ export const nativeAddon = {
     dataType: string,
     value: number
   ): boolean => addon.writeValue(handle, baseAddress, offsets, dataType, value),
+  // Address-only counterpart to readValue/writeValue — walks the same chain
+  // but returns where it landed instead of what's there, for "View in
+  // Memory" on a saved cheat (see ipc.ts's resolveCheatTargetAddress).
+  resolveAddress: (handle: number, baseAddress: string, offsets: string[]): string | null =>
+    addon.resolveAddress(handle, baseAddress, offsets),
   readBytes: (handle: number, address: string, length: number): string =>
     addon.readBytes(handle, address, length),
   // Verify-before-patch treats "can't read there" as a normal outcome (the
