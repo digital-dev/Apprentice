@@ -819,6 +819,40 @@ li:hover {
   color: var(--muted);
 }
 
+.registers-panel {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s4);
+}
+
+.registers-panel h3 {
+  margin: 0 0 var(--s2);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.registers-grid {
+  border-collapse: collapse;
+  font-family: var(--font-data);
+  font-size: 12px;
+  width: 100%;
+}
+
+.registers-grid td {
+  padding: 3px 14px 3px 0;
+  white-space: nowrap;
+}
+
+.registers-grid .reg-name {
+  color: var(--muted);
+  margin-right: 8px;
+}
+
+.registers-grid .reg-value {
+  color: var(--text);
+}
+
 .banner {
   font-size: 13px;
   color: var(--accent);

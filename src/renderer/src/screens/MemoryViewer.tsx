@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { decodeAt, toArrayBuffer } from '../dissect'
+import { pickThread } from '../registers'
 import type { DataType } from '../../../main/store'
 import type { DisasmRow } from '../tamper.d'
 
@@ -18,6 +19,11 @@ const DISSECT_BLOCK_SIZE = 256 // Structure Dissect reads a small block AT baseA
 const SCROLL_TRIGGER_PX = 300
 
 const POLL_MS = 250
+
+// Thread lists churn constantly in a live game — refreshing the dropdown
+// at the same 250ms cadence as the register poll itself would be wasted
+// re-renders for something that doesn't need to be that fresh.
+const THREAD_LIST_POLL_MS = 2000
 
 const MAX_ADDRESS = 0xffffffffffffffffn // 64-bit ceiling
 
@@ -150,6 +156,66 @@ export default function MemoryViewer({
   const [newDataType, setNewDataType] = useState<DataType>('int32')
   const [newLabel, setNewLabel] = useState('')
   const [dissectBlock, setDissectBlock] = useState<ArrayBuffer | null>(null)
+
+  const [threads, setThreads] = useState<{ tid: number }[]>([])
+  const [selectedTid, setSelectedTid] = useState<number | null>(null)
+  const [registers, setRegisters] = useState<Record<string, string> | null>(null)
+  const selectedTidRef = useRef<number | null>(null)
+  selectedTidRef.current = selectedTid
+
+  // Thread list refresh — independent of baseAddress/windowStart, since
+  // threads aren't tied to any address range. Runs whenever a process is
+  // attached at all, which this screen has no direct signal for; it polls
+  // regardless and simply gets [] back until something is attached (same
+  // shape as the dissect block's own poll).
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      const list = await window.tamper.listThreads()
+      if (cancelled) return
+      setThreads(list)
+      setSelectedTid((current) => pickThread(current, list))
+    }
+    void poll()
+    const id = setInterval(poll, THREAD_LIST_POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  // Register poll for the selected thread — its own 250ms interval,
+  // independent of the hex/disasm window poll and the thread-list poll
+  // above (three independent polling loops already coexist in this file;
+  // see the Structure Dissect panel's own poll for precedent).
+  useEffect(() => {
+    if (selectedTid === null) {
+      setRegisters(null)
+      return
+    }
+    let cancelled = false
+    async function poll() {
+      const tid = selectedTidRef.current
+      if (tid === null) return
+      const regs = await window.tamper.getThreadRegisters(tid)
+      if (cancelled) return
+      if (regs === null) {
+        // The thread exited between the last list refresh and this read —
+        // clear the selection so the next thread-list tick picks a live
+        // one, rather than polling a dead tid until that tick arrives.
+        setSelectedTid(null)
+        setRegisters(null)
+        return
+      }
+      setRegisters(regs)
+    }
+    void poll()
+    const id = setInterval(poll, POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [selectedTid])
 
   // Structure Dissect's own small, fixed-address poll — deliberately NOT
   // tied to the scrolling window above (windowStart moves as the user
@@ -611,6 +677,49 @@ export default function MemoryViewer({
           </ul>
         </div>
       )}
+
+      <div className="registers-panel">
+        <h3>Registers</h3>
+        <div className="toolbar">
+          <select
+            value={selectedTid ?? ''}
+            onChange={(e) => setSelectedTid(e.target.value === '' ? null : Number(e.target.value))}
+            disabled={threads.length === 0}
+          >
+            {threads.length === 0 && <option value="">No threads</option>}
+            {threads.map((t) => (
+              <option key={t.tid} value={t.tid}>
+                Thread {t.tid}
+              </option>
+            ))}
+          </select>
+        </div>
+        {selectedTid !== null && registers === null && <p className="muted">Reading…</p>}
+        {registers && (
+          <table className="registers-grid">
+            <tbody>
+              {(
+                [
+                  ['rax', 'rbx', 'rcx', 'rdx'],
+                  ['rsi', 'rdi', 'rbp', 'rsp'],
+                  ['rip', 'r8', 'r9', 'r10'],
+                  ['r11', 'r12', 'r13', 'r14'],
+                  ['r15', 'rflags']
+                ] as const
+              ).map((row, i) => (
+                <tr key={i}>
+                  {row.map((name) => (
+                    <td key={name}>
+                      <span className="reg-name">{name}</span>
+                      <span className="reg-value">{registers[name]}</span>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   )
 }
