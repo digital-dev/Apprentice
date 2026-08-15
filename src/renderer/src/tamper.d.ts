@@ -116,6 +116,13 @@ declare global {
       // not attached or the module isn't loaded. baseOffset is
       // module-relative, never an address to navigate to directly.
       resolveTargetAddress: (moduleName: string, baseOffset: string) => Promise<string | null>
+      // Every thread belonging to the attached process, for the Registers
+      // panel's thread picker. [] when nothing is attached.
+      listThreads: () => Promise<{ tid: number }[]>
+      // One thread's live registers (rax..r15, rip, rsp, rbp, rflags),
+      // each an 0x-prefixed hex string. null when nothing is attached or
+      // the thread has already exited.
+      getThreadRegisters: (tid: number) => Promise<Record<string, string> | null>
       // General counterpart for a saved value cheat's own CheatTarget —
       // handles all three target shapes (anchor, mono, module+offsets
       // chain), unlike resolveTargetAddress above which only covers the

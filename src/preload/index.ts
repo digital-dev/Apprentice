@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('memory:disassemble', Buffer.from(buffer), baseAddress, maxCount),
   resolveTargetAddress: (moduleName: string, baseOffset: string) =>
     ipcRenderer.invoke('memory:resolveTargetAddress', moduleName, baseOffset),
+  listThreads: () => ipcRenderer.invoke('threads:list'),
+  getThreadRegisters: (tid: number) => ipcRenderer.invoke('threads:registers', tid),
   resolveCheatTargetAddress: (target: CheatTarget) =>
     ipcRenderer.invoke('cheats:resolveTargetAddress', target),
   verifyCheat: (cheat: CheatDefinition, expectedValue: number | null) =>
