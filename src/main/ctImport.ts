@@ -43,15 +43,22 @@ function unescapeXml(s: string): string {
     .replace(/&apos;/g, "'")
 }
 
-// Extracts every top-level <tag>...</tag> block from `xml`, correctly
-// skipping over NESTED blocks of the same tag (CheatEntry nests itself for
-// folders/GroupHeaders) rather than matching the first inner close tag —
-// a naive non-greedy regex would truncate a folder's own boundaries at its
-// first child's close tag instead of its own.
-function extractTagBlocks(xml: string, tag: string): string[] {
+// Extracts every top-level <tag>...</tag> occurrence from `xml` as a
+// [start, end) offset pair into the ORIGINAL string, where `start` is the
+// index of the opening "<tag>" and `end` is just past the closing
+// "</tag>" — correctly skipping over NESTED blocks of the same tag
+// (CheatEntry nests itself for folders/GroupHeaders) rather than matching
+// the first inner close tag, which a naive non-greedy regex would do,
+// truncating a folder's own boundaries at its first child's close tag
+// instead of its own.
+//
+// Returning offsets (not copied substrings) is what lets callers that need
+// to STRIP these blocks out of `xml` (see ownContent below) do so in one
+// linear pass instead of one whole-string .replace() per block.
+function extractTagRanges(xml: string, tag: string): Array<[number, number]> {
   const open = `<${tag}>`
   const close = `</${tag}>`
-  const blocks: string[] = []
+  const ranges: Array<[number, number]> = []
   let i = 0
   while (true) {
     const start = xml.indexOf(open, i)
@@ -73,7 +80,7 @@ function extractTagBlocks(xml: string, tag: string): string[] {
         // Unbalanced tags: stop scanning rather than loop forever or
         // throw — a malformed or truncated .CT file should report zero
         // importable entries, not crash the import.
-        return blocks
+        return ranges
       }
       if (nextOpen !== -1 && nextOpen < nextClose) {
         depth++
@@ -85,10 +92,20 @@ function extractTagBlocks(xml: string, tag: string): string[] {
         nextClose = xml.indexOf(close, j)
       }
     }
-    blocks.push(xml.slice(start + open.length, j - close.length))
+    ranges.push([start, j])
     i = j
   }
-  return blocks
+  return ranges
+}
+
+// Extracts every top-level <tag>...</tag> block's INNER content — a thin
+// wrapper over extractTagRanges for callers that just want the text
+// between the tags (not the offsets). See extractTagRanges for the
+// nesting-aware scan itself.
+function extractTagBlocks(xml: string, tag: string): string[] {
+  const open = `<${tag}>`
+  const close = `</${tag}>`
+  return extractTagRanges(xml, tag).map(([start, end]) => xml.slice(start + open.length, end - close.length))
 }
 
 // Depth/count backstops for collectCheatEntryRanges below — a cheap,
@@ -178,9 +195,27 @@ function collectAllCheatEntries(xml: string): string[] {
   return collectCheatEntryRanges(xml).map(([start, end]) => xml.slice(start, end))
 }
 
+// Was a regex `<tag>([\s\S]*?)</tag>`. A lazy `[\s\S]*?` quantifier with no
+// matching close tag makes the backtracking engine effectively retry and
+// expand to end-of-string for every `<tag>`-shaped opening it tries — O(n)
+// per attempted open, so O(n * (number of unclosed opens)) overall, i.e.
+// quadratic for a file with many stray/unclosed `<tag>` occurrences.
+//
+// This indexOf-based version does exactly two bounded scans: find the
+// FIRST `<tag>` from the start, then find the FIRST `</tag>` at or after
+// that point. Each `indexOf` call scans forward from its own start
+// position to (at most) end-of-string exactly once — there is no retry
+// loop, so a file with N unclosed `<tag>` occurrences costs O(n) total
+// (one scan for the open, one for the close), not O(n * N).
 function extractTag(xml: string, tag: string): string | null {
-  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))
-  return match ? match[1] : null
+  const open = `<${tag}>`
+  const close = `</${tag}>`
+  const start = xml.indexOf(open)
+  if (start === -1) return null
+  const contentStart = start + open.length
+  const end = xml.indexOf(close, contentStart)
+  if (end === -1) return null
+  return xml.slice(contentStart, end)
 }
 
 // A folder's own <Description>/<VariableType> etc. come before its nested
@@ -191,12 +226,26 @@ function extractTag(xml: string, tag: string): string | null {
 // misidentifying the folder itself as an importable script. Stripping any
 // nested <CheatEntries> block first means extractTag only ever sees this
 // entry's OWN direct tags.
+// Was previously N whole-string `.replace()` calls (one per nested
+// <CheatEntries> block), each a full search-and-copy over `entryBlock` —
+// O(N * length) for N sibling blocks. Now a single linear pass: the
+// ranges to strip are known up front (extractTagRanges finds them in one
+// scan), so the kept text is built by walking `entryBlock` once and
+// concatenating the slices BETWEEN the sorted, non-overlapping ranges —
+// each character of `entryBlock` is visited by at most one slice, and each
+// range is consumed exactly once, so total work is O(length), independent
+// of how many <CheatEntries> siblings exist.
 function ownContent(entryBlock: string): string {
-  let result = entryBlock
-  for (const block of extractTagBlocks(entryBlock, 'CheatEntries')) {
-    result = result.replace(`<CheatEntries>${block}</CheatEntries>`, '')
+  const ranges = extractTagRanges(entryBlock, 'CheatEntries')
+  if (ranges.length === 0) return entryBlock
+  const kept: string[] = []
+  let cursor = 0
+  for (const [start, end] of ranges) {
+    kept.push(entryBlock.slice(cursor, start))
+    cursor = end
   }
-  return result
+  kept.push(entryBlock.slice(cursor))
+  return kept.join('')
 }
 
 interface ParsedInjection {
@@ -455,9 +504,33 @@ export function parsePlainValueEntry(
   // attributes (Activated, RealAddress, ...) whose presence/order isn't
   // fixed, so this matches the attribute specifically rather than assuming
   // any fixed set of siblings.
-  const lastStateMatch = entryOwnContent.match(/<LastState\b[^>]*\bValue="([^"]*)"[^>]*>/)
-  const parsedValue = lastStateMatch ? parseFloat(lastStateMatch[1]) : 0
-  const value = Number.isFinite(parsedValue) ? parsedValue : 0
+  // Was a single regex `<LastState\b[^>]*\bValue="([^"]*)"[^>]*>` applied
+  // to the whole entry. A greedy `[^>]*` with no terminating `>` after it
+  // causes the same restart-and-scan-to-end-of-string behavior per
+  // attempted `<LastState` occurrence — O(n) per attempt, so O(n * N) for
+  // N unclosed `<LastState ` tags.
+  //
+  // Fix: first bound the search to ONE tag's worth of text — find
+  // `<LastState` via indexOf, then find the very next `>` via indexOf,
+  // which can never scan past that one tag's own close, regardless of how
+  // many more (or fewer) `<LastState` occurrences follow — then run the
+  // small attribute regex only inside that bounded substring. Each indexOf
+  // call scans a disjoint region of `entryOwnContent` (from one `<` to the
+  // next `>` at or after it), so total work across the whole string is
+  // O(n), not O(n * N).
+  let value = 0
+  const lastStateStart = entryOwnContent.indexOf('<LastState')
+  if (lastStateStart !== -1) {
+    const tagEnd = entryOwnContent.indexOf('>', lastStateStart)
+    if (tagEnd !== -1) {
+      const tagText = entryOwnContent.slice(lastStateStart, tagEnd + 1)
+      const valueMatch = tagText.match(/\bValue="([^"]*)"/)
+      if (valueMatch) {
+        const parsedValue = parseFloat(valueMatch[1])
+        value = Number.isFinite(parsedValue) ? parsedValue : 0
+      }
+    }
+  }
 
   return {
     dataType,

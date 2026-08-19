@@ -731,4 +731,98 @@ describe('importCheatTable performance', () => {
     // above.
     expect(result.imported).toEqual([])
   })
+
+  // Regression test for a FOURTH instance of complexity-DoS, this time in
+  // ownContent(): for each nested <CheatEntries> block, it used to run a
+  // full whole-string `.replace()` against the entry's content — O(N *
+  // length) for N sibling <CheatEntries> blocks inside one <CheatEntry>.
+  // This builds one CheatEntry containing many SIBLING (not nested)
+  // <CheatEntries>...</CheatEntries> blocks — the adversarial shape that
+  // made the old N-separate-.replace() approach slow (measured 8.9s at
+  // 1.67MB, 102s at 6.68MB on realistic scaled-up input). The fix builds
+  // the stripped result in one linear pass over the entry's content, so
+  // this should stay fast regardless of how many sibling blocks there are.
+  it('imports a CheatEntry with many sibling <CheatEntries> blocks quickly, not quadratically', () => {
+    const siblingCount = 6000
+    const xml =
+      '<?xml version="1.0" encoding="utf-8"?><CheatTable><CheatEntries><CheatEntry><ID>1</ID>' +
+      '<CheatEntries>x</CheatEntries>'.repeat(siblingCount) +
+      '</CheatEntry></CheatEntries></CheatTable>'
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(1000)
+    // No VariableType on the entry (only sibling <CheatEntries> noise)
+    // means it's treated as a folder and skipped — same "just prove it
+    // returns promptly without throwing" point as the tests above.
+    expect(result.imported).toEqual([])
+  })
+
+  // Regression test for a FIFTH instance of complexity-DoS, in extractTag()
+  // (used generically for VariableType/Description/AssemblerScript/
+  // Address/Offsets). It used to run a regex `<tag>([\s\S]*?)</tag>` —
+  // when no closing tag exists anywhere, the lazy `[\s\S]*?` quantifier's
+  // backtracking engine effectively retries and expands to end-of-string
+  // for every `<tag>`-shaped opening it attempts, making it quadratic in
+  // the number of unclosed opens (measured 91.7s at 2.14MB with many
+  // repeated, never-closed <VariableType> opens). The fix does two bounded
+  // indexOf scans instead, so this should stay fast regardless of how many
+  // unclosed opens precede the (nonexistent) close.
+  it('imports a table with many unclosed <VariableType> tags quickly, not quadratically', () => {
+    const openCount = 20_000
+    const xml =
+      '<?xml version="1.0" encoding="utf-8"?><CheatTable><CheatEntries><CheatEntry><ID>1</ID>' +
+      '<VariableType>'.repeat(openCount) +
+      '</CheatEntry></CheatEntries></CheatTable>'
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(1000)
+    // No closing </VariableType> anywhere means extractTag returns null,
+    // so the entry is treated as a folder and skipped.
+    expect(result.imported).toEqual([])
+  })
+
+  // Regression test for a SIXTH instance of complexity-DoS, in
+  // parsePlainValueEntry's <LastState> Value="..." extraction. It used to
+  // run a single greedy regex
+  // `/<LastState\b[^>]*\bValue="([^"]*)"[^>]*>/` against the whole entry
+  // — a greedy `[^>]*` with no terminating `>` after it restarts and scans
+  // to end-of-string for each of N unclosed `<LastState ` occurrences, the
+  // WORST measured case (151s at 1.76MB). The fix bounds the search to one
+  // tag's worth of text (indexOf '<LastState', then indexOf '>' from
+  // there) before running any regex, so this should stay fast regardless
+  // of how many unclosed `<LastState ` occurrences precede the real one.
+  it('imports an entry with many unclosed <LastState> tags quickly, not quadratically', () => {
+    // Worst case for the old greedy regex: N occurrences of "<LastState "
+    // and NO '>' anywhere in the string at all. The old code would, for
+    // each of the N start positions, expand [^>]* to end-of-string, fail
+    // to find Value="...", backtrack, and fail — O(remaining length) of
+    // wasted work per occurrence. No 'Value="..."' attribute is present
+    // either, so this also exercises the "not found" path end-to-end.
+    const openCount = 20_000
+    const entryXml =
+      '<CheatEntry><ID>1</ID><Description>"LastState DoS"</Description>' +
+      '<VariableType>4 Bytes</VariableType>' +
+      '<Address>"game.exe"+1000</Address>' +
+      '<LastState '.repeat(openCount) +
+      '</CheatEntry>'
+    const xml = wrapTable(entryXml)
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(1000)
+    // The entry itself is otherwise well-formed (valid VariableType and
+    // module+offset Address), so it imports — but no <LastState ...>
+    // ever closes with a '>', so no Value="..." attribute is ever found
+    // and the value correctly defaults to 0, without hanging.
+    expect(result.imported).toHaveLength(1)
+    expect((result.imported[0] as CheatDefinition).value).toBe(0)
+  })
 })
