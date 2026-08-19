@@ -473,6 +473,26 @@ describe('PatchEngine — copy injection', () => {
     expect(ops.writes).toHaveLength(0)
   })
 
+  it('accepts a 32-bit alias sourceRegister and normalizes it to the 64-bit name', async () => {
+    // Real Auto Assembler scripts name the 32-bit form for a dword store
+    // (e.g. "mov [rdi+818],eax"), so a .CT-imported copy patch arrives with
+    // sourceRegister: 'eax' — the native encoder only knows 'rax'.
+    const thirtyTwoBit = { ...copyPatch, id: 'patch-copy-eax', sourceRegister: 'eax' } as PatchCheat
+    const result = await engine.apply(thirtyTwoBit)
+    expect(result.ok).toBe(true)
+    expect(ops.encodeStoreRegisterCalls).toEqual([
+      { destRegister: 'rdi', offset: 0x818, sourceRegister: 'rax' }
+    ])
+  })
+
+  it('refuses, before allocating a cave, when sourceRegister is not a recognized register', async () => {
+    const unrecognized = { ...copyPatch, id: 'patch-copy-bogus', sourceRegister: 'notareg' } as PatchCheat
+    const result = await engine.apply(unrecognized)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
   it("refuses, before allocating a cave, when the patch's fieldOffset isn't valid hex", async () => {
     const junk = { ...copyPatch, id: 'patch-copy-junk', fieldOffset: 'not-hex' }
     const result = await engine.apply(junk)

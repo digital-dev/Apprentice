@@ -147,6 +147,30 @@ interface AppliedPatch {
 // instructions, which is what decodeRun computes.
 const JUMP_LENGTH = 5
 
+// Both the 16 64-bit GPR names and their 32-bit aliases, since a real Auto
+// Assembler script names the 32-bit form for a dword store (e.g. "eax") —
+// normalized here to the 64-bit name native/src/cave_ops.cc's
+// RegisterByName actually knows, so a copy-mode patch imported from a .CT
+// table's 32-bit register name doesn't need its own translation layer.
+const GPR64_ALIASES: Record<string, string> = {
+  rax: 'rax', eax: 'rax',
+  rbx: 'rbx', ebx: 'rbx',
+  rcx: 'rcx', ecx: 'rcx',
+  rdx: 'rdx', edx: 'rdx',
+  rsi: 'rsi', esi: 'rsi',
+  rdi: 'rdi', edi: 'rdi',
+  rbp: 'rbp', ebp: 'rbp',
+  rsp: 'rsp', esp: 'rsp',
+  r8: 'r8', r8d: 'r8',
+  r9: 'r9', r9d: 'r9',
+  r10: 'r10', r10d: 'r10',
+  r11: 'r11', r11d: 'r11',
+  r12: 'r12', r12d: 'r12',
+  r13: 'r13', r13d: 'r13',
+  r14: 'r14', r14d: 'r14',
+  r15: 'r15', r15d: 'r15'
+}
+
 // `value` becomes the exact 32 bits the injected store writes. A float has
 // to go through its IEEE-754 bit pattern: 350.0 is 0x43af0000, and writing
 // the integer 350 instead would land as a denormal fraction in the game.
@@ -565,8 +589,18 @@ export class PatchEngine {
         // copy mode encodes "store whatever sourceRegister currently holds"
         // — no value/dataType to validate, since it never writes a fixed
         // immediate the way force does.
-        if (typeof patch.sourceRegister !== 'string') {
-          throw new Error('missing copy-mode source register')
+        if (
+          typeof patch.sourceRegister !== 'string' ||
+          !(patch.sourceRegister.toLowerCase() in GPR64_ALIASES)
+        ) {
+          // Unrecognized names must be refused HERE, before allocateCave —
+          // native RegisterByName (cave_ops.cc) throws on an unknown name
+          // too, but only once encodeStoreRegister runs in the effect
+          // ternary below, which is after the cave is already allocated and
+          // has no surrounding try/catch. Refusing early is what keeps a
+          // bad sourceRegister from leaking a 4KB cave in the target
+          // process.
+          throw new Error('missing or unrecognized copy-mode source register')
         }
         BigInt(patch.fieldOffset as string) // throws on unparsable hex
       }
@@ -577,7 +611,7 @@ export class PatchEngine {
           mode === 'capture'
             ? "This patch is missing the register a capture injection needs — can't install it."
             : mode === 'copy'
-              ? "This patch is missing the register or offset a copy injection needs, or its offset isn't valid hex — can't compute what to write."
+              ? "This patch is missing the register or offset a copy injection needs, its source register isn't a recognized register, or its offset isn't valid hex — can't compute what to write."
               : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
         caveAddress: null,
         displaced: null
@@ -758,7 +792,7 @@ export class PatchEngine {
               ? this.ops.encodeStoreRegister(
                   patch.baseRegister as string,
                   Number(BigInt(patch.fieldOffset as string)),
-                  patch.sourceRegister as string
+                  GPR64_ALIASES[(patch.sourceRegister as string).toLowerCase()]
                 )
               : this.ops.encodeStore(
                   patch.baseRegister as string,
