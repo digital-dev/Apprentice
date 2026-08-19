@@ -234,6 +234,40 @@ describe('encodeStore', () => {
   })
 })
 
+describe('encodeStoreRegister', () => {
+  it('encodes mov dword ptr [rdi+offset], eax', () => {
+    // REX.W is not needed for a 32-bit destination write; the ModRM byte
+    // for [rdi+disp32] with source EAX is 0x87 (mod=10, reg=000, rm=111).
+    const hex: string = (addon as any).encodeStoreRegister('rdi', 0x818, 'rax')
+    expect(hex).toBe('8987' + '18080000')
+  })
+
+  it('encodes an extended source register (r8d) with the right REX prefix', () => {
+    const hex: string = (addon as any).encodeStoreRegister('rcx', 0x10, 'r8')
+    // REX.R must be set (source is r8-r15): 44 89 41 10 (disp8, not disp32)
+    expect(hex).toBe('44894110')
+  })
+
+  it('round-trips through the decoder as one whole, relocatable instruction', async () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const scratch: string = (addon as any).allocateCave(handle, near)
+    const hex: string = (addon as any).encodeStoreRegister('rcx', 0x10, 'rdx')
+    ;(addon as any).writeBytes(handle, scratch, hex)
+    const run = (addon as any).decodeRun(handle, scratch, 1)
+    expect(run.decodable).toBe(true)
+    expect(run.relocatable).toBe(true)
+    expect(run.length).toBe(hex.length / 2)
+  })
+
+  it('rejects an unknown destination register', () => {
+    expect(() => (addon as any).encodeStoreRegister('notareg', 0, 'rax')).toThrow()
+  })
+
+  it('rejects an unknown source register', () => {
+    expect(() => (addon as any).encodeStoreRegister('rdi', 0, 'notareg')).toThrow()
+  })
+})
+
 describe('encodeCaptureOnce', () => {
   it('emits a decodable blob whose RIP displacements both resolve to the slot', async () => {
     const near = (addon as any).attach(harness.pid).baseAddress

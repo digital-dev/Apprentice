@@ -285,6 +285,62 @@ Napi::Value EncodeStore(const Napi::CallbackInfo& info) {
   return Napi::String::New(env, BytesToHex(buf, (size_t)len));
 }
 
+// mov [destReg+offset], srcReg — a 32-bit register-to-memory store,
+// sibling to EncodeStore's register-to-immediate form. `copy` mode's
+// entire reason to exist: force mode can only write a literal the
+// installer already knew at capture time; this writes whatever the game
+// itself is holding in a register at the moment the effect runs — the
+// "set this field to what that other field/register currently is" shape
+// real Auto Assembler scripts use and force mode structurally cannot
+// represent.
+Napi::Value EncodeStoreRegister(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string destRegName = info[0].As<Napi::String>().Utf8Value();
+  int64_t offset = info[1].As<Napi::Number>().Int64Value();
+  std::string srcRegName = info[2].As<Napi::String>().Utf8Value();
+
+  ZydisRegister destReg = RegisterByName(destRegName);
+  if (destReg == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown destination register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  ZydisRegister srcReg64 = RegisterByName(srcRegName);
+  if (srcReg64 == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown source register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  // The destination memory operand is always written as a dword (int32 and
+  // float alike, matching EncodeStore's own convention) — the source
+  // register must be narrowed to its 32-bit form (eax, not rax) to match.
+  ZydisRegister srcReg32 = ZydisRegisterGetLargestEnclosing(
+      ZYDIS_MACHINE_MODE_LONG_64, srcReg64);
+  // Largest-enclosing of a GPR name always yields the 64-bit form; step
+  // back down to 32-bit via the encoder's own width table rather than a
+  // second name lookup.
+  srcReg32 = static_cast<ZydisRegister>(
+      srcReg32 - ZYDIS_REGISTER_RAX + ZYDIS_REGISTER_EAX);
+
+  ZydisEncoderRequest req;
+  memset(&req, 0, sizeof(req));
+  req.mnemonic = ZYDIS_MNEMONIC_MOV;
+  req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+  req.operand_count = 2;
+  req.operands[0].type = ZYDIS_OPERAND_TYPE_MEMORY;
+  req.operands[0].mem.base = destReg;
+  req.operands[0].mem.displacement = offset;
+  req.operands[0].mem.size = 4; // dword, matching EncodeStore
+  req.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
+  req.operands[1].reg.value = srcReg32;
+
+  uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
+  ZyanUSize len = sizeof(buf);
+  if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
+    Napi::Error::New(env, "failed to encode register store").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  return Napi::String::New(env, BytesToHex(buf, (size_t)len));
+}
+
 // `mov [rip+disp], reg` — the displacement is relative to the END of the
 // instruction, whose length depends on the displacement's own encoding, so
 // encode once with a placeholder to learn the length, then again with the
