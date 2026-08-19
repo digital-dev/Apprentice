@@ -20,6 +20,8 @@ import {
   type ScriptCheat
 } from './store'
 import { importCheatTable } from './ctImport'
+import { searchCtTables, fetchCtTable } from './ctSource'
+import type { CtSearchResult } from './ctSource'
 import { buildCheatTable } from './ctExport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
@@ -1209,6 +1211,45 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       const { imported, skipped } = importCheatTable(xml)
       for (const patch of imported) saveCheat(exeName, patch)
       return { importedNames: imported.map((p) => p.name), skipped }
+    }
+  )
+
+  // Searches the curated GitHub repo list (see ctSource.ts) for a .CT file
+  // matching gameName. Never throws to the renderer — a search failure
+  // (offline, rate-limited) comes back as an empty result list plus an
+  // error string, so the UI can show it without a try/catch of its own.
+  ipcMain.handle(
+    'ctSource:search',
+    async (_e, gameName: string): Promise<{ results: CtSearchResult[]; error: string | null }> => {
+      try {
+        const results = await searchCtTables(gameName)
+        return { results, error: null }
+      } catch (err) {
+        return { results: [], error: String(err) }
+      }
+    }
+  )
+
+  // Fetches one search result and imports it through the same
+  // importCheatTable pipeline ct:import uses — picking a result IS the
+  // confirm gesture, matching ct:import's own "no separate confirm step"
+  // convention.
+  ipcMain.handle(
+    'ctSource:fetch',
+    async (
+      _e,
+      exeName: string,
+      result: CtSearchResult
+    ): Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | { error: string }> => {
+      let xml: string
+      try {
+        xml = await fetchCtTable(result)
+      } catch (err) {
+        return { error: String(err) }
+      }
+      const { imported, skipped } = importCheatTable(xml)
+      for (const cheat of imported) saveCheat(exeName, cheat)
+      return { importedNames: imported.map((c) => c.name), skipped }
     }
   )
 

@@ -1,4 +1,5 @@
 import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat, CheatTarget } from '../../main/store'
+import type { CtSearchResult } from '../../main/ctSource'
 
 export {}
 
@@ -244,6 +245,20 @@ declare global {
       exportCheatTable: (
         exeName: string
       ) => Promise<{ exportedNames: string[]; skipped: { name: string; reason: string }[] } | null>
+      // Searches the curated GitHub CT-table repos for a game name. `error`
+      // is set (results empty) on a network/rate-limit failure — the UI
+      // shows it rather than throwing.
+      searchCtTables: (gameName: string) => Promise<{ results: CtSearchResult[]; error: string | null }>
+      // Fetches and imports one search result, saving immediately —
+      // mirrors importCheatTable's own convention. Returns an { error }
+      // shape on fetch failure instead of the usual import summary.
+      fetchCtTable: (
+        exeName: string,
+        result: CtSearchResult
+      ) => Promise<
+        | { importedNames: string[]; skipped: { description: string; reason: string }[] }
+        | { error: string }
+      >
       // Fired whenever a global hotkey toggles/applies a cheat — the
       // trainer window won't be focused when this happens (the game is),
       // so this is how the renderer learns to update its own on/off state

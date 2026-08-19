@@ -7,6 +7,7 @@ import type {
   CheatTarget,
   DataType
 } from '../../../main/store'
+import type { CtSearchResult } from '../../../main/ctSource'
 import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
 import type { PendingMonoSelection } from '../App'
 import Toggle from '../components/Toggle'
@@ -314,6 +315,13 @@ export default function CheatList({
     skipped: { name: string; reason: string }[]
   } | null>(null)
 
+  const [ctSourceOpen, setCtSourceOpen] = useState(false)
+  const [ctSourceQuery, setCtSourceQuery] = useState(exeName.replace(/\.exe$/i, ''))
+  const [ctSourceSearching, setCtSourceSearching] = useState(false)
+  const [ctSourceResults, setCtSourceResults] = useState<CtSearchResult[]>([])
+  const [ctSourceError, setCtSourceError] = useState<string | null>(null)
+  const [ctSourceFetchingPath, setCtSourceFetchingPath] = useState<string | null>(null)
+
   async function importCheatTable() {
     setCtImporting(true)
     setCtImportResult(null)
@@ -343,6 +351,38 @@ export default function CheatList({
       setCtExportResult(result)
     } finally {
       setCtExporting(false)
+    }
+  }
+
+  async function searchCtSource() {
+    setCtSourceSearching(true)
+    setCtSourceError(null)
+    setCtSourceResults([])
+    try {
+      const { results, error } = await window.tamper.searchCtTables(ctSourceQuery)
+      setCtSourceResults(results)
+      setCtSourceError(error)
+    } finally {
+      setCtSourceSearching(false)
+    }
+  }
+
+  async function fetchCtSourceResult(result: CtSearchResult) {
+    setCtSourceFetchingPath(result.path)
+    try {
+      const outcome = await window.tamper.fetchCtTable(exeName, result)
+      if ('error' in outcome) {
+        setCtSourceError(outcome.error)
+        return
+      }
+      setCtImportResult(outcome) // reuse the existing import-summary banner
+      setCtSourceOpen(false)
+      const all: StoredCheat[] = await window.tamper.loadCheats(exeName)
+      setCheats(all.filter((c): c is CheatDefinition => !isPatch(c) && !isScript(c)))
+      setPatches(all.filter(isPatch))
+      setScripts(all.filter(isScript))
+    } finally {
+      setCtSourceFetchingPath(null)
     }
   }
 
@@ -1171,6 +1211,7 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
       <button onClick={exportCheatTable} disabled={ctExporting}>
         {ctExporting ? 'Exporting…' : 'Export to Cheat Table (.CT)'}
       </button>
+      <button onClick={() => setCtSourceOpen(true)}>Search online (.CT)</button>
 
       {ctImportResult && (
         <div className="banner" style={{ flexWrap: 'wrap' }}>
@@ -1198,6 +1239,51 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
             </ul>
           )}
           <button onClick={() => setCtImportResult(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {ctSourceOpen && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            Search open GitHub Cheat Engine table repositories for this game.
+          </p>
+          <input
+            value={ctSourceQuery}
+            onChange={(e) => setCtSourceQuery(e.target.value)}
+            placeholder="Game name"
+          />
+          <button onClick={searchCtSource} disabled={ctSourceSearching || ctSourceQuery.trim() === ''}>
+            {ctSourceSearching ? 'Searching…' : 'Search'}
+          </button>
+          <button onClick={() => setCtSourceOpen(false)}>Close</button>
+
+          {ctSourceError && (
+            <p style={{ flexBasis: '100%' }} className="muted">
+              {ctSourceError}
+            </p>
+          )}
+
+          {ctSourceResults.length > 0 && (
+            <ul style={{ flexBasis: '100%' }}>
+              {ctSourceResults.map((r) => (
+                <li key={`${r.repo}/${r.path}`}>
+                  {r.repo} — {r.name}{' '}
+                  <button
+                    onClick={() => fetchCtSourceResult(r)}
+                    disabled={ctSourceFetchingPath === r.path}
+                  >
+                    {ctSourceFetchingPath === r.path ? 'Importing…' : 'Import'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {!ctSourceSearching && ctSourceResults.length === 0 && !ctSourceError && (
+            <p style={{ flexBasis: '100%' }} className="muted">
+              No results yet — try a search.
+            </p>
+          )}
         </div>
       )}
 
