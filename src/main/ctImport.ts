@@ -354,9 +354,17 @@ export function parsePlainValueEntry(
   }
 
   const offsetsBlock = extractTag(entryOwnContent, 'Offsets')
-  const offsets = offsetsBlock
-    ? extractTagBlocks(offsetsBlock, 'Offset').map((o) => '0x' + BigInt('0x' + o.trim()).toString(16))
-    : []
+  const offsets: string[] = []
+  if (offsetsBlock) {
+    const offsetBlocks = extractTagBlocks(offsetsBlock, 'Offset')
+    for (const o of offsetBlocks) {
+      const trimmed = o.trim()
+      if (!/^[0-9A-Fa-f]+$/.test(trimmed)) {
+        return { error: `Malformed offset "${trimmed}" cannot be parsed as hexadecimal.` }
+      }
+      offsets.push('0x' + BigInt('0x' + trimmed).toString(16))
+    }
+  }
 
   // Real CT files don't serialize the current/frozen value as a <Value>
   // element — that tag doesn't exist in Cheat Engine's own format. CE

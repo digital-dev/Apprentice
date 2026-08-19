@@ -592,4 +592,47 @@ describe('plain value entries', () => {
     expect(result).not.toHaveProperty('id')
     expect(result).not.toHaveProperty('name')
   })
+
+  it('skips an entry with a malformed offset (non-hex text) instead of throwing', () => {
+    // A malformed <Offset> should not crash the entire import, but gracefully
+    // skip this one entry with a descriptive error message.
+    const badOffset = pointerChainEntry.replace('<Offset>18</Offset>', '<Offset>not-hex</Offset>')
+    const { imported, skipped } = importCheatTable(wrapTable(badOffset))
+    expect(imported).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].description).toBe('Health')
+    expect(skipped[0].reason).toContain('not-hex')
+    expect(skipped[0].reason).toContain('hexadecimal')
+  })
+
+  it('skips an entry with an empty offset tag instead of throwing', () => {
+    // An empty <Offset></Offset> tag (whitespace-only content) is also invalid.
+    const emptyOffset = pointerChainEntry.replace('<Offset>20</Offset>', '<Offset>   </Offset>')
+    const { imported, skipped } = importCheatTable(wrapTable(emptyOffset))
+    expect(imported).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].reason).toContain('hexadecimal')
+  })
+
+  it('still imports a valid entry when another entry in the same table has a malformed offset', () => {
+    // Proves that a malformed offset in one entry does not crash the entire
+    // import and take down other valid entries.
+    const validEntry = pointerChainEntry
+    const invalidEntry = `
+    <CheatEntry>
+      <ID>99</ID>
+      <Description>"Broken Offsets"</Description>
+      <VariableType>4 Bytes</VariableType>
+      <Address>"game.exe"+001A2B3C</Address>
+      <Offsets>
+        <Offset>zzz</Offset>
+        <Offset>20</Offset>
+      </Offsets>
+    </CheatEntry>`
+    const { imported, skipped } = importCheatTable(wrapTable([validEntry, invalidEntry].join('\n')))
+    expect(imported).toHaveLength(1)
+    expect(imported[0].name).toBe('Health')
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].description).toBe('Broken Offsets')
+  })
 })
