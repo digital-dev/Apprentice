@@ -23,7 +23,8 @@ describe('searchCtTables', () => {
     expect(results).toContainEqual({
       repo: `${CT_REPOS[0].owner}/${CT_REPOS[0].repo}`,
       path: 'Valheim Cheat Table.CT',
-      name: 'Valheim Cheat Table.CT'
+      name: 'Valheim Cheat Table.CT',
+      branch: CT_REPOS[0].branch
     })
     expect(results.every((r) => r.name.toLowerCase().endsWith('.ct'))).toBe(true)
     expect(calls).toBe(CT_REPOS.length) // one tree fetch per curated repo

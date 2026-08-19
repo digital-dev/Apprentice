@@ -87,7 +87,8 @@ export async function searchCtTables(
       results.push({
         repo: `${repo.owner}/${repo.repo}`,
         path: entry.path,
-        name: basename(entry.path)
+        name: basename(entry.path),
+        branch: repo.branch
       })
     }
   }
