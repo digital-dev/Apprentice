@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { importCheatTable } from '../../src/main/ctImport'
+import { importCheatTable, parsePlainValueEntry } from '../../src/main/ctImport'
+import type { CheatDefinition } from '../../src/main/store'
 
 // Fixtures below are trimmed excerpts of a real, user-supplied Valheim .CT
 // file's actual structure and byte patterns — not hand-invented shapes.
@@ -178,6 +179,35 @@ dealloc(newmem)
 </AssemblerScript>
     </CheatEntry>`
 
+const bareAddressEntry = `
+    <CheatEntry>
+      <ID>10</ID>
+      <Description>"Score"</Description>
+      <VariableType>4 Bytes</VariableType>
+      <Address>004A2B3C</Address>
+    </CheatEntry>`
+
+const pointerChainEntry = `
+    <CheatEntry>
+      <ID>11</ID>
+      <Description>"Health"</Description>
+      <VariableType>Float</VariableType>
+      <Address>"game.exe"+001A2B3C</Address>
+      <Offsets>
+        <Offset>18</Offset>
+        <Offset>20</Offset>
+      </Offsets>
+    </CheatEntry>`
+
+const plainValueWithLiteral = `
+    <CheatEntry>
+      <ID>12</ID>
+      <Description>"Always Max Ammo"</Description>
+      <VariableType>2 Bytes</VariableType>
+      <Address>"game.exe"+00334455</Address>
+      <Value>999</Value>
+    </CheatEntry>`
+
 describe('importCheatTable', () => {
   it('converts a plain aobscan + constant-write script into a force-mode patch', () => {
     const result = importCheatTable(wrapTable(staminaEntry))
@@ -260,5 +290,59 @@ ${staminaEntry}
       '<= infinite Weapons Durability v2',
       '<= infinite coins & items when buying'
     ])
+  })
+})
+
+describe('plain value entries', () => {
+  it('imports a bare-address 4-byte entry as a freeze cheat with a fixed-address target', () => {
+    const { imported, skipped } = importCheatTable(wrapTable(bareAddressEntry))
+    expect(skipped).toEqual([])
+    expect(imported).toHaveLength(1)
+    const cheat = imported[0] as CheatDefinition
+    expect(cheat.mode).toBe('freeze')
+    expect(cheat.dataType).toBe('int32')
+    expect(cheat.name).toBe('Score')
+    expect(cheat.targets).toEqual([{ moduleName: '', baseOffset: '0x4a2b3c', offsets: [] }])
+    expect(cheat.value).toBe(0)
+  })
+
+  it('imports a module+offset pointer-chain entry with its offsets in document order', () => {
+    const { imported, skipped } = importCheatTable(wrapTable(pointerChainEntry))
+    expect(skipped).toEqual([])
+    const cheat = imported[0] as CheatDefinition
+    expect(cheat.dataType).toBe('float')
+    expect(cheat.targets).toEqual([
+      { moduleName: 'game.exe', baseOffset: '0x1a2b3c', offsets: ['0x18', '0x20'] }
+    ])
+  })
+
+  it('reads a literal <Value> tag as the imported value when present', () => {
+    const { imported } = importCheatTable(wrapTable(plainValueWithLiteral))
+    const cheat = imported[0] as CheatDefinition
+    expect(cheat.dataType).toBe('int16')
+    expect(cheat.value).toBe(999)
+  })
+
+  it('skips an entry with an unparsable address instead of guessing', () => {
+    const bad = bareAddressEntry.replace('004A2B3C', 'not-an-address')
+    const { imported, skipped } = importCheatTable(wrapTable(bad))
+    expect(imported).toHaveLength(0)
+    expect(skipped).toEqual([{ description: 'Score', reason: expect.stringContaining('Could not parse address') }])
+  })
+
+  it('parsePlainValueEntry maps every recognized VariableType to the right DataType', () => {
+    const cases: [string, string][] = [
+      ['Byte', 'int8'],
+      ['2 Bytes', 'int16'],
+      ['4 Bytes', 'int32'],
+      ['Float', 'float'],
+      ['Double', 'double']
+    ]
+    for (const [variableType, dataType] of cases) {
+      const entry = `<Description>"x"</Description><VariableType>${variableType}</VariableType><Address>1000</Address>`
+      const result = parsePlainValueEntry(entry, variableType)
+      expect('error' in result).toBe(false)
+      expect((result as CheatDefinition).dataType).toBe(dataType)
+    }
   })
 })

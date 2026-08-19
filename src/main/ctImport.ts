@@ -1,4 +1,4 @@
-import type { DataType, PatchCheat } from './store'
+import type { ChainTarget, CheatDefinition, DataType, PatchCheat } from './store'
 
 // Imports Cheat Engine .CT tables — specifically, the one shape that
 // covers most simple "infinite X" cheats in a real-world table (verified
@@ -23,7 +23,7 @@ export interface CtImportSkip {
 }
 
 export interface CtImportResult {
-  imported: PatchCheat[]
+  imported: (PatchCheat | CheatDefinition)[]
   skipped: CtImportSkip[]
 }
 
@@ -177,6 +177,62 @@ function parseForceInjection(script: string): ParsedInjection | { error: string 
   return { signature, signatureOffset, originalBytes, length, baseRegister, fieldOffset, value, dataType }
 }
 
+const PLAIN_VARIABLE_TYPES: Record<string, DataType> = {
+  Byte: 'int8',
+  '2 Bytes': 'int16',
+  '4 Bytes': 'int32',
+  Float: 'float',
+  Double: 'double'
+}
+
+// Parses a plain (non-Auto-Assembler) CheatEntry — just an address, a
+// width, and optionally a pointer chain and a literal value. Maps directly
+// onto this codebase's ChainTarget, needing no injection at all. Returns an
+// error string (not throwing), same convention as parseForceInjection —
+// an entry this doesn't recognize is a normal outcome, not exceptional.
+export function parsePlainValueEntry(
+  entryOwnContent: string,
+  variableType: string
+): CheatDefinition | { error: string } {
+  const dataType = PLAIN_VARIABLE_TYPES[variableType]
+  if (!dataType) return { error: `Unrecognized VariableType "${variableType}".` }
+
+  const rawAddress = extractTag(entryOwnContent, 'Address')
+  if (rawAddress === null) return { error: 'No <Address> tag found.' }
+  const trimmedAddress = rawAddress.trim()
+
+  const moduleMatch = trimmedAddress.match(/^"([^"]+)"\s*\+\s*([0-9A-Fa-f]+)$/)
+  let moduleName: string
+  let baseOffset: string
+  if (moduleMatch) {
+    moduleName = moduleMatch[1]
+    baseOffset = '0x' + parseInt(moduleMatch[2], 16).toString(16)
+  } else if (/^[0-9A-Fa-f]+$/.test(trimmedAddress)) {
+    moduleName = ''
+    baseOffset = '0x' + parseInt(trimmedAddress, 16).toString(16)
+  } else {
+    return { error: `Could not parse address "${rawAddress}".` }
+  }
+
+  const offsetsBlock = extractTag(entryOwnContent, 'Offsets')
+  const offsets = offsetsBlock
+    ? extractTagBlocks(offsetsBlock, 'Offset').map((o) => '0x' + parseInt(o.trim(), 16).toString(16))
+    : []
+
+  const rawValue = extractTag(entryOwnContent, 'Value')
+  const parsedValue = rawValue !== null ? parseFloat(rawValue) : 0
+  const value = Number.isFinite(parsedValue) ? parsedValue : 0
+
+  return {
+    id: '', // filled by the caller, which knows the entry's description
+    name: '', // filled by the caller
+    dataType,
+    mode: 'freeze',
+    targets: [{ moduleName, baseOffset, offsets }],
+    value
+  }
+}
+
 function slugify(s: string): string {
   return (
     s
@@ -187,17 +243,26 @@ function slugify(s: string): string {
 }
 
 export function importCheatTable(xml: string): CtImportResult {
-  const imported: PatchCheat[] = []
+  const imported: (PatchCheat | CheatDefinition)[] = []
   const skipped: CtImportSkip[] = []
 
   for (const rawEntry of collectAllCheatEntries(xml)) {
     const entry = ownContent(rawEntry)
     const variableType = extractTag(entry, 'VariableType')
-    if (variableType !== 'Auto Assembler Script') continue // folders, plain values, readme headers, etc.
+    if (variableType === null) continue // folders, readme headers, etc.
 
     const rawDescription = extractTag(entry, 'Description') ?? 'Imported cheat'
-    // CT wraps descriptions in escaped literal quotes: "&lt;= Infinite Stamina v2"
     const description = unescapeXml(rawDescription).replace(/^"|"$/g, '')
+
+    if (variableType !== 'Auto Assembler Script') {
+      const parsed = parsePlainValueEntry(entry, variableType)
+      if ('error' in parsed) {
+        skipped.push({ description, reason: parsed.error })
+        continue
+      }
+      imported.push({ ...parsed, id: `ct-import-${slugify(description)}`, name: description })
+      continue
+    }
 
     const script = extractTag(entry, 'AssemblerScript')
     if (script === null) {
