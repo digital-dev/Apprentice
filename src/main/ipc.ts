@@ -343,6 +343,8 @@ const patchOps: PatchOps = {
     return nativeAddon.decodeRun(attachedHandle, address, minBytes)
   },
   encodeStore: (baseRegister, offset, imm32) => nativeAddon.encodeStore(baseRegister, offset, imm32),
+  encodeStoreRegister: (destRegister, offset, sourceRegister) =>
+    nativeAddon.encodeStoreRegister(destRegister, offset, sourceRegister),
   encodeCaptureOnce: (baseRegister, atAddress, slotAddress) =>
     nativeAddon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   encodeGuardedSkip: (baseRegister, atAddress, slotAddress, returnAddress) =>

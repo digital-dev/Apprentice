@@ -182,6 +182,8 @@ export const nativeAddon = {
   } => addon.decodeRun(handle, address, minBytes),
   encodeStore: (baseRegister: string, offset: number, imm32: number): string =>
     addon.encodeStore(baseRegister, offset, imm32),
+  encodeStoreRegister: (destRegister: string, offset: number, sourceRegister: string): string =>
+    addon.encodeStoreRegister(destRegister, offset, sourceRegister),
   encodeCaptureOnce: (baseRegister: string, atAddress: string, slotAddress: string): string =>
     addon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   // The guard prefix for a shared write: compares the object register
