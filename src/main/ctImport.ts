@@ -1,14 +1,21 @@
-import type { ChainTarget, CheatDefinition, DataType, PatchCheat } from './store'
+import type { CheatDefinition, DataType, PatchCheat } from './store'
 
-// Imports Cheat Engine .CT tables — specifically, the one shape that
-// covers most simple "infinite X" cheats in a real-world table (verified
-// against an actual user-supplied file): an Auto Assembler Script that
-// scans for a byte pattern, then replaces ONE instruction with a fixed
-// write to [register+offset]. That maps directly onto this codebase's
-// existing 'force' mode patch — no general Auto Assembler interpreter is
-// built here, and a script that doesn't reduce to this shape (a genuinely
-// multi-effect injection) is reported as unsupported rather than guessed
-// at.
+// Imports Cheat Engine .CT tables — specifically, the shapes that cover
+// most simple cheats in a real-world table (verified against an actual
+// user-supplied file):
+//  - plain (non-Auto-Assembler) CheatEntries: an address (optionally
+//    module+offset, optionally a pointer chain) and a width, mapped
+//    directly onto this codebase's ChainTarget/freeze mode;
+//  - nop-shape Auto Assembler scripts, where the enable section reduces to
+//    provably nothing (after stripping structural boilerplate) — a pure
+//    "disable this instruction" cheat;
+//  - copy-shape Auto Assembler scripts, whose sole effect is a
+//    register-source mov into [register+offset], mapped onto 'copy' mode;
+//  - force-shape Auto Assembler scripts, which replace ONE instruction with
+//    a fixed-constant write to [register+offset], mapped onto 'force' mode.
+// No general Auto Assembler interpreter is built here, and a script that
+// doesn't reduce to one of these shapes (a genuinely multi-effect
+// injection) is reported as unsupported rather than guessed at.
 //
 // A CT's real "code:" block often replays extra instructions CE's own
 // injection swallowed (e.g. a trailing `test eax,eax`) before jumping
@@ -139,7 +146,13 @@ function stripStructuralLines(enableSection: string): string[] {
     .filter((l) => !/^\[ENABLE\]$/i.test(l))
     .filter((l) => !/^(aobscan|alloc|label|registersymbol|unregistersymbol|dealloc)\s*\(/i.test(l))
     .filter((l) => !/^\w+(?:\+[0-9A-Fa-f]+)?:$/.test(l)) // "newmem:", "code:", "INJECT+09:"
-    .filter((l) => !/^jmp\s+\w+$/i.test(l))
+    // A plain "jmp <label>" (no "+offset" on the label) is a cave-internal
+    // return/exit jump (e.g. "jmp return", "jmp code") — filler, not an
+    // effect. A "jmp <sym+hex>" targets a specific byte offset INTO the
+    // original captured bytes (a jump-over-N-bytes-of-code effect, distinct
+    // from nop's "disable everything" semantics) and must survive here so
+    // it isn't misclassified as nop.
+    .filter((l) => !/^jmp\s+\w+$/i.test(l) || /^jmp\s+\w+\+[0-9A-Fa-f]+$/i.test(l))
     .filter((l) => !/^nop(?:\s+\d+)?$/i.test(l)) // "nop" / "nop 3" byte-padding
 }
 
@@ -155,9 +168,9 @@ const X86_GPR_NAMES = new Set([
   'r8d', 'r9d', 'r10d', 'r11d', 'r12d', 'r13d', 'r14d', 'r15d'
 ])
 
-// Parses one Auto Assembler Script into one of three recognized shapes —
-// see this module's header comment for why only these three, and why an
-// unrecognized effect is skipped rather than guessed at.
+// Parses one Auto Assembler Script into one of three recognized shapes
+// (nop/copy/force) — see this module's header comment for why only these
+// three, and why an unrecognized effect is skipped rather than guessed at.
 function parseInjection(script: string): ParsedInjection | { error: string } {
   const aobMatch = script.match(/aobscan\s*\(\s*(\w+)\s*,\s*([0-9A-Fa-f?\s]+)\)/)
   if (!aobMatch) return { error: 'No aobscan(...) call found — not a byte-pattern-anchored script.' }
@@ -175,6 +188,13 @@ function parseInjection(script: string): ParsedInjection | { error: string } {
   }
   const signatureOffset = disableMatch[1] ? parseInt(disableMatch[1], 16) : 0
   const originalBytes = disableMatch[2].trim().replace(/\s+/g, '').toLowerCase()
+  if (originalBytes.length % 2 !== 0) {
+    return {
+      error:
+        "The [DISABLE] block's byte string has an odd number of hex digits — can't determine the original " +
+        'instruction length.'
+    }
+  }
   const length = originalBytes.length / 2
 
   const enableSection = script.split(/\[DISABLE\]/i)[0]
@@ -214,7 +234,18 @@ function parseInjection(script: string): ParsedInjection | { error: string } {
     // force-shape comment below). Only accept copy-shape when the captured
     // token is an actual x86 GPR name; otherwise fall through so the
     // force-shape regex gets a chance to read it as the hex literal it is.
-    if (copyMatch && X86_GPR_NAMES.has(copyMatch[3].toLowerCase())) {
+    // The destination register (inside [...]) is captured with a bare \w+
+    // too — without validating it against the same GPR allowlist, a bogus
+    // destination like "xmm0" would import as a copy-mode patch whose
+    // baseRegister the native encoder can't handle, throwing AFTER
+    // allocateCave and leaking a cave. Gate both registers on the same
+    // X86_GPR_NAMES set, with the same fall-through discipline as the
+    // source-register check above.
+    if (
+      copyMatch &&
+      X86_GPR_NAMES.has(copyMatch[1].toLowerCase()) &&
+      X86_GPR_NAMES.has(copyMatch[3].toLowerCase())
+    ) {
       return {
         ...base,
         shape: 'copy',
@@ -241,7 +272,10 @@ function parseInjection(script: string): ParsedInjection | { error: string } {
   const movMatch = enableSection.match(
     /\bmov\s+(?:dword\s+ptr\s+)?\[\s*(\w+)\s*\+\s*([0-9A-Fa-f]+)\s*\]\s*,\s*(?:\((float|double)\))?\s*([0-9A-Fa-f.]+)(?![0-9A-Za-z])/i
   )
-  if (!movMatch) {
+  // Same destination-register validation as copy-shape above, and for the
+  // same reason: an unvalidated destination reaches installInjection's
+  // native encoder call and leaks a cave instead of being refused here.
+  if (!movMatch || !X86_GPR_NAMES.has(movMatch[1].toLowerCase())) {
     return {
       error:
         "No recognizable 'mov [register+offset], constant' line in the enable script — this is a more complex " +
@@ -277,12 +311,18 @@ const PLAIN_VARIABLE_TYPES: Record<string, DataType> = {
 // Parses a plain (non-Auto-Assembler) CheatEntry — just an address, a
 // width, and optionally a pointer chain and a literal value. Maps directly
 // onto this codebase's ChainTarget, needing no injection at all. Returns an
-// error string (not throwing), same convention as parseForceInjection —
-// an entry this doesn't recognize is a normal outcome, not exceptional.
+// error string (not throwing), same convention as parseInjection — an
+// entry this doesn't recognize is a normal outcome, not exceptional.
+//
+// Returns Omit<CheatDefinition, 'id' | 'name'> rather than CheatDefinition:
+// this function has no idea what id/name to use (the caller derives those
+// from the entry's <Description>, deduplicating across the whole table), so
+// the type is honest about what it actually produces instead of carrying
+// '' placeholders a caller must always overwrite.
 export function parsePlainValueEntry(
   entryOwnContent: string,
   variableType: string
-): CheatDefinition | { error: string } {
+): Omit<CheatDefinition, 'id' | 'name'> | { error: string } {
   const dataType = PLAIN_VARIABLE_TYPES[variableType]
   if (!dataType) return { error: `Unrecognized VariableType "${variableType}".` }
 
@@ -295,26 +335,40 @@ export function parsePlainValueEntry(
   let baseOffset: string
   if (moduleMatch) {
     moduleName = moduleMatch[1]
-    baseOffset = '0x' + parseInt(moduleMatch[2], 16).toString(16)
+    baseOffset = '0x' + BigInt('0x' + moduleMatch[2]).toString(16)
   } else if (/^[0-9A-Fa-f]+$/.test(trimmedAddress)) {
-    moduleName = ''
-    baseOffset = '0x' + parseInt(trimmedAddress, 16).toString(16)
+    // A bare hex address with no "module"+offset form can't be relocated
+    // across game runs (no module base to re-resolve it against next
+    // launch) — none of this codebase's resolvers (ipc.ts, chain_walk.h)
+    // treat an empty moduleName as "absolute address, no module", so
+    // importing this would silently produce a dead cheat that saves
+    // cleanly but never reads or writes anything. Skip it instead of
+    // guessing a target that can't actually be resolved.
+    return {
+      error:
+        "Absolute address with no module — can't be relocated across game runs, so this can't be imported as a " +
+        'working cheat.'
+    }
   } else {
     return { error: `Could not parse address "${rawAddress}".` }
   }
 
   const offsetsBlock = extractTag(entryOwnContent, 'Offsets')
   const offsets = offsetsBlock
-    ? extractTagBlocks(offsetsBlock, 'Offset').map((o) => '0x' + parseInt(o.trim(), 16).toString(16))
+    ? extractTagBlocks(offsetsBlock, 'Offset').map((o) => '0x' + BigInt('0x' + o.trim()).toString(16))
     : []
 
-  const rawValue = extractTag(entryOwnContent, 'Value')
-  const parsedValue = rawValue !== null ? parseFloat(rawValue) : 0
+  // Real CT files don't serialize the current/frozen value as a <Value>
+  // element — that tag doesn't exist in Cheat Engine's own format. CE
+  // stores it as a Value="..." ATTRIBUTE on <LastState>, alongside other
+  // attributes (Activated, RealAddress, ...) whose presence/order isn't
+  // fixed, so this matches the attribute specifically rather than assuming
+  // any fixed set of siblings.
+  const lastStateMatch = entryOwnContent.match(/<LastState\b[^>]*\bValue="([^"]*)"[^>]*>/)
+  const parsedValue = lastStateMatch ? parseFloat(lastStateMatch[1]) : 0
   const value = Number.isFinite(parsedValue) ? parsedValue : 0
 
   return {
-    id: '', // filled by the caller, which knows the entry's description
-    name: '', // filled by the caller
     dataType,
     mode: 'freeze',
     targets: [{ moduleName, baseOffset, offsets }],
@@ -334,6 +388,20 @@ function slugify(s: string): string {
 export function importCheatTable(xml: string): CtImportResult {
   const imported: (PatchCheat | CheatDefinition)[] = []
   const skipped: CtImportSkip[] = []
+  // Real CT tables commonly repeat a description across folders (e.g.
+  // "Health" in two different folders) — since saveCheat upserts by id,
+  // two entries slugifying to the same id would silently collide and the
+  // second import would overwrite the first, even though importedNames
+  // still lists both. Track slugs already used within this one call and
+  // suffix a repeat with -2, -3, etc. so every imported entry keeps its
+  // own id.
+  const slugCounts = new Map<string, number>()
+  const uniqueId = (description: string): string => {
+    const slug = slugify(description)
+    const count = (slugCounts.get(slug) ?? 0) + 1
+    slugCounts.set(slug, count)
+    return count === 1 ? `ct-import-${slug}` : `ct-import-${slug}-${count}`
+  }
 
   for (const rawEntry of collectAllCheatEntries(xml)) {
     const entry = ownContent(rawEntry)
@@ -349,7 +417,7 @@ export function importCheatTable(xml: string): CtImportResult {
         skipped.push({ description, reason: parsed.error })
         continue
       }
-      imported.push({ ...parsed, id: `ct-import-${slugify(description)}`, name: description })
+      imported.push({ ...parsed, id: uniqueId(description), name: description })
       continue
     }
 
@@ -368,7 +436,7 @@ export function importCheatTable(xml: string): CtImportResult {
     const patch: PatchCheat = {
       kind: 'patch',
       mode: parsed.shape,
-      id: `ct-import-${slugify(description)}`,
+      id: uniqueId(description),
       name: description,
       originalBytes: parsed.originalBytes,
       length: parsed.length,

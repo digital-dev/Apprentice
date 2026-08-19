@@ -199,13 +199,16 @@ const pointerChainEntry = `
       </Offsets>
     </CheatEntry>`
 
+// Real CT files serialize the current/frozen value as a Value="..."
+// ATTRIBUTE on <LastState>, alongside other attributes whose presence/order
+// isn't fixed — not as a fabricated <Value> element (which CE never emits).
 const plainValueWithLiteral = `
     <CheatEntry>
       <ID>12</ID>
       <Description>"Always Max Ammo"</Description>
+      <LastState Value="999" RealAddress="00334455" Activated="1"/>
       <VariableType>2 Bytes</VariableType>
       <Address>"game.exe"+00334455</Address>
-      <Value>999</Value>
     </CheatEntry>`
 
 const nopShapeEntry = `
@@ -279,6 +282,47 @@ dealloc(newmem)
 </AssemblerScript>
     </CheatEntry>`
 
+// A "jmp <label>" whose target is a sym+hex label (not a bare cave-internal
+// label like "return"/"code") is a jump INTO a specific byte offset of the
+// original captured bytes — a real "skip N bytes of code" effect, distinct
+// from nop's "disable everything" semantics — and must NOT be stripped as
+// filler the way "jmp return" is.
+const jumpOverBytesEntry = `
+    <CheatEntry>
+      <ID>78</ID>
+      <Description>"Skip Damage Application"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>
+[ENABLE]
+
+aobscan(aobDamage,F3 0F 11 AF 18 08 00 00 48 8B 7D)
+alloc(newmem,$1000,aobDamage)
+
+label(code)
+label(return)
+
+newmem:
+
+code:
+  jmp aobDamage+20
+
+aobDamage:
+  jmp newmem
+  nop 3
+aobDamage+20:
+return:
+registersymbol(aobDamage)
+
+[DISABLE]
+
+aobDamage:
+  db F3 0F 11 AF 18 08 00 00
+
+unregistersymbol(aobDamage)
+dealloc(newmem)
+</AssemblerScript>
+    </CheatEntry>`
+
 describe('nop-shape and copy-shape Auto Assembler entries', () => {
   it('imports a provably-empty effect as a nop-mode patch', () => {
     const { imported, skipped } = importCheatTable(wrapTable(nopShapeEntry))
@@ -342,6 +386,28 @@ describe('nop-shape and copy-shape Auto Assembler entries', () => {
     expect(patch.mode).toBe('force')
     expect(patch.value).toBe(0xdeadbeef)
     expect(patch.dataType).toBe('int32')
+  })
+
+  it('does not classify a jump-into-the-middle-of-the-original-bytes script as nop', () => {
+    // "jmp aobDamage+20" targets a specific byte offset of the original
+    // captured bytes (a real "skip N bytes of code" effect), not a
+    // cave-internal "jmp return" — stripping it as filler would misclassify
+    // this as nop, which NOPs the wrong number of bytes with the wrong
+    // semantics.
+    const { imported, skipped } = importCheatTable(wrapTable(jumpOverBytesEntry))
+    expect(imported).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].description).toBe('Skip Damage Application')
+  })
+
+  it('skips a copy-shape mov with an invalid destination register instead of importing it', () => {
+    // "xmm0" is not a general-purpose register this codebase's native
+    // encoder can target as a destination — importing it as copy-mode would
+    // reach installInjection's encoder call and leak a cave when it throws.
+    const computed = copyShapeEntry.replace('mov [rdi+00000818],eax', 'mov [xmm0+10],eax')
+    const { imported, skipped } = importCheatTable(wrapTable(computed))
+    expect(imported).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
   })
 })
 
@@ -428,19 +494,42 @@ ${staminaEntry}
       '<= infinite coins & items when buying'
     ])
   })
+
+  it('gives two entries with the same description distinct ids instead of colliding', () => {
+    // saveCheat upserts by id — a repeated slug would silently drop the
+    // first import even though the caller is told both succeeded.
+    const first = staminaEntry.replace('&lt;= Infinite Stamina v2', 'Health')
+    const second = durabilityEntry.replace('&lt;= infinite Weapons Durability v2', 'Health')
+    const result = importCheatTable(wrapTable([first, second].join('\n')))
+    expect(result.skipped).toEqual([])
+    expect(result.imported).toHaveLength(2)
+    const ids = result.imported.map((p) => p.id)
+    expect(new Set(ids).size).toBe(2)
+    expect(ids).toContain('ct-import-health')
+    expect(ids).toContain('ct-import-health-2')
+    expect(result.imported.map((p) => p.name)).toEqual(['Health', 'Health'])
+  })
+
+  it('skips a [DISABLE] db line with an odd number of hex digits instead of a fractional length', () => {
+    const computed = nopShapeEntry.replace('db F3 0F 11 AF 18 08 00 00', 'db F3 0F 1')
+    const { imported, skipped } = importCheatTable(wrapTable(computed))
+    expect(imported).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].reason).toContain('odd number of hex digits')
+  })
 })
 
 describe('plain value entries', () => {
-  it('imports a bare-address 4-byte entry as a freeze cheat with a fixed-address target', () => {
+  it('skips a bare-address entry instead of importing an unresolvable target', () => {
+    // No resolver in this codebase (ipc.ts, chain_walk.h) treats an empty
+    // moduleName as "absolute address, no module" — importing this would
+    // silently produce a dead cheat that saves cleanly but never reads or
+    // writes anything.
     const { imported, skipped } = importCheatTable(wrapTable(bareAddressEntry))
-    expect(skipped).toEqual([])
-    expect(imported).toHaveLength(1)
-    const cheat = imported[0] as CheatDefinition
-    expect(cheat.mode).toBe('freeze')
-    expect(cheat.dataType).toBe('int32')
-    expect(cheat.name).toBe('Score')
-    expect(cheat.targets).toEqual([{ moduleName: '', baseOffset: '0x4a2b3c', offsets: [] }])
-    expect(cheat.value).toBe(0)
+    expect(imported).toEqual([])
+    expect(skipped).toEqual([
+      { description: 'Score', reason: expect.stringContaining("can't be relocated across game runs") }
+    ])
   })
 
   it('imports a module+offset pointer-chain entry with its offsets in document order', () => {
@@ -453,7 +542,7 @@ describe('plain value entries', () => {
     ])
   })
 
-  it('reads a literal <Value> tag as the imported value when present', () => {
+  it('reads a <LastState Value="..."> attribute as the imported value when present', () => {
     const { imported } = importCheatTable(wrapTable(plainValueWithLiteral))
     const cheat = imported[0] as CheatDefinition
     expect(cheat.dataType).toBe('int16')
@@ -461,10 +550,23 @@ describe('plain value entries', () => {
   })
 
   it('skips an entry with an unparsable address instead of guessing', () => {
-    const bad = bareAddressEntry.replace('004A2B3C', 'not-an-address')
+    const bad = pointerChainEntry.replace('"game.exe"+001A2B3C', 'not-an-address')
     const { imported, skipped } = importCheatTable(wrapTable(bad))
     expect(imported).toHaveLength(0)
-    expect(skipped).toEqual([{ description: 'Score', reason: expect.stringContaining('Could not parse address') }])
+    expect(skipped).toEqual([{ description: 'Health', reason: expect.stringContaining('Could not parse address') }])
+  })
+
+  it('normalizes a module+offset address and offsets via BigInt, without precision loss', () => {
+    // parseInt(x, 16) silently loses precision above 2^53 and can even
+    // produce the literal string "Infinity" for a long enough hex run,
+    // which would later throw inside BigInt() in ipc.ts with a confusing
+    // error. This address/offset are well within safe-integer range, but
+    // BigInt-based normalization must still produce the same result.
+    const entry = `<Description>"Big"</Description><VariableType>4 Bytes</VariableType><Address>"game.exe"+00FFFFFFFF</Address><Offsets><Offset>00FFFFFFFF</Offset></Offsets>`
+    const result = parsePlainValueEntry(entry, '4 Bytes')
+    expect('error' in result).toBe(false)
+    const parsed = result as Omit<CheatDefinition, 'id' | 'name'>
+    expect(parsed.targets).toEqual([{ moduleName: 'game.exe', baseOffset: '0xffffffff', offsets: ['0xffffffff'] }])
   })
 
   it('parsePlainValueEntry maps every recognized VariableType to the right DataType', () => {
@@ -476,10 +578,18 @@ describe('plain value entries', () => {
       ['Double', 'double']
     ]
     for (const [variableType, dataType] of cases) {
-      const entry = `<Description>"x"</Description><VariableType>${variableType}</VariableType><Address>1000</Address>`
+      const entry = `<Description>"x"</Description><VariableType>${variableType}</VariableType><Address>"game.exe"+1000</Address>`
       const result = parsePlainValueEntry(entry, variableType)
       expect('error' in result).toBe(false)
-      expect((result as CheatDefinition).dataType).toBe(dataType)
+      expect((result as Omit<CheatDefinition, 'id' | 'name'>).dataType).toBe(dataType)
     }
+  })
+
+  it("parsePlainValueEntry's success return has no id/name fields — the caller supplies those", () => {
+    const entry = `<Description>"x"</Description><VariableType>4 Bytes</VariableType><Address>"game.exe"+1000</Address>`
+    const result = parsePlainValueEntry(entry, '4 Bytes')
+    expect('error' in result).toBe(false)
+    expect(result).not.toHaveProperty('id')
+    expect(result).not.toHaveProperty('name')
   })
 })
