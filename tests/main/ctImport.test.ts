@@ -329,6 +329,20 @@ describe('nop-shape and copy-shape Auto Assembler entries', () => {
     expect(imported).toHaveLength(0)
     expect(skipped).toHaveLength(1)
   })
+
+  it('reads a bare hex-letter constant as a force-mode value, not a copy-shape register name', () => {
+    // Regression guard: "deadbeef" matches the same [a-z][a-z0-9]* shape as
+    // a register name, but per CE's Auto Assembler convention (bare literal
+    // = hex, no 0x prefix) this is a force-mode constant, not a register.
+    const computed = copyShapeEntry.replace('mov [rdi+00000818],eax', 'mov [rdi+00000818],deadbeef')
+    const { imported, skipped } = importCheatTable(wrapTable(computed))
+    expect(skipped).toEqual([])
+    expect(imported).toHaveLength(1)
+    const patch = imported[0] as PatchCheat
+    expect(patch.mode).toBe('force')
+    expect(patch.value).toBe(0xdeadbeef)
+    expect(patch.dataType).toBe('int32')
+  })
 })
 
 describe('importCheatTable', () => {

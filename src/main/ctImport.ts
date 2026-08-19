@@ -143,6 +143,18 @@ function stripStructuralLines(enableSection: string): string[] {
     .filter((l) => !/^nop(?:\s+\d+)?$/i.test(l)) // "nop" / "nop 3" byte-padding
 }
 
+// x86-64 general-purpose register names (64-bit + their 32-bit aliases,
+// since Auto Assembler scripts commonly use the 32-bit form for a dword
+// store, e.g. "eax" not "rax"). Used to distinguish a genuine copy-shape
+// source register from a bare hex-letter constant (e.g. "deadbeef") that
+// happens to match the same [a-z][a-z0-9]* token shape.
+const X86_GPR_NAMES = new Set([
+  'rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rbp', 'rsp',
+  'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15',
+  'eax', 'ebx', 'ecx', 'edx', 'esi', 'edi', 'ebp', 'esp',
+  'r8d', 'r9d', 'r10d', 'r11d', 'r12d', 'r13d', 'r14d', 'r15d'
+])
+
 // Parses one Auto Assembler Script into one of three recognized shapes —
 // see this module's header comment for why only these three, and why an
 // unrecognized effect is skipped rather than guessed at.
@@ -196,7 +208,13 @@ function parseInjection(script: string): ParsedInjection | { error: string } {
     const copyMatch = effectLines[0].match(
       /^mov\s+(?:dword\s+ptr\s+)?\[\s*(\w+)\s*\+\s*([0-9A-Fa-f]+)\s*\]\s*,\s*([a-z][a-z0-9]*)$/i
     )
-    if (copyMatch) {
+    // A bare hex-letter constant (e.g. "deadbeef", "cafebabe") matches this
+    // same [a-z][a-z0-9]* shape as a register name, since CE's Auto
+    // Assembler writes force-mode literals with no 0x prefix (see the
+    // force-shape comment below). Only accept copy-shape when the captured
+    // token is an actual x86 GPR name; otherwise fall through so the
+    // force-shape regex gets a chance to read it as the hex literal it is.
+    if (copyMatch && X86_GPR_NAMES.has(copyMatch[3].toLowerCase())) {
       return {
         ...base,
         shape: 'copy',
