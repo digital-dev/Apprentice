@@ -7,6 +7,15 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "noEmit": true,
+    // ctImportWorker.ts imports ctImport with an explicit .ts extension —
+    // required so Node's own built-in TypeScript loader (no build step)
+    // can run ctImportWorker.ts directly as a worker_thread entry in tests
+    // (see ctImportSafe.ts's resolveWorkerScriptPath for why). This
+    // project never uses tsc to emit (vite/esbuild does the actual
+    // build), so allowing it here is safe — nothing consumes a tsc build
+    // output that would need extension rewriting.
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
   "include": ["src"]

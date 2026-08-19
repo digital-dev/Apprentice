@@ -304,10 +304,11 @@ export default function CheatList({
   const [monoAnchorBytesError, setMonoAnchorBytesError] = useState<string | null>(null)
 
   const [ctImporting, setCtImporting] = useState(false)
-  const [ctImportResult, setCtImportResult] = useState<{
-    importedNames: string[]
-    skipped: { description: string; reason: string }[]
-  } | null>(null)
+  const [ctImportResult, setCtImportResult] = useState<
+    | { importedNames: string[]; skipped: { description: string; reason: string }[] }
+    | { error: string }
+    | null
+  >(null)
 
   const [ctExporting, setCtExporting] = useState(false)
   const [ctExportResult, setCtExportResult] = useState<{
@@ -333,6 +334,7 @@ export default function CheatList({
       const result = await window.tamper.importCheatTable(exeName)
       if (result === null) return // user cancelled the file picker
       setCtImportResult(result)
+      if ('error' in result) return // size cap or parse-timeout — nothing was saved
       // Saved directly by the main process (see ipc.ts's ct:import) —
       // reload from disk rather than reconstructing PatchCheat objects
       // here, so this stays in sync with whatever the save path actually
@@ -1233,7 +1235,12 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
       </button>
       <button onClick={() => setCtSourceOpen(true)}>Search online (.CT)</button>
 
-      {ctImportResult && (
+      {ctImportResult && 'error' in ctImportResult && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>{ctImportResult.error}</p>
+        </div>
+      )}
+      {ctImportResult && !('error' in ctImportResult) && (
         <div className="banner" style={{ flexWrap: 'wrap' }}>
           <p style={{ flexBasis: '100%' }}>
             Imported {ctImportResult.importedNames.length} cheat

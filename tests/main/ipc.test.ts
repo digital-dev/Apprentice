@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { littleEndianToBigInt, hasProfile, buildModuleContext, applyRelearn } from '../../src/main/ipc'
+import { littleEndianToBigInt, hasProfile, buildModuleContext, applyRelearn, checkTableSize } from '../../src/main/ipc'
+import { MAX_TABLE_BYTES } from '../../src/main/ctSource'
 import { setGamesDir } from '../../src/main/store'
 import type { GameProfile } from '../../src/main/profile'
 import type { PatchCheat } from '../../src/main/store'
@@ -34,6 +35,26 @@ describe('littleEndianToBigInt', () => {
 // deliberately throws on a malformed games/*.json (a correct property for
 // the save path); hasProfile must swallow that rather than let it escape
 // and crash the watcher's setInterval callback.
+// ct:import's local-file-picker path used to have no size cap at all,
+// unlike ctSource.ts's fetch path (MAX_TABLE_BYTES) — a hostile/corrupt
+// oversized .CT file read straight off disk reached the parser unbounded.
+// checkTableSize is the pure logic ipc.ts's ct:import handler now runs
+// against fs.statSync's result before ever reading the file.
+describe('checkTableSize', () => {
+  it('allows a file at or under the cap', () => {
+    expect(checkTableSize(MAX_TABLE_BYTES)).toBeNull()
+    expect(checkTableSize(1024)).toBeNull()
+  })
+
+  it('rejects a file over the cap with a descriptive error', () => {
+    const oversized = MAX_TABLE_BYTES + 1
+    const error = checkTableSize(oversized)
+    expect(error).not.toBeNull()
+    expect(error).toContain(String(oversized))
+    expect(error).toContain(String(MAX_TABLE_BYTES))
+  })
+})
+
 describe('hasProfile', () => {
   let dir: string
 

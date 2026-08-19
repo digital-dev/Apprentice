@@ -309,9 +309,32 @@ function parseInjection(script: string): ParsedInjection | { error: string } {
   const name = aobMatch[1]
   const signature = aobMatch[2].trim().replace(/\s+/g, ' ').toLowerCase()
 
+  // A real aobscan(...) symbol name is a short identifier (well under 64
+  // characters in practice). An implausibly long one (e.g. 32,767+ chars)
+  // makes the `new RegExp(...)` below throw an uncaught SyntaxError (V8
+  // rejects overlong compiled patterns), which would otherwise propagate
+  // uncaught out of importCheatTable. Refuse before constructing the
+  // RegExp rather than let that throw escape.
+  const MAX_AOBSCAN_NAME_LENGTH = 256
+  if (name.length > MAX_AOBSCAN_NAME_LENGTH) {
+    return { error: 'aobscan symbol name is implausibly long — not a recognized script shape.' }
+  }
+
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // The `\s*` immediately before/after the `:` used to be able to consume
+  // newlines too (\s includes \n) — a run of many blank/whitespace-only
+  // lines with no `db` line after them made this a nullable-star-sandwich
+  // around \r?\n, causing O(N^2) backtracking (measured: 86s at 0.51MB).
+  // [^\S\r\n]* (horizontal whitespace only) is what was actually intended
+  // there — a label's own line never legitimately contains blank lines
+  // between the name and its colon. The `\s*` AFTER `\r?\n`, leading into
+  // the `db` line, is left as-is: multiple blank lines before `db` is a
+  // legitimate real-world shape and isn't the sequence causing the blowup.
   const disableMatch = script.match(
-    new RegExp(`${escapedName}(?:\\+([0-9A-Fa-f]+))?\\s*:\\s*\\r?\\n\\s*db\\s+([0-9A-Fa-f\\s]+)`, 'i')
+    new RegExp(
+      `${escapedName}(?:\\+([0-9A-Fa-f]+))?[^\\S\\r\\n]*:[^\\S\\r\\n]*\\r?\\n\\s*db\\s+([0-9A-Fa-f\\s]+)`,
+      'i'
+    )
   )
   if (!disableMatch) {
     return {
@@ -401,8 +424,16 @@ function parseInjection(script: string): ParsedInjection | { error: string } {
   // CE writes offsets zero-padded (e.g. [rdi+00000818]) — normalize away
   // the padding so fieldOffset matches this codebase's own convention for
   // hex strings elsewhere (e.g. Scanner-captured patches).
+  // The optional `(?:\(...\))?` cast group used to be followed by a
+  // separate `\s*` — since the group is nullable, that trailing `\s*` and
+  // the group's own internal whitespace could both match the same run of
+  // whitespace in different ways, an effectively-nullable-then-star
+  // sequence causing O(N^2) backtracking on a long run of whitespace with
+  // no valid hex value after it (measured: 31s at 0.26MB). Moving the
+  // `\s*` INSIDE the optional group means it's only ever consumed when the
+  // group itself matched, removing the ambiguity/overlap entirely.
   const movMatch = enableSection.match(
-    /\bmov\s+(?:dword\s+ptr\s+)?\[\s*(\w+)\s*\+\s*([0-9A-Fa-f]+)\s*\]\s*,\s*(?:\((float|double)\))?\s*([0-9A-Fa-f.]+)(?![0-9A-Za-z])/i
+    /\bmov\s+(?:dword\s+ptr\s+)?\[\s*(\w+)\s*\+\s*([0-9A-Fa-f]+)\s*\]\s*,\s*(?:\((float|double)\)\s*)?([0-9A-Fa-f.]+)(?![0-9A-Za-z])/i
   )
   // Same destination-register validation as copy-shape above, and for the
   // same reason: an unvalidated destination reaches installInjection's

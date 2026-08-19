@@ -234,10 +234,17 @@ declare global {
       // Opens a native file picker for a .CT file and imports every
       // recognizable entry as a force-mode patch, saving them immediately.
       // Null if the user cancelled the file picker; otherwise a summary of
-      // what was imported and what was skipped (with why).
+      // what was imported and what was skipped (with why). Returns an
+      // { error } shape if the file exceeds the size cap, or if parsing
+      // took too long and was aborted (see ctImportSafe.ts) — same
+      // convention as fetchCtTable below.
       importCheatTable: (
         exeName: string
-      ) => Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | null>
+      ) => Promise<
+        | { importedNames: string[]; skipped: { description: string; reason: string }[] }
+        | { error: string }
+        | null
+      >
       // Opens a native save dialog and writes every 'force'-mode patch out
       // as a Cheat Engine .CT table. Null if the user cancelled the save
       // dialog; otherwise a summary of what was exported and what was

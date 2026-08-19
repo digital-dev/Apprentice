@@ -19,8 +19,8 @@ import {
   isScriptCheat,
   type ScriptCheat
 } from './store'
-import { importCheatTable } from './ctImport'
-import { searchCtTables, fetchCtTable, CT_REPOS } from './ctSource'
+import { importCheatTableWithBudget } from './ctImportSafe'
+import { searchCtTables, fetchCtTable, CT_REPOS, MAX_TABLE_BYTES } from './ctSource'
 import type { CtSearchResult } from './ctSource'
 import { buildCheatTable } from './ctExport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
@@ -108,6 +108,19 @@ function fullOffsets(target: ChainTarget): string[] {
 // significant byte. Reading the unspaced hex blob as-is would parse it
 // big-endian and produce a plausible-looking but wrong address, so the byte
 // pairs are reversed before parsing.
+// Pulled out as its own pure function (rather than inlined at the ct:import
+// call site) purely for testability, matching this file's existing
+// convention (littleEndianToBigInt, hasProfile, etc. below) of exporting
+// small pure pieces of a handler's logic so they can be unit-tested without
+// standing up electron's ipcMain/dialog mocks. Returns an error message, or
+// null if the size is acceptable.
+export function checkTableSize(sizeBytes: number): string | null {
+  if (sizeBytes > MAX_TABLE_BYTES) {
+    return `File is ${sizeBytes} bytes, exceeding the ${MAX_TABLE_BYTES}-byte limit for a .CT table — refusing to import.`
+  }
+  return null
+}
+
 export function littleEndianToBigInt(hex: string): bigint {
   let reversed = ''
   for (let i = hex.length - 2; i >= 0; i -= 2) {
@@ -1193,13 +1206,32 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     async (
       _e,
       exeName: string
-    ): Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | null> => {
+    ): Promise<
+      | { importedNames: string[]; skipped: { description: string; reason: string }[] }
+      | { error: string }
+      | null
+    > => {
       const result = await dialog.showOpenDialog(getWindow(), {
         title: 'Import Cheat Engine table',
         filters: [{ name: 'Cheat Table', extensions: ['CT', 'ct'] }],
         properties: ['openFile']
       })
       if (result.canceled || result.filePaths.length === 0) return null
+
+      // Mirrors ctSource.ts's fetch-path size cap (MAX_TABLE_BYTES) — that
+      // one only ever applied to a REMOTELY fetched table; a local file
+      // picked off disk went through with no size check at all, so a
+      // hostile/corrupt oversized .CT file here still reached the parser
+      // unbounded. Checked via statSync before reading, so an oversized
+      // file is never even read into memory.
+      let sizeBytes: number
+      try {
+        sizeBytes = fs.statSync(result.filePaths[0]).size
+      } catch (err) {
+        return { importedNames: [], skipped: [{ description: result.filePaths[0], reason: String(err) }] }
+      }
+      const sizeError = checkTableSize(sizeBytes)
+      if (sizeError) return { error: sizeError }
 
       let xml: string
       try {
@@ -1208,7 +1240,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
         return { importedNames: [], skipped: [{ description: result.filePaths[0], reason: String(err) }] }
       }
 
-      const { imported, skipped } = importCheatTable(xml)
+      const parsed = await importCheatTableWithBudget(xml)
+      if ('error' in parsed) return parsed
+      const { imported, skipped } = parsed
       for (const patch of imported) saveCheat(exeName, patch)
       return { importedNames: imported.map((p) => p.name), skipped }
     }
@@ -1269,7 +1303,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
           return { error: 'Unknown source repository.' }
         }
         const xml = await fetchCtTable(result)
-        const { imported, skipped } = importCheatTable(xml)
+        const parsed = await importCheatTableWithBudget(xml)
+        if ('error' in parsed) return parsed
+        const { imported, skipped } = parsed
         for (const cheat of imported) saveCheat(exeName, cheat)
         return { importedNames: imported.map((c) => c.name), skipped }
       } catch (err) {

@@ -825,4 +825,100 @@ describe('importCheatTable performance', () => {
     expect(result.imported).toHaveLength(1)
     expect((result.imported[0] as CheatDefinition).value).toBe(0)
   })
+
+  // Regression test for a SEVENTH instance of complexity-DoS, in
+  // parseInjection's disableMatch regex. `\s*` immediately around the `:`
+  // can consume newlines too (\s includes \n), making the sequence
+  // `\s*:\s*\r?\n` an effectively nullable-star sandwich around `\r?\n` —
+  // a run of many blank/whitespace-only lines with no `db` line ever
+  // following caused catastrophic backtracking (measured: 86s at 0.51MB).
+  // The fix narrows both `\s*` occurrences around the `:` to
+  // `[^\S\r\n]*` (horizontal whitespace only — the newline-swallowing was
+  // never actually intended there).
+  it('reports a normal "no DISABLE db line" error quickly on many blank lines, not quadratically', () => {
+    const blankLineCount = 100_000
+    const script =
+      '[ENABLE]\n' +
+      'aobscan(aobStamina,F3 0F 11 AF)\n' +
+      'aobStamina:\n' +
+      '\n'.repeat(blankLineCount) // no "db ..." line ever follows
+
+    const xml = wrapTable(`
+    <CheatEntry>
+      <ID>1</ID>
+      <Description>"Blank Lines DoS"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>${script}</AssemblerScript>
+    </CheatEntry>`)
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(1000)
+    expect(result.imported).toEqual([])
+    expect(result.skipped[0].reason).toContain("Could not find a matching [DISABLE]")
+  })
+
+  // Regression test for an EIGHTH instance of complexity-DoS, in
+  // parseInjection's movMatch regex. The optional `(?:\(...\))?` cast group
+  // followed by a separate `\s*` is an effectively-nullable-then-star
+  // sequence — a long run of whitespace with no valid hex value after it
+  // caused catastrophic backtracking (measured: 31s at 0.26MB). The fix
+  // moves the `\s*` inside the optional group so it's only ever consumed
+  // when the group itself matched.
+  it('reports a normal "no recognizable mov line" error quickly on a long whitespace run, not quadratically', () => {
+    const spaceCount = 500_000
+    const script =
+      '[ENABLE]\n' +
+      'aobscan(aobStamina,F3 0F 11 AF)\n' +
+      'label(code)\n' +
+      'label(return)\n' +
+      'newmem:\n' +
+      'code:\n' +
+      `  mov [rdi+818],${' '.repeat(spaceCount)}\n` + // no valid hex value ever follows
+      '  jmp return\n' +
+      '[DISABLE]\n' +
+      'aobStamina:\n' +
+      '  db 90 90 90 90 90\n'
+
+    const xml = wrapTable(`
+    <CheatEntry>
+      <ID>1</ID>
+      <Description>"Whitespace Run DoS"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>${script}</AssemblerScript>
+    </CheatEntry>`)
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(1000)
+    expect(result.imported).toEqual([])
+    expect(result.skipped[0].reason).toContain('No recognizable')
+  })
+
+  // Regression test for bug #8: an implausibly long aobscan(...) symbol
+  // name (32,767+ chars in the wild) makes `new RegExp(...)` throw an
+  // uncaught SyntaxError, which used to propagate straight out of
+  // importCheatTable instead of coming back as a normal { error } /
+  // skipped-entry outcome. A length guard on the captured name now refuses
+  // before that RegExp is ever constructed.
+  it('reports an error instead of throwing on an implausibly long aobscan symbol name', () => {
+    const hugeName = 'a'.repeat(40_000)
+    const script = `[ENABLE]\naobscan(${hugeName},F3 0F 11 AF)\n${hugeName}:\njmp newmem\n[DISABLE]\n`
+    const xml = wrapTable(`
+    <CheatEntry>
+      <ID>1</ID>
+      <Description>"Huge Symbol Name"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>${script}</AssemblerScript>
+    </CheatEntry>`)
+
+    expect(() => importCheatTable(xml)).not.toThrow()
+    const result = importCheatTable(xml)
+    expect(result.imported).toEqual([])
+    expect(result.skipped[0].reason).toContain('implausibly long')
+  })
 })

@@ -61,7 +61,10 @@ const FETCH_TIMEOUT_MS = 10_000
 // it), so this is only a first line of defense — ctImport.ts's own
 // depth/count caps are the actual backstop against a body that evades
 // this check.
-const MAX_TABLE_BYTES = 5 * 1024 * 1024
+// Exported so ipc.ts's ct:import handler (the LOCAL file picker path) can
+// apply the same cap to a file read directly off disk, not just a fetched
+// one — see ipc.ts for why that path was previously missing this check.
+export const MAX_TABLE_BYTES = 5 * 1024 * 1024
 
 interface RepoTreeFetch {
   entries: TreeEntry[]
