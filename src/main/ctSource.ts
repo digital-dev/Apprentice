@@ -37,8 +37,8 @@ interface TreeEntry {
 
 // One entry per repo, populated on first search and reused for the rest
 // of the process's lifetime — a repeat search costs zero extra API calls.
-// Exported only for tests (clearTreeCache); not part of the module's
-// public surface used by ipc.ts.
+// Exported only for test use (resetting cache state between test cases),
+// not called by ipc.ts or any production code path.
 const treeCache = new Map<string, TreeEntry[]>()
 
 export function clearTreeCache(): void {
@@ -50,37 +50,68 @@ function basename(path: string): string {
   return idx === -1 ? path : path.slice(idx + 1)
 }
 
-async function fetchRepoTree(repo: CtRepo, fetchImpl: typeof fetch): Promise<TreeEntry[]> {
+// A hung connection (captive portal, half-open socket) would otherwise
+// leave a fetch pending forever with no feedback to the user — bound
+// every request so a search or import fails fast instead of spinning.
+const FETCH_TIMEOUT_MS = 10_000
+
+// Best-effort cap on a fetched table's byte size, checked against
+// Content-Length before buffering the body. Content-Length isn't always
+// present/reliable (chunked responses, a server that omits or lies about
+// it), so this is only a first line of defense — ctImport.ts's own
+// depth/count caps are the actual backstop against a body that evades
+// this check.
+const MAX_TABLE_BYTES = 5 * 1024 * 1024
+
+interface RepoTreeFetch {
+  entries: TreeEntry[]
+  failed: boolean
+}
+
+async function fetchRepoTree(repo: CtRepo, fetchImpl: typeof fetch): Promise<RepoTreeFetch> {
   const key = `${repo.owner}/${repo.repo}@${repo.branch}`
   const cached = treeCache.get(key)
-  if (cached) return cached
+  if (cached) return { entries: cached, failed: false }
 
   try {
     const url = `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${repo.branch}?recursive=1`
-    const res = await fetchImpl(url)
-    if (!res.ok) return [] // rate-limited/gone/etc: this repo contributes nothing, not an error
+    const res = await fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+    if (!res.ok) return { entries: [], failed: true } // rate-limited/gone/etc
     const body = (await res.json()) as { tree?: TreeEntry[] }
     const entries = Array.isArray(body.tree) ? body.tree : []
     treeCache.set(key, entries)
-    return entries
+    return { entries, failed: false }
   } catch {
-    return [] // offline or a network error: same "contributes nothing" treatment
+    return { entries: [], failed: true } // offline, timeout, or a network error
   }
+}
+
+export interface CtSearchOutcome {
+  results: CtSearchResult[]
+  failedRepoCount: number
 }
 
 // Searches every curated repo's file tree for a .CT/.ct file whose path
 // contains `gameName`, case-insensitively. Never throws — a repo that
 // fails to fetch simply contributes no results, so one bad/rate-limited
-// repo never breaks the whole search.
+// repo never breaks the whole search — but the number of repos that
+// failed is reported back so the caller can distinguish "genuinely no
+// matches" from "couldn't reach GitHub", which a bare empty result list
+// can't. All curated repos are fetched concurrently, not one at a time —
+// they're independent GETs, and a sequential loop would multiply a single
+// hung connection's delay by the repo count.
 export async function searchCtTables(
   gameName: string,
   fetchImpl: typeof fetch = fetch
-): Promise<CtSearchResult[]> {
+): Promise<CtSearchOutcome> {
   const needle = gameName.toLowerCase()
   const results: CtSearchResult[] = []
-  for (const repo of CT_REPOS) {
-    const tree = await fetchRepoTree(repo, fetchImpl)
-    for (const entry of tree) {
+  let failedRepoCount = 0
+  const trees = await Promise.all(CT_REPOS.map((repo) => fetchRepoTree(repo, fetchImpl)))
+  CT_REPOS.forEach((repo, i) => {
+    const { entries, failed } = trees[i]
+    if (failed) failedRepoCount++
+    for (const entry of entries) {
       if (entry.type !== 'blob') continue
       if (!entry.path.toLowerCase().endsWith('.ct')) continue
       if (!entry.path.toLowerCase().includes(needle)) continue
@@ -91,8 +122,8 @@ export async function searchCtTables(
         branch: repo.branch
       })
     }
-  }
-  return results
+  })
+  return { results, failedRepoCount }
 }
 
 // Fetches the raw XML content of one search result. Unlike the tree
@@ -103,10 +134,19 @@ export async function fetchCtTable(
   fetchImpl: typeof fetch = fetch
 ): Promise<string> {
   const branch = result.branch ?? 'main'
-  const url = `https://raw.githubusercontent.com/${result.repo}/${branch}/${result.path}`
-  const res = await fetchImpl(url)
+  // Path segments (and, defensively, the branch) are URL-encoded — a
+  // legal Git path/branch containing '#' or '?' would otherwise truncate
+  // the URL at that character, silently fetching the wrong content or
+  // 404ing instead of the intended file.
+  const encodedPath = result.path.split('/').map(encodeURIComponent).join('/')
+  const url = `https://raw.githubusercontent.com/${result.repo}/${encodeURIComponent(branch)}/${encodedPath}`
+  const res = await fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
   if (!res.ok) {
     throw new Error(`Failed to fetch "${result.name}" from GitHub (HTTP ${res.status}).`)
+  }
+  const contentLength = res.headers.get('content-length')
+  if (contentLength !== null && Number(contentLength) > MAX_TABLE_BYTES) {
+    throw new Error(`"${result.name}" is too large (${contentLength} bytes) to import.`)
   }
   return res.text()
 }

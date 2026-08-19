@@ -20,7 +20,7 @@ import {
   type ScriptCheat
 } from './store'
 import { importCheatTable } from './ctImport'
-import { searchCtTables, fetchCtTable } from './ctSource'
+import { searchCtTables, fetchCtTable, CT_REPOS } from './ctSource'
 import type { CtSearchResult } from './ctSource'
 import { buildCheatTable } from './ctExport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
@@ -1218,12 +1218,23 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   // matching gameName. Never throws to the renderer — a search failure
   // (offline, rate-limited) comes back as an empty result list plus an
   // error string, so the UI can show it without a try/catch of its own.
+  // searchCtTables itself never throws, but it still reports how many of
+  // the curated repos failed to fetch — surfaced here as a descriptive
+  // `error` (rather than always null) so "no results" (genuinely nothing
+  // available) is distinguishable in the UI from "couldn't reach GitHub"
+  // (offline/rate-limited), which used to look identical.
   ipcMain.handle(
     'ctSource:search',
     async (_e, gameName: string): Promise<{ results: CtSearchResult[]; error: string | null }> => {
       try {
-        const results = await searchCtTables(gameName)
-        return { results, error: null }
+        const { results, failedRepoCount } = await searchCtTables(gameName)
+        const error =
+          failedRepoCount === 0
+            ? null
+            : failedRepoCount === CT_REPOS.length
+              ? `Couldn't reach GitHub (${failedRepoCount} of ${CT_REPOS.length} repositories failed — offline or rate-limited).`
+              : `${failedRepoCount} of ${CT_REPOS.length} repositories couldn't be searched (offline or rate-limited) — results may be incomplete.`
+        return { results, error }
       } catch (err) {
         return { results: [], error: String(err) }
       }
@@ -1234,6 +1245,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   // importCheatTable pipeline ct:import uses — picking a result IS the
   // confirm gesture, matching ct:import's own "no separate confirm step"
   // convention.
+  //
+  // The whole body (fetch, parse, save) is wrapped in one try/catch —
+  // not just the fetch — so a throw from importCheatTable (e.g. a future
+  // parser regression) or from saveCheat (e.g. a disk error) rejects with
+  // a readable { error } shape instead of an unhandled IPC rejection the
+  // renderer can't show.
   ipcMain.handle(
     'ctSource:fetch',
     async (
@@ -1241,15 +1258,23 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       exeName: string,
       result: CtSearchResult
     ): Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | { error: string }> => {
-      let xml: string
       try {
-        xml = await fetchCtTable(result)
+        // Structurally enforce the "curated, closed list" property — the
+        // renderer only ever echoes back what ctSource:search gave it
+        // today, but nothing stops that from changing later, and the host
+        // being pinned to raw.githubusercontent.com/${result.repo} is not
+        // a substitute for actually checking repo/branch against CT_REPOS.
+        const known = CT_REPOS.find((r) => `${r.owner}/${r.repo}` === result.repo)
+        if (!known || (result.branch !== undefined && result.branch !== known.branch)) {
+          return { error: 'Unknown source repository.' }
+        }
+        const xml = await fetchCtTable(result)
+        const { imported, skipped } = importCheatTable(xml)
+        for (const cheat of imported) saveCheat(exeName, cheat)
+        return { importedNames: imported.map((c) => c.name), skipped }
       } catch (err) {
         return { error: String(err) }
       }
-      const { imported, skipped } = importCheatTable(xml)
-      for (const cheat of imported) saveCheat(exeName, cheat)
-      return { importedNames: imported.map((c) => c.name), skipped }
     }
   )
 

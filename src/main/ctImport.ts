@@ -81,18 +81,77 @@ function extractTagBlocks(xml: string, tag: string): string[] {
   return blocks
 }
 
-// Every <CheatEntry> anywhere in the tree, flattened — folders (marked by
+// Depth/count backstops for collectCheatEntryRanges below — a cheap,
+// immediate safety net independent of that function's linear-time fix.
+// 64 levels is generous for any real CT table (folders nest maybe 3-5
+// deep in practice); 10,000 entries guards against a very WIDE (not deep)
+// pathological file the depth cap wouldn't catch. Either limit being hit
+// means the file is hostile or corrupt, not a real table — refusing to
+// keep scanning past it (returning whatever was already collected) is
+// the correct outcome, not a crash and not an unbounded hang.
+const MAX_CHEAT_ENTRY_DEPTH = 64
+const MAX_CHEAT_ENTRIES = 10_000
+
+// Every <CheatEntry> anywhere in the tree, as [start, end] byte offsets
+// into the ORIGINAL `xml` string (start/end bound the entry's own inner
+// content, i.e. between its open and close tags) — folders (marked by
 // <GroupHeader>1</GroupHeader>) nest their children the same way, and the
 // only thing distinguishing a leaf worth importing is having its own
 // VariableType/AssemblerScript, checked by the caller.
-function collectAllCheatEntries(xml: string): string[] {
-  const direct = extractTagBlocks(xml, 'CheatEntry')
-  const all: string[] = []
-  for (const block of direct) {
-    all.push(block)
-    all.push(...collectAllCheatEntries(block))
+//
+// This is a SINGLE forward scan over `xml` with an explicit stack of open
+// offsets, not a recursive re-slice-and-rescan of each block's own
+// substring copy. The previous implementation (collectAllCheatEntries
+// calling extractTagBlocks on each already-sliced block, then recursing
+// into every one of those slices) re-scanned and re-copied every
+// ancestor's content once per descendant level, making it roughly cubic
+// in nesting depth: ~4000 levels of nested <CheatEntry> (a ~100 KB file)
+// took over a minute and froze the single-threaded Electron main process
+// with no timeout or recovery — reachable from any hostile/compromised
+// .CT file fetched via ctSource.ts. Walking the original string once and
+// only recording offsets (no copying) makes this linear in file size
+// regardless of nesting depth; the actual substring slice happens exactly
+// once per entry, in the caller, from the stored offsets.
+function collectCheatEntryRanges(xml: string): Array<[number, number]> {
+  const open = '<CheatEntry>'
+  const close = '</CheatEntry>'
+  const ranges: Array<[number, number]> = []
+  const stack: number[] = []
+  let i = 0
+  while (i < xml.length) {
+    const nextOpen = xml.indexOf(open, i)
+    const nextClose = xml.indexOf(close, i)
+    if (nextClose === -1) break // unbalanced tail: stop, keep what's found
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      if (stack.length >= MAX_CHEAT_ENTRY_DEPTH) {
+        // Pathologically deep nesting: refuse to track further levels.
+        // Stop scanning entirely rather than silently misparsing —
+        // whatever entries were already found (at depths below the cap)
+        // are still returned.
+        break
+      }
+      stack.push(nextOpen + open.length)
+      i = nextOpen + open.length
+    } else {
+      const start = stack.pop()
+      if (start !== undefined) {
+        if (ranges.length >= MAX_CHEAT_ENTRIES) break // pathologically wide: stop here too
+        ranges.push([start, nextClose])
+      }
+      i = nextClose + close.length
+    }
   }
-  return all
+  // Restores the same order the old recursive walk produced: a parent
+  // entry immediately followed by its own descendants (depth-first,
+  // sibling order preserved) before the next top-level sibling — which is
+  // exactly ascending order of each entry's OPEN-tag offset, since a
+  // parent's open tag always precedes every descendant's.
+  ranges.sort((a, b) => a[0] - b[0])
+  return ranges
+}
+
+function collectAllCheatEntries(xml: string): string[] {
+  return collectCheatEntryRanges(xml).map(([start, end]) => xml.slice(start, end))
 }
 
 function extractTag(xml: string, tag: string): string | null {

@@ -320,7 +320,11 @@ export default function CheatList({
   const [ctSourceSearching, setCtSourceSearching] = useState(false)
   const [ctSourceResults, setCtSourceResults] = useState<CtSearchResult[]>([])
   const [ctSourceError, setCtSourceError] = useState<string | null>(null)
-  const [ctSourceFetchingPath, setCtSourceFetchingPath] = useState<string | null>(null)
+  // Keyed by `${repo}/${path}` (same composite key the results list uses
+  // for React's own key prop) rather than path alone — two different
+  // repos can share a filename, and comparing path alone would show
+  // "Importing…" (and disable) both rows when only one was clicked.
+  const [ctSourceFetchingKey, setCtSourceFetchingKey] = useState<string | null>(null)
 
   async function importCheatTable() {
     setCtImporting(true)
@@ -362,13 +366,21 @@ export default function CheatList({
       const { results, error } = await window.tamper.searchCtTables(ctSourceQuery)
       setCtSourceResults(results)
       setCtSourceError(error)
+    } catch (err) {
+      // A rejected IPC call (a throw that escaped the main-process
+      // handler) would otherwise be an unhandled promise rejection here —
+      // the finally below still clears the spinner, but with no catch the
+      // user would see nothing at all, indistinguishable from "no results
+      // yet". Surface it the same way a returned { error } shape is.
+      setCtSourceError(String(err))
     } finally {
       setCtSourceSearching(false)
     }
   }
 
   async function fetchCtSourceResult(result: CtSearchResult) {
-    setCtSourceFetchingPath(result.path)
+    const key = `${result.repo}/${result.path}`
+    setCtSourceFetchingKey(key)
     try {
       const outcome = await window.tamper.fetchCtTable(exeName, result)
       if ('error' in outcome) {
@@ -377,12 +389,20 @@ export default function CheatList({
       }
       setCtImportResult(outcome) // reuse the existing import-summary banner
       setCtSourceOpen(false)
+      // Reset the search state too — otherwise reopening the modal shows
+      // this now-stale search's results as if they were freshly searched.
+      setCtSourceResults([])
+      setCtSourceError(null)
       const all: StoredCheat[] = await window.tamper.loadCheats(exeName)
       setCheats(all.filter((c): c is CheatDefinition => !isPatch(c) && !isScript(c)))
       setPatches(all.filter(isPatch))
       setScripts(all.filter(isScript))
+    } catch (err) {
+      // Same reasoning as searchCtSource's catch above — a rejected IPC
+      // call must not silently vanish behind the finally's spinner clear.
+      setCtSourceError(String(err))
     } finally {
-      setCtSourceFetchingPath(null)
+      setCtSourceFetchingKey(null)
     }
   }
 
@@ -1270,9 +1290,9 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                   {r.repo} — {r.name}{' '}
                   <button
                     onClick={() => fetchCtSourceResult(r)}
-                    disabled={ctSourceFetchingPath === r.path}
+                    disabled={ctSourceFetchingKey === `${r.repo}/${r.path}`}
                   >
-                    {ctSourceFetchingPath === r.path ? 'Importing…' : 'Import'}
+                    {ctSourceFetchingKey === `${r.repo}/${r.path}` ? 'Importing…' : 'Import'}
                   </button>
                 </li>
               ))}

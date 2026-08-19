@@ -636,3 +636,34 @@ describe('plain value entries', () => {
     expect(skipped[0].description).toBe('Broken Offsets')
   })
 })
+
+describe('importCheatTable performance', () => {
+  // Regression test for a measured DoS: the old collectAllCheatEntries
+  // recursed into freshly-sliced substring copies of every ancestor block
+  // at every nesting level, re-scanning already-scanned content each time
+  // — roughly cubic in nesting depth. ~4000 levels of nesting took over a
+  // minute (and froze the whole single-threaded Electron main process, no
+  // timeout) under that implementation. This builds a deeply nested (but
+  // otherwise tiny) table and asserts import stays fast — generous
+  // (well under the old implementation's real-world blow-up) but tight
+  // enough to fail against the old cubic behavior.
+  it('imports a deeply-nested table (2000+ levels) quickly, not cubically', () => {
+    const depth = 2000
+    const xml =
+      '<?xml version="1.0" encoding="utf-8"?><CheatTable><CheatEntries>' +
+      '<CheatEntry>'.repeat(depth) +
+      '</CheatEntry>'.repeat(depth) +
+      '</CheatEntries></CheatTable>'
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(2000)
+    // Depth cap (64) means only entries at depth <= 64 are collected; none
+    // of them have a VariableType, so all are silently skipped (folders),
+    // not reported as errors — just proving the call returns promptly and
+    // without throwing is the point of this test.
+    expect(result.imported).toEqual([])
+  })
+})
