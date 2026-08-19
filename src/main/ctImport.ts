@@ -110,23 +110,43 @@ function ownContent(entryBlock: string): string {
 }
 
 interface ParsedInjection {
+  shape: 'nop' | 'copy' | 'force'
   signature: string
   signatureOffset: number
   originalBytes: string
   length: number
-  baseRegister: string
-  fieldOffset: string
-  value: number
-  dataType: DataType
+  baseRegister?: string // absent for nop
+  fieldOffset?: string // absent for nop
+  sourceRegister?: string // copy only
+  value?: number // force only
+  dataType?: DataType // force only
 }
 
-// Parses one Auto Assembler Script, expecting exactly the "aobscan finds
-// an instruction, [DISABLE]'s db line records its original bytes, the
-// [ENABLE] code: block replaces it with mov [reg+offset], constant" shape.
-// Returns an error string (not throwing) for anything that doesn't match —
-// a script this doesn't recognize is a normal, expected outcome for a
-// pattern-matching importer, not an exceptional one.
-function parseForceInjection(script: string): ParsedInjection | { error: string } {
+// Lines that are structural (the "[ENABLE]" section header itself,
+// aobscan/alloc/label declarations, symbol (un)registration, dealloc, bare
+// labels, a plain "jmp <label>", and the "nop [count]" padding CE emits
+// under the scanned label to fill out the bytes the 5-byte jmp-to-newmem
+// didn't consume) rather than an actual effect instruction. Stripping
+// these from the enable section is what lets nop-shape be detected as
+// "provably nothing left", rather than inferred from "no mov matched" —
+// the latter would silently misclassify an unrecognized computed effect
+// (e.g. imul) as a no-op.
+function stripStructuralLines(enableSection: string): string[] {
+  return enableSection
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => !/^\[ENABLE\]$/i.test(l))
+    .filter((l) => !/^(aobscan|alloc|label|registersymbol|unregistersymbol|dealloc)\s*\(/i.test(l))
+    .filter((l) => !/^\w+(?:\+[0-9A-Fa-f]+)?:$/.test(l)) // "newmem:", "code:", "INJECT+09:"
+    .filter((l) => !/^jmp\s+\w+$/i.test(l))
+    .filter((l) => !/^nop(?:\s+\d+)?$/i.test(l)) // "nop" / "nop 3" byte-padding
+}
+
+// Parses one Auto Assembler Script into one of three recognized shapes —
+// see this module's header comment for why only these three, and why an
+// unrecognized effect is skipped rather than guessed at.
+function parseInjection(script: string): ParsedInjection | { error: string } {
   const aobMatch = script.match(/aobscan\s*\(\s*(\w+)\s*,\s*([0-9A-Fa-f?\s]+)\)/)
   if (!aobMatch) return { error: 'No aobscan(...) call found — not a byte-pattern-anchored script.' }
   const name = aobMatch[1]
@@ -146,8 +166,62 @@ function parseForceInjection(script: string): ParsedInjection | { error: string 
   const length = originalBytes.length / 2
 
   const enableSection = script.split(/\[DISABLE\]/i)[0]
+  const base = { signature, signatureOffset, originalBytes, length }
+  const effectLines = stripStructuralLines(enableSection)
+
+  if (effectLines.length === 0) {
+    return { ...base, shape: 'nop' }
+  }
+
+  // Copy-shape is only recognized when the register-source mov is the ONLY
+  // effect line left after stripping structural boilerplate — unlike
+  // force's fixed constant (order-independent: whatever else runs, the
+  // literal being written doesn't change), a register copy's correctness
+  // depends on nothing else in the enable section having touched that
+  // register first. A real CT's replayed "swallowed" instruction (see this
+  // module's header comment) is harmless in front of a constant write, but
+  // an unmodeled computation (e.g. "imul eax,2") in front of a register
+  // copy would silently import the WRONG live value — same category of
+  // mistake as the truncation bug below, just at the instruction level
+  // instead of the token level. So copy-shape requires isolation; it is
+  // checked against the single surviving effect line, not searched for
+  // anywhere in the raw enable section.
+  //
+  // Tried before the literal-constant form below (and with the trailing
+  // (?![0-9A-Za-z]) lookahead mirrored onto that form's value group):
+  // without both, "mov [rdi+818], eax" partially matches the literal
+  // form's [0-9A-Fa-f.]+ as "ea", silently importing a register-copy
+  // script as a bogus force-mode constant 0xea.
+  if (effectLines.length === 1) {
+    const copyMatch = effectLines[0].match(
+      /^mov\s+(?:dword\s+ptr\s+)?\[\s*(\w+)\s*\+\s*([0-9A-Fa-f]+)\s*\]\s*,\s*([a-z][a-z0-9]*)$/i
+    )
+    if (copyMatch) {
+      return {
+        ...base,
+        shape: 'copy',
+        baseRegister: copyMatch[1].toLowerCase(),
+        fieldOffset: '0x' + parseInt(copyMatch[2], 16).toString(16),
+        sourceRegister: copyMatch[3].toLowerCase()
+      }
+    }
+  }
+
+  // Force-shape, unlike copy above, is deliberately searched for anywhere
+  // in the raw enable section (not gated on effectLines.length) — this is
+  // unchanged from before this task, and real CT files rely on that
+  // tolerance: a "code:" block often replays extra instructions CE's own
+  // injection swallowed (e.g. a trailing "test eax,eax", or a "movss"
+  // preceding the actual "mov"), which don't affect a literal constant
+  // write and are already accepted here (see this module's header
+  // comment). Requiring isolation here as well would regress those
+  // existing, already-supported fixtures.
+  //
+  // CE writes offsets zero-padded (e.g. [rdi+00000818]) — normalize away
+  // the padding so fieldOffset matches this codebase's own convention for
+  // hex strings elsewhere (e.g. Scanner-captured patches).
   const movMatch = enableSection.match(
-    /\bmov\s+(?:dword\s+ptr\s+)?\[\s*(\w+)\s*\+\s*([0-9A-Fa-f]+)\s*\]\s*,\s*(?:\((float|double)\))?\s*([0-9A-Fa-f.]+)/i
+    /\bmov\s+(?:dword\s+ptr\s+)?\[\s*(\w+)\s*\+\s*([0-9A-Fa-f]+)\s*\]\s*,\s*(?:\((float|double)\))?\s*([0-9A-Fa-f.]+)(?![0-9A-Za-z])/i
   )
   if (!movMatch) {
     return {
@@ -157,9 +231,6 @@ function parseForceInjection(script: string): ParsedInjection | { error: string 
     }
   }
   const baseRegister = movMatch[1].toLowerCase()
-  // CE writes offsets zero-padded (e.g. [rdi+00000818]) — normalize away
-  // the padding so fieldOffset matches this codebase's own convention for
-  // hex strings elsewhere (e.g. Scanner-captured patches).
   const fieldOffset = '0x' + parseInt(movMatch[2], 16).toString(16)
   const isFloat = movMatch[3] !== undefined
   const rawValue = movMatch[4]
@@ -174,7 +245,7 @@ function parseForceInjection(script: string): ParsedInjection | { error: string 
     return { error: `Could not parse the constant value "${rawValue}" in the enable script.` }
   }
 
-  return { signature, signatureOffset, originalBytes, length, baseRegister, fieldOffset, value, dataType }
+  return { ...base, shape: 'force', baseRegister, fieldOffset, value, dataType }
 }
 
 const PLAIN_VARIABLE_TYPES: Record<string, DataType> = {
@@ -270,7 +341,7 @@ export function importCheatTable(xml: string): CtImportResult {
       continue
     }
 
-    const parsed = parseForceInjection(unescapeXml(script))
+    const parsed = parseInjection(unescapeXml(script))
     if ('error' in parsed) {
       skipped.push({ description, reason: parsed.error })
       continue
@@ -278,7 +349,7 @@ export function importCheatTable(xml: string): CtImportResult {
 
     const patch: PatchCheat = {
       kind: 'patch',
-      mode: 'force',
+      mode: parsed.shape,
       id: `ct-import-${slugify(description)}`,
       name: description,
       originalBytes: parsed.originalBytes,
@@ -289,6 +360,7 @@ export function importCheatTable(xml: string): CtImportResult {
       moduleOffset: null,
       baseRegister: parsed.baseRegister,
       fieldOffset: parsed.fieldOffset,
+      sourceRegister: parsed.sourceRegister,
       value: parsed.value,
       dataType: parsed.dataType
     }

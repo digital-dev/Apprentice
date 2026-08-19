@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { importCheatTable, parsePlainValueEntry } from '../../src/main/ctImport'
-import type { CheatDefinition } from '../../src/main/store'
+import type { CheatDefinition, PatchCheat } from '../../src/main/store'
 
 // Fixtures below are trimmed excerpts of a real, user-supplied Valheim .CT
 // file's actual structure and byte patterns — not hand-invented shapes.
@@ -207,6 +207,129 @@ const plainValueWithLiteral = `
       <Address>"game.exe"+00334455</Address>
       <Value>999</Value>
     </CheatEntry>`
+
+const nopShapeEntry = `
+    <CheatEntry>
+      <ID>76</ID>
+      <Description>"No Fall Damage"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>
+[ENABLE]
+
+aobscan(aobFallDamage,F3 0F 11 AF 18 08 00 00 48 8B 7D)
+alloc(newmem,$1000,aobFallDamage)
+
+label(code)
+label(return)
+
+newmem:
+
+code:
+  jmp return
+
+aobFallDamage:
+  jmp newmem
+  nop 3
+return:
+registersymbol(aobFallDamage)
+
+[DISABLE]
+
+aobFallDamage:
+  db F3 0F 11 AF 18 08 00 00
+
+unregistersymbol(aobFallDamage)
+dealloc(newmem)
+</AssemblerScript>
+    </CheatEntry>`
+
+const copyShapeEntry = `
+    <CheatEntry>
+      <ID>77</ID>
+      <Description>"Sync Shield to Health"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>
+[ENABLE]
+
+aobscan(aobShield,F3 0F 11 AF 18 08 00 00 48 8B 7D)
+alloc(newmem,$1000,aobShield)
+
+label(code)
+label(return)
+
+newmem:
+
+code:
+  mov [rdi+00000818],eax
+  jmp return
+
+aobShield:
+  jmp newmem
+  nop 3
+return:
+registersymbol(aobShield)
+
+[DISABLE]
+
+aobShield:
+  db F3 0F 11 AF 18 08 00 00
+
+unregistersymbol(aobShield)
+dealloc(newmem)
+</AssemblerScript>
+    </CheatEntry>`
+
+describe('nop-shape and copy-shape Auto Assembler entries', () => {
+  it('imports a provably-empty effect as a nop-mode patch', () => {
+    const { imported, skipped } = importCheatTable(wrapTable(nopShapeEntry))
+    expect(skipped).toEqual([])
+    expect(imported).toHaveLength(1)
+    const patch = imported[0] as PatchCheat
+    expect(patch.mode).toBe('nop')
+    expect(patch.originalBytes).toBe('f30f11af18080000')
+    expect(patch.length).toBe(8)
+    expect(patch.baseRegister).toBeUndefined()
+    expect(patch.value).toBeUndefined()
+  })
+
+  it('imports a register-source mov as a copy-mode patch', () => {
+    const { imported, skipped } = importCheatTable(wrapTable(copyShapeEntry))
+    expect(skipped).toEqual([])
+    expect(imported).toHaveLength(1)
+    const patch = imported[0] as PatchCheat
+    expect(patch.mode).toBe('copy')
+    expect(patch.baseRegister).toBe('rdi')
+    expect(patch.fieldOffset).toBe('0x818')
+    expect(patch.sourceRegister).toBe('eax')
+    expect(patch.value).toBeUndefined()
+  })
+
+  it('does not misparse a register-source mov as a truncated hex literal', () => {
+    // Regression guard for the specific latent bug this task fixes: before
+    // the value-group lookahead, "eax" partially matched [0-9A-Fa-f.]+ as
+    // "ea", silently importing this as force-mode value 0xea.
+    const { imported } = importCheatTable(wrapTable(copyShapeEntry))
+    const patch = imported[0] as PatchCheat
+    expect(patch.mode).not.toBe('force')
+  })
+
+  it('still imports the existing force-mode fixtures unchanged', () => {
+    const { imported: staminaImported } = importCheatTable(wrapTable(staminaEntry))
+    expect((staminaImported[0] as PatchCheat).mode).toBe('force')
+    const { imported: durabilityImported } = importCheatTable(wrapTable(durabilityEntry))
+    expect((durabilityImported[0] as PatchCheat).mode).toBe('force')
+  })
+
+  it('skips a script whose effect body has unrecognized content, not guessing at any shape', () => {
+    const computed = copyShapeEntry.replace(
+      'mov [rdi+00000818],eax',
+      'imul eax, 2\n  mov [rdi+00000818],eax'
+    )
+    const { imported, skipped } = importCheatTable(wrapTable(computed))
+    expect(imported).toHaveLength(0)
+    expect(skipped).toHaveLength(1)
+  })
+})
 
 describe('importCheatTable', () => {
   it('converts a plain aobscan + constant-write script into a force-mode patch', () => {
