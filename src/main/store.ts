@@ -90,7 +90,7 @@ export interface PatchCheat {
   kind: 'patch'
   // How this patch changes the game. Absent means 'nop': every patch saved
   // before injection existed keeps working through the same code path.
-  mode?: 'nop' | 'force' | 'capture' | 'guard' | 'immune'
+  mode?: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy'
   id: string
   name: string
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
@@ -160,6 +160,11 @@ export interface PatchCheat {
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
   fieldOffset?: string
+  // copy only: which register's live value to store — the "set this field
+  // to whatever that register currently holds" shape force mode cannot
+  // represent (force only encodes a fixed 32-bit immediate known at
+  // capture/import time).
+  sourceRegister?: string
   value?: number
   dataType?: DataType
   // Same meaning as CheatDefinition.hotkey above.
@@ -190,7 +195,7 @@ export function isScriptCheat(cheat: StoredCheat): cheat is ScriptCheat {
   return (cheat as ScriptCheat).kind === 'script'
 }
 
-export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'guard' | 'immune' {
+export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' {
   return patch.mode ?? 'nop'
 }
 

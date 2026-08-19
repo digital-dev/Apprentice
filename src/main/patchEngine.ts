@@ -35,6 +35,7 @@ export interface PatchOps {
     clobbers: string[]
   }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
+  encodeStoreRegister(destRegister: string, offset: number, sourceRegister: string): string
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string
   encodeGuardedSkip(
     baseRegister: string,
@@ -138,7 +139,7 @@ interface AppliedPatch {
   caveAddress: string | null
   // Only a capture patch has a readable slot; recorded so slotAddress can
   // tell a capture cave from a force cave without re-deriving the mode.
-  mode: 'nop' | 'force' | 'capture' | 'guard' | 'immune'
+  mode: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy'
 }
 
 // A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
@@ -560,13 +561,24 @@ export class PatchEngine {
         }
         BigInt(patch.fieldOffset as string) // throws on unparsable hex
       }
+      if (mode === 'copy') {
+        // copy mode encodes "store whatever sourceRegister currently holds"
+        // — no value/dataType to validate, since it never writes a fixed
+        // immediate the way force does.
+        if (typeof patch.sourceRegister !== 'string') {
+          throw new Error('missing copy-mode source register')
+        }
+        BigInt(patch.fieldOffset as string) // throws on unparsable hex
+      }
     } catch {
       return {
         ok: false,
         error:
           mode === 'capture'
             ? "This patch is missing the register a capture injection needs — can't install it."
-            : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
+            : mode === 'copy'
+              ? "This patch is missing the register or offset a copy injection needs, or its offset isn't valid hex — can't compute what to write."
+              : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
         caveAddress: null,
         displaced: null
       }
@@ -591,7 +603,7 @@ export class PatchEngine {
       }
     }
 
-    if (mode === 'force') {
+    if (mode === 'force' || mode === 'copy') {
       // patch.length must be exactly the byte length of the FIRST
       // instruction in the displaced run — decodeRun with minBytes=1
       // reports that length. A Mono-anchored patch's auto-filled length
@@ -600,7 +612,8 @@ export class PatchEngine {
       // the wrong boundary starts the replayed run mid-instruction —
       // undefined behavior in a live game. Checked before allocateCave, like
       // every other pre-flight refusal above, so a bad patch never leaks an
-      // allocated cave.
+      // allocated cave. copy replaces exactly one instruction the same way
+      // force does, so it needs the same boundary guard.
       //
       // Note: run.length (the whole, possibly rounded-up displaced run) is
       // always >= a decodable firstInsn.length by construction of decodeRun
@@ -741,11 +754,17 @@ export class PatchEngine {
                 cave,
                 returnTo
               )
-            : this.ops.encodeStore(
-                patch.baseRegister as string,
-                Number(BigInt(patch.fieldOffset as string)),
-                valueBits(patch.value as number, patch.dataType as DataType)
-              )
+            : mode === 'copy'
+              ? this.ops.encodeStoreRegister(
+                  patch.baseRegister as string,
+                  Number(BigInt(patch.fieldOffset as string)),
+                  patch.sourceRegister as string
+                )
+              : this.ops.encodeStore(
+                  patch.baseRegister as string,
+                  Number(BigInt(patch.fieldOffset as string)),
+                  valueBits(patch.value as number, patch.dataType as DataType)
+                )
       const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
       body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
     }

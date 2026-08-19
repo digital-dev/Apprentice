@@ -99,6 +99,11 @@ class FakeOps implements PatchOps {
   encodeStore(): string {
     return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f
   }
+  encodeStoreRegisterCalls: { destRegister: string; offset: number; sourceRegister: string }[] = []
+  encodeStoreRegister(destRegister: string, offset: number, sourceRegister: string): string {
+    this.encodeStoreRegisterCalls.push({ destRegister, offset, sourceRegister })
+    return '89870000' + '0000' // fixed stand-in, mirrors encodeStore's fixed-output style
+  }
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string {
     this.encodeCaptureOnceCalls.push({ baseRegister, atAddress, slotAddress })
     return '488905' + '00000000'
@@ -422,6 +427,65 @@ describe('PatchEngine — force injection', () => {
     const result = await engine.apply(legacy)
     expect(result.ok).toBe(true)
     expect(ops.memory.get('0x400100')).toBe(NOPS)
+  })
+})
+
+const copyPatch: PatchCheat = {
+  kind: 'patch',
+  mode: 'copy',
+  id: 'patch-copy-durability',
+  name: 'Copy Durability',
+  originalBytes: ORIGINAL,
+  length: 5,
+  signature: 'f3 0f 11 41 10',
+  moduleName: 'game.exe',
+  moduleOffset: '0x100',
+  baseRegister: 'rdi',
+  fieldOffset: '0x818',
+  sourceRegister: 'rax'
+}
+
+describe('PatchEngine — copy injection', () => {
+  it('writes a jump at the site and installs the register-copy effect in the cave', async () => {
+    const result = await engine.apply(copyPatch)
+    expect(result.ok).toBe(true)
+
+    const site = ops.memory.get('0x400100') as string
+    expect(site.startsWith('e9')).toBe(true)
+
+    expect(ops.encodeStoreRegisterCalls).toEqual([
+      { destRegister: 'rdi', offset: 0x818, sourceRegister: 'rax' }
+    ])
+
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const effect = '898700000000' // FakeOps.encodeStoreRegister's fixed output
+    const backJump = 'e900000000'
+    const cave = ops.memory.get(codeAddress) as string
+    expect(cave).toBe(effect + backJump)
+    expect(cave).not.toContain(ORIGINAL) // the replaced write must not run
+  })
+
+  it('refuses, before allocating a cave, when the patch is missing sourceRegister', async () => {
+    const incomplete = { ...copyPatch, id: 'patch-copy-incomplete', sourceRegister: undefined } as PatchCheat
+    const result = await engine.apply(incomplete)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it("refuses, before allocating a cave, when the patch's fieldOffset isn't valid hex", async () => {
+    const junk = { ...copyPatch, id: 'patch-copy-junk', fieldOffset: 'not-hex' }
+    const result = await engine.apply(junk)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses when the recorded length does not match a real instruction boundary', async () => {
+    ops.firstInsnLength = 3
+    const result = await engine.apply(copyPatch)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
   })
 })
 
