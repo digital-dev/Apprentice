@@ -666,4 +666,35 @@ describe('importCheatTable performance', () => {
     // without throwing is the point of this test.
     expect(result.imported).toEqual([])
   })
+
+  // Regression test for a SECOND, distinct DoS shape found in the rewrite
+  // that fixed the cubic deep-nesting bug above: collectCheatEntryRanges
+  // was unconditionally re-running BOTH xml.indexOf(open, i) and
+  // xml.indexOf(close, i) from `i` on every loop iteration. Once there are
+  // no more <CheatEntry> open tags left ahead of `i` (this input has none
+  // at all — only stray, unmatched close tags), indexOf(open, i) scans to
+  // the end of the string and returns -1, and that full-string scan
+  // repeated on EVERY remaining iteration (once per remaining close tag),
+  // making the function quadratic in the number of close tags. This is a
+  // WIDE, non-nested shape (not deep nesting), so it does not hit
+  // MAX_CHEAT_ENTRY_DEPTH and was not caught by the test above. At 8000
+  // close tags the old quadratic behavior took well over a second; a
+  // correctly linear scan finishes near-instantly.
+  it('imports a table with many unmatched close tags (wide, not deep) quickly, not quadratically', () => {
+    const closeTagCount = 8000
+    const xml =
+      '<?xml version="1.0" encoding="utf-8"?><CheatTable><CheatEntries>' +
+      '</CheatEntry>'.repeat(closeTagCount) +
+      '</CheatEntries></CheatTable>'
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(500)
+    // No open tags at all means the stack is always empty when a close tag
+    // is found, so no ranges are ever recorded — same "just prove it
+    // returns promptly without throwing" point as the deep-nesting test.
+    expect(result.imported).toEqual([])
+  })
 })

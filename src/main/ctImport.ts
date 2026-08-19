@@ -118,9 +118,20 @@ function collectCheatEntryRanges(xml: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = []
   const stack: number[] = []
   let i = 0
+  // Same discipline as extractTagBlocks: the next open/close position is
+  // cached and only ever re-searched once `i` has actually advanced past
+  // it (i.e. it was just consumed), never unconditionally re-derived from
+  // `i` on every iteration. This matters most once opens run out —
+  // `nextOpen` settles at -1 and is never re-searched again, since the
+  // branch that would recompute it is the same branch that consumed the
+  // previous one. Without this, a file consisting mostly of stray/
+  // unmatched close tags (no opens left to find) would re-run a full
+  // xml.indexOf(open, i) scan to the end of the string on every single
+  // remaining close tag, making the whole function quadratic in the
+  // number of close tags rather than linear in file size.
+  let nextOpen = xml.indexOf(open)
+  let nextClose = xml.indexOf(close)
   while (i < xml.length) {
-    const nextOpen = xml.indexOf(open, i)
-    const nextClose = xml.indexOf(close, i)
     if (nextClose === -1) break // unbalanced tail: stop, keep what's found
     if (nextOpen !== -1 && nextOpen < nextClose) {
       if (stack.length >= MAX_CHEAT_ENTRY_DEPTH) {
@@ -132,6 +143,7 @@ function collectCheatEntryRanges(xml: string): Array<[number, number]> {
       }
       stack.push(nextOpen + open.length)
       i = nextOpen + open.length
+      nextOpen = xml.indexOf(open, i)
     } else {
       const start = stack.pop()
       if (start !== undefined) {
@@ -139,6 +151,7 @@ function collectCheatEntryRanges(xml: string): Array<[number, number]> {
         ranges.push([start, nextClose])
       }
       i = nextClose + close.length
+      nextClose = xml.indexOf(close, i)
     }
   }
   // Restores the same order the old recursive walk produced: a parent
