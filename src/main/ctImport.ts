@@ -58,9 +58,17 @@ function extractTagBlocks(xml: string, tag: string): string[] {
     if (start === -1) break
     let depth = 1
     let j = start + open.length
+    // Same discipline as collectCheatEntryRanges below: nextOpen/nextClose
+    // are cached across inner-loop iterations and only ever re-searched in
+    // the branch that just consumed them (advanced `j` past them), never
+    // unconditionally on every iteration. Without this, once opens run out
+    // ahead of `j` (e.g. many more close tags than open tags), the
+    // unconditional xml.indexOf(open, j) would rescan to end-of-string on
+    // every remaining close tag, making this quadratic in the number of
+    // close tags rather than linear in file size.
+    let nextOpen = xml.indexOf(open, j)
+    let nextClose = xml.indexOf(close, j)
     while (depth > 0) {
-      const nextOpen = xml.indexOf(open, j)
-      const nextClose = xml.indexOf(close, j)
       if (nextClose === -1) {
         // Unbalanced tags: stop scanning rather than loop forever or
         // throw — a malformed or truncated .CT file should report zero
@@ -70,9 +78,11 @@ function extractTagBlocks(xml: string, tag: string): string[] {
       if (nextOpen !== -1 && nextOpen < nextClose) {
         depth++
         j = nextOpen + open.length
+        nextOpen = xml.indexOf(open, j)
       } else {
         depth--
         j = nextClose + close.length
+        nextClose = xml.indexOf(close, j)
       }
     }
     blocks.push(xml.slice(start + open.length, j - close.length))
@@ -118,10 +128,11 @@ function collectCheatEntryRanges(xml: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = []
   const stack: number[] = []
   let i = 0
-  // Same discipline as extractTagBlocks: the next open/close position is
-  // cached and only ever re-searched once `i` has actually advanced past
-  // it (i.e. it was just consumed), never unconditionally re-derived from
-  // `i` on every iteration. This matters most once opens run out —
+  // extractTagBlocks above uses this same discipline: the next open/close
+  // position is cached and only ever re-searched once `i` has actually
+  // advanced past it (i.e. it was just consumed), never unconditionally
+  // re-derived from `i` on every iteration. This matters most once opens
+  // run out —
   // `nextOpen` settles at -1 and is never re-searched again, since the
   // branch that would recompute it is the same branch that consumed the
   // previous one. Without this, a file consisting mostly of stray/

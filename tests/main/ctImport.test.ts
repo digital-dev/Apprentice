@@ -697,4 +697,38 @@ describe('importCheatTable performance', () => {
     // returns promptly without throwing" point as the deep-nesting test.
     expect(result.imported).toEqual([])
   })
+
+  // Regression test for a THIRD instance of the same quadratic pattern,
+  // this time in extractTagBlocks (used by ownContent() to strip a
+  // folder's nested <CheatEntries> block out of its own content before
+  // extractTag looks for VariableType/etc). extractTagBlocks's inner
+  // depth-tracking loop was unconditionally re-running
+  // xml.indexOf(open, j) on every iteration, just like the bug fixed
+  // above in collectCheatEntryRanges. A single <CheatEntry> whose content
+  // is many nested <CheatEntries> opens immediately followed by that many
+  // closes forces the inner loop through a long run of close tags AFTER
+  // all the opens have been consumed (nextOpen settles at -1): the old
+  // code re-scanned the remaining string from scratch on every one of
+  // those close tags, making it quadratic in nesting count; the fix never
+  // re-searches nextOpen once the branch that would consume it stops
+  // being taken.
+  it('imports a CheatEntry with many nested <CheatEntries> blocks quickly, not quadratically', () => {
+    const nestCount = 20_000
+    const xml =
+      '<?xml version="1.0" encoding="utf-8"?><CheatTable><CheatEntries><CheatEntry><ID>1</ID>' +
+      '<CheatEntries>'.repeat(nestCount) +
+      '</CheatEntries>'.repeat(nestCount) +
+      '</CheatEntry></CheatEntries></CheatTable>'
+
+    const started = Date.now()
+    const result = importCheatTable(xml)
+    const elapsedMs = Date.now() - started
+
+    expect(elapsedMs).toBeLessThan(500)
+    // No VariableType on the entry (it's all nested <CheatEntries> noise)
+    // means it's silently treated as a folder and skipped — same "just
+    // prove it returns promptly without throwing" point as the tests
+    // above.
+    expect(result.imported).toEqual([])
+  })
 })
