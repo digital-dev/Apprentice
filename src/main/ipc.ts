@@ -8,6 +8,7 @@ import {
   findHotkeyConflict,
   CheatDefinition,
   ChainTarget,
+  type DataType,
   AnchorTarget,
   isAnchorTarget,
   isMonoTarget,
@@ -231,6 +232,28 @@ async function resolveMonoTarget(handle: number, target: MonoTarget): Promise<st
 //
 // Async because the Mono branch awaits two resolver round-trips; every
 // other branch stays synchronous under the hood and resolves immediately.
+// A target with bitIndex set (see its doc in store.ts) shares its resolved
+// byte with other, unrelated bits — writing `value` directly would clobber
+// them. This reads the byte fresh, flips only that one bit according to
+// whether `value` is truthy, and writes the result back: every other bit in
+// the byte passes through this tick untouched. Returns false (no write
+// attempted) if the read fails, same "target currently unreachable" outcome
+// a resolve failure produces elsewhere in writeCheat.
+function writeBit(
+  handle: number,
+  baseAddress: string,
+  offsets: string[],
+  dataType: DataType,
+  bitIndex: number,
+  value: number
+): boolean {
+  const current = nativeAddon.tryReadValue(handle, baseAddress, offsets, dataType)
+  if (current === null) return false
+  const mask = 1 << bitIndex
+  const next = value ? current | mask : current & ~mask
+  return nativeAddon.writeValue(handle, baseAddress, offsets, dataType, next)
+}
+
 async function writeCheat(handle: number, cheat: CheatDefinition): Promise<boolean> {
   let anySucceeded = false
   for (const target of cheat.targets) {
@@ -243,20 +266,29 @@ async function writeCheat(handle: number, cheat: CheatDefinition): Promise<boole
     if (isAnchorTarget(target)) {
       const resolved = resolveAnchor(handle, target)
       if (resolved === null) continue
-      const ok = nativeAddon.writeValue(handle, resolved, [], dataType, value)
+      const ok =
+        target.bitIndex !== undefined
+          ? writeBit(handle, resolved, [], dataType, target.bitIndex, value)
+          : nativeAddon.writeValue(handle, resolved, [], dataType, value)
       if (ok) anySucceeded = true
       continue
     }
     if (isMonoTarget(target)) {
       const resolved = await resolveMonoTarget(handle, target)
       if (resolved === null) continue
-      const ok = nativeAddon.writeValue(handle, resolved, [], dataType, value)
+      const ok =
+        target.bitIndex !== undefined
+          ? writeBit(handle, resolved, [], dataType, target.bitIndex, value)
+          : nativeAddon.writeValue(handle, resolved, [], dataType, value)
       if (ok) anySucceeded = true
       continue
     }
     const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
     if (moduleBase === null) continue
-    const ok = nativeAddon.writeValue(handle, moduleBase, fullOffsets(target), dataType, value)
+    const ok =
+      target.bitIndex !== undefined
+        ? writeBit(handle, moduleBase, fullOffsets(target), dataType, target.bitIndex, value)
+        : nativeAddon.writeValue(handle, moduleBase, fullOffsets(target), dataType, value)
     if (ok) anySucceeded = true
   }
   return anySucceeded
@@ -295,26 +327,36 @@ async function verifyCheat(
       // Per-target override — see writeCheat's matching comment.
       const dataType = target.dataType ?? cheat.dataType
       const expected = target.value !== undefined ? target.value : expectedValue
+      // bitIndex targets (see writeCheat's writeBit) share their byte with
+      // other bits — reporting the raw byte would show e.g. 5 where the
+      // cheat only owns bit 0, both wrong to display and never equal to the
+      // 0/1 `expected` a bit cheat's UI actually asks about. Extract just
+      // this cheat's own bit instead.
+      const extract = (raw: number): number =>
+        target.bitIndex !== undefined ? (raw >> target.bitIndex) & 1 : raw
       if (isAnchorTarget(target)) {
         const resolved = resolveAnchor(handle, target)
         if (resolved === null) return { alive: false, value: null }
-        const value = nativeAddon.tryReadValue(handle, resolved, [], dataType)
-        if (value === null) return { alive: false, value: null }
+        const raw = nativeAddon.tryReadValue(handle, resolved, [], dataType)
+        if (raw === null) return { alive: false, value: null }
+        const value = extract(raw)
         const alive = expected === null ? true : valueMatches(value, expected, dataType)
         return { alive, value }
       }
       if (isMonoTarget(target)) {
         const resolved = await resolveMonoTarget(handle, target)
         if (resolved === null) return { alive: false, value: null }
-        const value = nativeAddon.tryReadValue(handle, resolved, [], dataType)
-        if (value === null) return { alive: false, value: null }
+        const raw = nativeAddon.tryReadValue(handle, resolved, [], dataType)
+        if (raw === null) return { alive: false, value: null }
+        const value = extract(raw)
         const alive = expected === null ? true : valueMatches(value, expected, dataType)
         return { alive, value }
       }
       const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
       if (moduleBase === null) return { alive: false, value: null }
-      const value = nativeAddon.tryReadValue(handle, moduleBase, fullOffsets(target), dataType)
-      if (value === null) return { alive: false, value: null }
+      const raw = nativeAddon.tryReadValue(handle, moduleBase, fullOffsets(target), dataType)
+      if (raw === null) return { alive: false, value: null }
+      const value = extract(raw)
       const alive = expected === null ? true : valueMatches(value, expected, dataType)
       return { alive, value }
     })

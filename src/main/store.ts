@@ -31,6 +31,9 @@ export interface ChainTarget {
   // available on every target kind.
   value?: number
   dataType?: DataType
+  // See MonoTarget.bitIndex below — the same single-bit read-modify-write,
+  // available on every target kind.
+  bitIndex?: number
 }
 
 // A target reached through a pointer captured by an injection, rather than
@@ -47,6 +50,9 @@ export interface AnchorTarget {
   // available on every target kind.
   value?: number
   dataType?: DataType
+  // See MonoTarget.bitIndex below — the same single-bit read-modify-write,
+  // available on every target kind.
+  bitIndex?: number
 }
 
 // A value reached through Mono-resolved metadata by name, instead of a
@@ -98,6 +104,20 @@ export interface MonoTarget {
   // before this field existed.
   value?: number
   dataType?: DataType
+  // When present, this target isn't a plain value write: the resolved
+  // address holds a byte with OTHER, unrelated bits alongside the one this
+  // cheat controls — e.g. Elden Ring's PlayerIns+0x19B packs NoDead (bit 0),
+  // NoDamage (bit 1), NoFPConsume (bit 2), and NoStaminaConsume (bit 3) into
+  // one byte, and bits 4-7 are unknown FromSoft-internal flags a blind
+  // whole-byte freeze would permanently clobber. bitIndex switches
+  // writeCheat/verifyCheat to a read-modify-write: read the current byte,
+  // set or clear only this bit per whether `value` (the effective value
+  // after any per-target override above) is truthy, write the byte back —
+  // every other bit passes through untouched on every tick. Only meaningful
+  // with an int8/int16/int32/int64 dataType; scale/float targets have no
+  // notion of "the current bit". Absent means the plain whole-value write
+  // every target has always done.
+  bitIndex?: number
 }
 
 export type CheatTarget = ChainTarget | AnchorTarget | MonoTarget
