@@ -268,6 +268,45 @@ describe('encodeStoreRegister', () => {
   })
 })
 
+describe('encodeScale', () => {
+  it('encodes mov eax,imm32 / movd xmm0,eax / mulss xmm5,xmm0 for a non-xmm0 source', () => {
+    // factorBits for 2.0f = 0x40000000
+    const hex: string = (addon as any).encodeScale('xmm5', 0x40000000)
+    // b8 00000040          mov eax, 0x40000000
+    // 66 0f 6e c0          movd xmm0, eax      (scratch = xmm0, source is xmm5)
+    // f3 0f 59 e8          mulss xmm5, xmm0
+    expect(hex).toBe('b800000040' + '660f6ec0' + 'f30f59e8')
+  })
+
+  it('picks xmm1 as scratch when the source itself is xmm0', () => {
+    // factorBits for 1.5f = 0x3fc00000
+    const hex: string = (addon as any).encodeScale('xmm0', 0x3fc00000)
+    // b8 0000c03f          mov eax, 0x3fc00000
+    // 66 0f 6e c8          movd xmm1, eax      (scratch = xmm1, source is xmm0)
+    // f3 0f 59 c1          mulss xmm0, xmm1
+    expect(hex).toBe('b80000c03f' + '660f6ec8' + 'f30f59c1')
+  })
+
+  it('round-trips through the decoder as three whole, relocatable instructions', async () => {
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const scratch: string = (addon as any).allocateCave(handle, near)
+    const hex: string = (addon as any).encodeScale('xmm3', 0x40000000)
+    ;(addon as any).writeBytes(handle, scratch, hex)
+    const run = (addon as any).decodeRun(handle, scratch, hex.length / 2)
+    expect(run.decodable).toBe(true)
+    expect(run.relocatable).toBe(true)
+    expect(run.length).toBe(hex.length / 2)
+  })
+
+  it('rejects an unknown source register instead of encoding nonsense', () => {
+    expect(() => (addon as any).encodeScale('notareg', 0)).toThrow()
+  })
+
+  it('rejects a GPR name — only xmm registers hold a float mid-computation', () => {
+    expect(() => (addon as any).encodeScale('rax', 0)).toThrow()
+  })
+})
+
 describe('encodeCaptureOnce', () => {
   it('emits a decodable blob whose RIP displacements both resolve to the slot', async () => {
     const near = (addon as any).attach(harness.pid).baseAddress

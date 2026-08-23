@@ -80,6 +80,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("decodeRun", Napi::Function::New(env, DecodeRun));
   exports.Set("encodeStore", Napi::Function::New(env, EncodeStore));
   exports.Set("encodeStoreRegister", Napi::Function::New(env, EncodeStoreRegister));
+  exports.Set("encodeScale", Napi::Function::New(env, EncodeScale));
   exports.Set("encodeCaptureOnce", Napi::Function::New(env, EncodeCaptureOnce));
   exports.Set("encodeGuardedSkip", Napi::Function::New(env, EncodeGuardedSkip));
   exports.Set("encodeImmuneGuard", Napi::Function::New(env, EncodeImmuneGuard));

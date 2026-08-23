@@ -146,6 +146,26 @@ ZydisRegister RegisterByName(const std::string& name) {
   return ZYDIS_REGISTER_NONE;
 }
 
+// The 16 128-bit XMM registers, for scale mode's floating-point source —
+// distinct from RegisterByName because only a GPR can hold an object
+// pointer (what every other injection mode's baseRegister needs), but only
+// an XMM register can hold a float mid-computation (what scale's
+// sourceRegister needs).
+ZydisRegister XmmRegisterByName(const std::string& name) {
+  static const struct { const char* name; ZydisRegister reg; } kMap[] = {
+    {"xmm0", ZYDIS_REGISTER_XMM0},   {"xmm1", ZYDIS_REGISTER_XMM1},
+    {"xmm2", ZYDIS_REGISTER_XMM2},   {"xmm3", ZYDIS_REGISTER_XMM3},
+    {"xmm4", ZYDIS_REGISTER_XMM4},   {"xmm5", ZYDIS_REGISTER_XMM5},
+    {"xmm6", ZYDIS_REGISTER_XMM6},   {"xmm7", ZYDIS_REGISTER_XMM7},
+    {"xmm8", ZYDIS_REGISTER_XMM8},   {"xmm9", ZYDIS_REGISTER_XMM9},
+    {"xmm10", ZYDIS_REGISTER_XMM10}, {"xmm11", ZYDIS_REGISTER_XMM11},
+    {"xmm12", ZYDIS_REGISTER_XMM12}, {"xmm13", ZYDIS_REGISTER_XMM13},
+    {"xmm14", ZYDIS_REGISTER_XMM14}, {"xmm15", ZYDIS_REGISTER_XMM15},
+  };
+  for (const auto& e : kMap) if (name == e.name) return e.reg;
+  return ZYDIS_REGISTER_NONE;
+}
+
 } // namespace
 
 Napi::Value AllocateCave(const Napi::CallbackInfo& info) {
@@ -339,6 +359,82 @@ Napi::Value EncodeStoreRegister(const Napi::CallbackInfo& info) {
     return env.Null();
   }
   return Napi::String::New(env, BytesToHex(buf, (size_t)len));
+}
+
+// mov eax, factorBits ; movd xmmScratch, eax ; mulss sourceXmmReg, xmmScratch
+// — scale mode's whole effect: multiply the XMM register the game is about
+// to store (source) by a runtime factor, in place, before the displaced run
+// replays the game's own (unmodified) store instruction. xmmScratch is
+// xmm0 unless the source itself is xmm0, in which case xmm1 — it only ever
+// holds the factor bits, so any register other than the source works.
+Napi::Value EncodeScale(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string srcRegName = info[0].As<Napi::String>().Utf8Value();
+  uint32_t factorBits = info[1].As<Napi::Number>().Uint32Value();
+
+  ZydisRegister srcReg = XmmRegisterByName(srcRegName);
+  if (srcReg == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown source xmm register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  ZydisRegister scratchReg =
+      (srcReg == ZYDIS_REGISTER_XMM0) ? ZYDIS_REGISTER_XMM1 : ZYDIS_REGISTER_XMM0;
+
+  uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
+  std::string out;
+
+  {
+    ZydisEncoderRequest req;
+    memset(&req, 0, sizeof(req));
+    req.mnemonic = ZYDIS_MNEMONIC_MOV;
+    req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+    req.operand_count = 2;
+    req.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
+    req.operands[0].reg.value = ZYDIS_REGISTER_EAX;
+    req.operands[1].type = ZYDIS_OPERAND_TYPE_IMMEDIATE;
+    req.operands[1].imm.u = factorBits;
+    ZyanUSize len = sizeof(buf);
+    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
+      Napi::Error::New(env, "failed to encode mov eax, imm32").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    out += BytesToHex(buf, (size_t)len);
+  }
+  {
+    ZydisEncoderRequest req;
+    memset(&req, 0, sizeof(req));
+    req.mnemonic = ZYDIS_MNEMONIC_MOVD;
+    req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+    req.operand_count = 2;
+    req.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
+    req.operands[0].reg.value = scratchReg;
+    req.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
+    req.operands[1].reg.value = ZYDIS_REGISTER_EAX;
+    ZyanUSize len = sizeof(buf);
+    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
+      Napi::Error::New(env, "failed to encode movd").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    out += BytesToHex(buf, (size_t)len);
+  }
+  {
+    ZydisEncoderRequest req;
+    memset(&req, 0, sizeof(req));
+    req.mnemonic = ZYDIS_MNEMONIC_MULSS;
+    req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+    req.operand_count = 2;
+    req.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
+    req.operands[0].reg.value = srcReg;
+    req.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
+    req.operands[1].reg.value = scratchReg;
+    ZyanUSize len = sizeof(buf);
+    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
+      Napi::Error::New(env, "failed to encode mulss").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    out += BytesToHex(buf, (size_t)len);
+  }
+  return Napi::String::New(env, out);
 }
 
 // `mov [rip+disp], reg` — the displacement is relative to the END of the
