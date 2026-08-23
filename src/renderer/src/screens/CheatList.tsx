@@ -1920,14 +1920,11 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                 name: patch.name,
                 hotkey: patch.hotkey,
                 targetLabel: captureLabel ? `${targetLbl} — ${captureLabel}` : targetLbl,
-                mode:
-                  patch.mode === 'capture'
-                    ? 'capture'
-                    : patch.mode === 'force'
-                      ? 'force'
-                      : patch.mode === 'guard'
-                        ? 'guard'
-                        : 'nop',
+                // Every real mode gets its own label — a ternary chain that
+                // falls through to 'nop' for anything it doesn't explicitly
+                // list silently mislabels every mode added after it was
+                // written (immune/copy/scale all did, before this).
+                mode: patch.mode ?? 'nop',
                 status: rowStatus,
                 railState,
                 control: (
