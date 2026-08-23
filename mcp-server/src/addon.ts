@@ -87,6 +87,18 @@ export const monoListMethodNames = (
   monoDllBase: string,
   classHandle: string
 ): Promise<string[]> => addon.monoListMethodNames(handle, monoDllBase, classHandle)
+export const monoListAssemblies = (handle: number, monoDllBase: string): Promise<string[]> =>
+  addon.monoListAssemblies(handle, monoDllBase)
+export const monoListAssemblyNames = (
+  handle: number,
+  monoDllBase: string
+): Promise<{ image: string; name: string }[]> => addon.monoListAssemblyNames(handle, monoDllBase)
+export const monoListClassesInImage = (
+  handle: number,
+  monoDllBase: string,
+  imageHandle: string
+): Promise<{ namespaceName: string; className: string; classHandle: string }[]> =>
+  addon.monoListClassesInImage(handle, monoDllBase, imageHandle)
 export const disassembleBuffer = (
   buffer: Buffer,
   baseAddress: string,

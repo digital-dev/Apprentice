@@ -94,7 +94,10 @@ its MCP tool definitions (name, JSON schema, handler):
 - `mono.ts`: `mono_resolve_class`, `mono_resolve_field`,
   `mono_static_field_address`, `mono_list_field_names`,
   `mono_list_method_names`, `mono_list_assemblies`,
-  `mono_list_classes_in_image`
+  `mono_list_classes_in_image` (plus `mono_list_assembly_names`, added
+  during implementation: `mono_list_assemblies` alone returns only opaque
+  handles, not useful for discovery on its own, so a name-pairing variant
+  was needed to make the other two usable)
 - `read.ts`: `read_bytes`, `read_value`
 - `watch.ts`: `start_write_watch`, `poll_write_watch`, `stop_write_watch`
 - `disasm.ts`: `disassemble_buffer`

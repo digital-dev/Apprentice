@@ -87,4 +87,37 @@ export function registerMonoTools(server: McpServer): void {
     async (args: { handle: number; monoDllBase: string; classHandle: string }) =>
       ok(await addon.monoListMethodNames(args.handle, args.monoDllBase, args.classHandle))
   )
+
+  server.registerTool(
+    'mono_list_assemblies',
+    {
+      description:
+        'List every loaded assembly\'s raw handle in a live process\'s Mono runtime. These handles are opaque — prefer mono_list_assembly_names, which pairs each one with a human-readable name.',
+      inputSchema: { handle: z.number().int(), monoDllBase: z.string() }
+    },
+    async (args: { handle: number; monoDllBase: string }) =>
+      ok(await addon.monoListAssemblies(args.handle, args.monoDllBase))
+  )
+
+  server.registerTool(
+    'mono_list_assembly_names',
+    {
+      description:
+        'List every loaded assembly in a live process\'s Mono runtime as (image handle, human-readable name) pairs — the starting point for class discovery when you don\'t already know an exact namespace/class name. Each result\'s `image` field is the `imageHandle` mono_list_classes_in_image needs to enumerate that assembly\'s classes.',
+      inputSchema: { handle: z.number().int(), monoDllBase: z.string() }
+    },
+    async (args: { handle: number; monoDllBase: string }) =>
+      ok(await addon.monoListAssemblyNames(args.handle, args.monoDllBase))
+  )
+
+  server.registerTool(
+    'mono_list_classes_in_image',
+    {
+      description:
+        'List every namespace/class name (plus each class\'s resolved handle) declared in one assembly image, by the `imageHandle` mono_list_assembly_names returns as its `image` field. Use this to discover class names in a live process without already knowing them; the returned classHandle can be used directly with mono_list_field_names/mono_list_method_names, skipping a separate mono_resolve_class call.',
+      inputSchema: { handle: z.number().int(), monoDllBase: z.string(), imageHandle: z.string() }
+    },
+    async (args: { handle: number; monoDllBase: string; imageHandle: string }) =>
+      ok(await addon.monoListClassesInImage(args.handle, args.monoDllBase, args.imageHandle))
+  )
 }
