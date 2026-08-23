@@ -5,7 +5,8 @@
   "description": "Read-only MCP server exposing the trainer app's native memory-introspection primitives for live reverse-engineering sessions.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.22.0",
