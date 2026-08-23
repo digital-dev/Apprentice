@@ -87,6 +87,18 @@ export interface CheatDefinition {
   mode: CheatMode
   targets: CheatTarget[]
   value: number
+  // When present, EditCheatModal renders `value` as a 1x-20x multiplier
+  // slider instead of a raw number field: value = multiplierBaseline *
+  // sliderFactor, and the slider shows sliderFactor back (value /
+  // multiplierBaseline). This is UI sugar only — the engine still just
+  // freezes `value` verbatim, exactly as it always has; a cheat saved
+  // before this field existed has no baseline and keeps showing the plain
+  // number field it always did. The baseline itself is a one-time snapshot
+  // (e.g. Valheim's default m_runSpeed, 7.0) captured when the cheat was
+  // created, not re-read live — see EditPatchModal's scale-mode slider for
+  // the equivalent idea on the patch side, where the engine itself does
+  // the multiplying instead of the UI.
+  multiplierBaseline?: number
   // An Electron accelerator string (e.g. "CommandOrControl+Shift+F1"),
   // captured by the renderer's "Set hotkey" control. Absent means no
   // hotkey — every cheat saved before this field existed keeps loading

@@ -163,8 +163,10 @@ export default function EditCheatModal({
   onClose: () => void
 }) {
   const targets = cheat.targets
+  const factor = cheat.multiplierBaseline !== undefined ? cheat.value / cheat.multiplierBaseline : null
   const valid =
     Number.isFinite(cheat.value) &&
+    (factor === null || (factor >= 1 && factor <= 20)) &&
     targets.length > 0 &&
     targets.every(targetIsValid)
 
@@ -241,13 +243,35 @@ export default function EditCheatModal({
               <option value="oneshot">One-shot</option>
             </select>
           </div>
-          <div className="field-row">
-            <label>Value</label>
-            <input
-              value={String(cheat.value)}
-              onChange={(e) => onChange({ ...cheat, value: Number(e.target.value) })}
-            />
-          </div>
+          {cheat.multiplierBaseline !== undefined ? (
+            <div className="field-row">
+              <label>Multiplier</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={0.5}
+                  value={cheat.value / cheat.multiplierBaseline}
+                  onChange={(e) =>
+                    onChange({ ...cheat, value: Number(e.target.value) * (cheat.multiplierBaseline as number) })
+                  }
+                  style={{ flex: 1 }}
+                />
+                <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
+                  {(cheat.value / cheat.multiplierBaseline).toFixed(1)}x
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="field-row">
+              <label>Value</label>
+              <input
+                value={String(cheat.value)}
+                onChange={(e) => onChange({ ...cheat, value: Number(e.target.value) })}
+              />
+            </div>
+          )}
 
           <div className="section-head">
             <h3>Targets</h3>
