@@ -39,23 +39,37 @@ writes the now-scaled value through unmodified game code. Because of this,
   `force` already uses for "the number this mode needs," rather than
   inventing parallel ones.
 
-**Native encoding** (`cave_ops.cc`): `EncodeScale(sourceXmmReg, factorBits)`
-emits three instructions via the existing Zydis-encoder style (matching
-`EncodeStore`'s approach, not the hand-written-bytes style reserved for the
-RIP-relative/branching blobs):
+**Native encoding** (`cave_ops.cc`):
+`EncodeScale(sourceXmmReg, atAddress, slotAddress)` emits exactly one
+instruction:
 
 ```
-mov eax, factorBits          ; the multiplier's IEEE-754 bits
-movd xmmScratch, eax         ; xmmScratch picked != sourceXmmReg
-mulss sourceXmmReg, xmmScratch
+mulss sourceXmmReg, dword ptr [rip+disp]   ; disp names the cave's slot
 ```
 
-`xmmScratch` is `xmm0` unless the source is `xmm0`, in which case `xmm1`.
-This clobbers `eax` and `xmmScratch` — acceptable under the same precedent
-`force`/`copy` already set (their injected effects aren't checked against
-what the replayed swallowed instructions need either; only the *displaced
-game code's own* RIP-relative/flow-terminating hazards are guarded against
-today).
+The multiplier's IEEE-754 bits live in the cave's own reserved slot — the
+first 8 bytes `EncodeCaptureOnce` and the guard arming already use — written
+there by `installInjection` before the code body goes down. The
+displacement is relative to the END of the instruction, whose length depends
+on the displacement's own encoding, so it is computed the same two-pass way
+`EncodeCaptureOnce` computes its: encode once with a placeholder to learn
+the length, then again with the real value. Assembling for a known cave
+address is what makes a RIP-relative instruction safe here — unlike a
+displaced one, it is built for exactly where it will execute and never moves
+afterwards.
+
+*Why not the obvious `mov eax, imm32` / `movd xmmScratch, eax` / `mulss
+source, xmmScratch`:* that shape permanently destroys RAX and a second XMM
+register. There is no precedent for it in this file — every other injected
+effect is scrupulously non-destructive of caller state (`EncodeCaptureOnce`
+brackets its compare in `pushfq`/`popfq`; `EncodeGuardedSkip` saves and
+restores flags and `r11`, and refuses to encode at all rather than risk
+corrupting an `r11` base register). Because `scale`'s effect runs FIRST,
+ahead of the displaced game instructions, and because RAX and XMM0 are the
+calling convention's return and first-float-argument registers — extremely
+likely to be live at an SSE store site — that shape is a real, silent,
+intermittent corruption risk. Reading the factor out of the slot removes
+both clobbers instead of merely bracketing them.
 
 Register lookup (`RegisterByName`) gets a sibling `XmmRegisterByName`
 accepting `xmm0`..`xmm15`; the GPR-only lookup used for `baseRegister`
@@ -75,9 +89,13 @@ XMM for `scale`).
 
 ## Testing
 
-- `cave_ops` native test: byte-exact check of `EncodeScale`'s output for a
-  couple of (register, factor) pairs, same style as the existing
-  `encodeStoreRegister` coverage.
+- `cave_ops` native test: byte-exact check of `EncodeScale`'s output, plus a
+  check that the emitted displacement, measured from the end of the
+  instruction, resolves to the slot address — the same property the
+  `encodeCaptureOnce` tests assert about their own two displacements — and a
+  decode round-trip confirming the source register is the only thing
+  written. A live end-to-end test scales the harness's `movss [reg], xmm`
+  store by 8.0 and asserts every sampled value is an exact multiple of 8.
 - `patchEngine.test.ts`: a `scale`-mode install/restore round-trip against
   the fake `PatchOps`, and a rejection test for a missing/unrecognized
   `sourceRegister` or missing multiplier — mirroring the existing per-mode

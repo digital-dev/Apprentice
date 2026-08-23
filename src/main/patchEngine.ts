@@ -36,7 +36,7 @@ export interface PatchOps {
   }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
   encodeStoreRegister(destRegister: string, offset: number, sourceRegister: string): string
-  encodeScale(sourceXmmRegister: string, factorBits: number): string
+  encodeScale(sourceXmmRegister: string, atAddress: string, slotAddress: string): string
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string
   encodeGuardedSkip(
     baseRegister: string,
@@ -172,6 +172,20 @@ const GPR64_ALIASES: Record<string, string> = {
   r15: 'r15', r15d: 'r15'
 }
 
+// The 16 128-bit XMM registers, scale mode's source-register set — the
+// counterpart to GPR64_ALIASES above, and a table rather than a regex for
+// the same reason: validation and the name actually handed to the native
+// encoder read from ONE place, so they cannot drift apart. They did drift
+// once — validation lowercased the name but the raw (possibly uppercase)
+// string went to encodeScale, which does an exact-case lookup and threw
+// from inside the cave-allocated section, leaking a cave in the target.
+const XMM_REGISTERS: Record<string, string> = {
+  xmm0: 'xmm0', xmm1: 'xmm1', xmm2: 'xmm2', xmm3: 'xmm3',
+  xmm4: 'xmm4', xmm5: 'xmm5', xmm6: 'xmm6', xmm7: 'xmm7',
+  xmm8: 'xmm8', xmm9: 'xmm9', xmm10: 'xmm10', xmm11: 'xmm11',
+  xmm12: 'xmm12', xmm13: 'xmm13', xmm14: 'xmm14', xmm15: 'xmm15'
+}
+
 // `value` becomes the exact 32 bits the injected store writes. A float has
 // to go through its IEEE-754 bit pattern: 350.0 is 0x43af0000, and writing
 // the integer 350 instead would land as a denormal fraction in the game.
@@ -203,6 +217,21 @@ export function pointerToSlotHex(address: string): string {
   for (let i = 0; i < 8; i++) {
     out += (value & 0xffn).toString(16).padStart(2, '0')
     value >>= 8n
+  }
+  return out
+}
+
+// A 32-bit value as the 4 little-endian bytes the cave's slot holds — the
+// pointerToSlotHex of scale mode, which parks its multiplier's float bits in
+// that same reserved slot for its RIP-relative mulss to read. Four bytes,
+// not eight: the slot is 8 bytes wide but a single-precision factor only
+// occupies the low dword, and the cave arrives zeroed.
+export function bitsToSlotHex(bits: number): string {
+  let value = bits >>> 0
+  let out = ''
+  for (let i = 0; i < 4; i++) {
+    out += (value & 0xff).toString(16).padStart(2, '0')
+    value >>>= 8
   }
   return out
 }
@@ -610,8 +639,13 @@ export class PatchEngine {
         // xmm source register and a float multiplier.
         if (
           typeof patch.sourceRegister !== 'string' ||
-          !/^xmm(1[0-5]|[0-9])$/.test(patch.sourceRegister.toLowerCase())
+          !(patch.sourceRegister.toLowerCase() in XMM_REGISTERS)
         ) {
+          // Refused HERE, before allocateCave, for the same reason copy's
+          // check above is: native XmmRegisterByName throws on an unknown
+          // name too, but only once encodeScale runs in the effect ternary
+          // below — after the cave is allocated, with no surrounding
+          // try/catch, which leaks a 4KB cave in the target process.
           throw new Error('missing or unrecognized scale-mode source register')
         }
         if (typeof patch.value !== 'number' || patch.dataType !== 'float') {
@@ -807,9 +841,18 @@ export class PatchEngine {
                 returnTo
               )
             : mode === 'scale'
-              ? this.ops.encodeScale(
-                  patch.sourceRegister as string,
-                  valueBits(patch.value as number, 'float')
+              ? // The multiplier lives in the cave's slot (written just
+                // below, before the body goes down) and the mulss reads it
+                // RIP-relative, so like the capture store this must be
+                // encoded for the address it actually executes at —
+                // codeAddress. XMM_REGISTERS supplies the exact-case name
+                // the native lookup matches on; passing patch.sourceRegister
+                // raw would let "XMM5" pass validation and then throw from
+                // inside the native call, after the cave already exists.
+                this.ops.encodeScale(
+                  XMM_REGISTERS[(patch.sourceRegister as string).toLowerCase()],
+                  codeAddress,
+                  cave
                 )
               : mode === 'copy'
                 ? this.ops.encodeStoreRegister(
@@ -824,6 +867,24 @@ export class PatchEngine {
                   )
       const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
       body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
+    }
+
+    // scale's slot is not an arming slot — it holds the multiplier its mulss
+    // reads RIP-relative out of the cave's first bytes. So it is written
+    // unconditionally for every scale patch (there is no "unarmed" scale),
+    // and, like the arming write below, before the body goes down: the cave
+    // must never be reachable holding a zeroed factor, which would multiply
+    // the game's value by 0.0 rather than leaving it alone.
+    if (mode === 'scale') {
+      if (!this.ops.writeBytes(cave, bitsToSlotHex(valueBits(patch.value as number, 'float')))) {
+        this.ops.freeCave(cave)
+        return {
+          ok: false,
+          error: 'Failed to write the scale multiplier.',
+          caveAddress: null,
+          displaced: null
+        }
+      }
     }
 
     // Pre-arm the guard/immune-check before anything can reach the cave.

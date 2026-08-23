@@ -268,42 +268,87 @@ describe('encodeStoreRegister', () => {
   })
 })
 
+// Reads a signed 32-bit little-endian displacement out of an unspaced hex
+// string, starting at byte index `at`. Shared by the RIP-relative encoders'
+// tests, which all have to prove a displacement names the slot it meant to.
+function readDisp32(hex: string, at: number): bigint {
+  const bytes = hex.match(/../g) as string[]
+  const raw = BigInt('0x' + bytes.slice(at, at + 4).reverse().join(''))
+  return raw >= 0x80000000n ? raw - 0x100000000n : raw // sign-extend
+}
+
 describe('encodeScale', () => {
-  it('encodes mov eax,imm32 / movd xmm0,eax / mulss xmm5,xmm0 for a non-xmm0 source', () => {
-    // factorBits for 2.0f = 0x40000000
-    const hex: string = (addon as any).encodeScale('xmm5', 0x40000000)
-    // b8 00000040          mov eax, 0x40000000
-    // 66 0f 6e c0          movd xmm0, eax      (scratch = xmm0, source is xmm5)
-    // f3 0f 59 e8          mulss xmm5, xmm0
-    expect(hex).toBe('b800000040' + '660f6ec0' + 'f30f59e8')
+  it('encodes one mulss reading the factor RIP-relative out of the slot', () => {
+    // Cave layout: the 8-byte slot at `cave`, code at cave+8. Here that is
+    // slot 0x1000, code 0x1008.
+    const hex: string = (addon as any).encodeScale('xmm5', '0x1008', '0x1000')
+    // f3 0f 59 2d f0ffffff   mulss xmm5, dword ptr [rip-16]
+    // ModRM 0x2d = mod 00, reg 101 (xmm5), rm 101 (RIP-relative).
+    // Exactly one instruction, and nothing else: no scratch GPR to stage the
+    // immediate through, no scratch XMM to hold it. The effect runs BEFORE
+    // the displaced game code replays, so anything it clobbered would be
+    // clobbered while the game still needed it.
+    expect(hex).toBe('f30f592d' + 'f0ffffff')
+    expect(hex.length / 2).toBe(8)
   })
 
-  it('picks xmm1 as scratch when the source itself is xmm0', () => {
-    // factorBits for 1.5f = 0x3fc00000
-    const hex: string = (addon as any).encodeScale('xmm0', 0x3fc00000)
-    // b8 0000c03f          mov eax, 0x3fc00000
-    // 66 0f 6e c8          movd xmm1, eax      (scratch = xmm1, source is xmm0)
-    // f3 0f 59 c1          mulss xmm0, xmm1
-    expect(hex).toBe('b80000c03f' + '660f6ec8' + 'f30f59c1')
+  it('measures the displacement from the END of its own instruction', () => {
+    // The whole hazard this encoder has to get right. Checked for a short
+    // (8-byte) and a long (9-byte, REX-prefixed) form, since the second is
+    // where an end-of-instruction mistake would show up as an off-by-one.
+    for (const [reg, at, slot, dispAt] of [
+      ['xmm5', '0x1008', '0x1000', 4],
+      ['xmm0', '0x140002000', '0x140001ff8', 4],
+      ['xmm9', '0x1009', '0x1000', 5],
+      ['xmm15', '0x140002000', '0x140001ff8', 5]
+    ] as [string, string, string, number][]) {
+      const hex: string = (addon as any).encodeScale(reg, at, slot)
+      const end = BigInt(at) + BigInt(hex.length / 2)
+      expect(end + readDisp32(hex, dispAt)).toBe(BigInt(slot))
+    }
   })
 
-  it('round-trips through the decoder as three whole, relocatable instructions', async () => {
+  it('sets REX.R for an extended source register', () => {
+    const hex: string = (addon as any).encodeScale('xmm9', '0x1009', '0x1000')
+    // f3 44 0f 59 0d eeffffff — REX.R (0x44) between the F3 prefix and the
+    // opcode, ModRM reg 001 completed to xmm9 by that REX bit.
+    expect(hex).toBe('f3440f590d' + 'eeffffff')
+  })
+
+  it('round-trips through the decoder as one whole instruction', async () => {
     const near = (addon as any).attach(harness.pid).baseAddress
-    const scratch: string = (addon as any).allocateCave(handle, near)
-    const hex: string = (addon as any).encodeScale('xmm3', 0x40000000)
-    ;(addon as any).writeBytes(handle, scratch, hex)
-    const run = (addon as any).decodeRun(handle, scratch, hex.length / 2)
+    const cave: string = (addon as any).allocateCave(handle, near)
+    const code = '0x' + (BigInt(cave) + 8n).toString(16)
+    const hex: string = (addon as any).encodeScale('xmm3', code, cave)
+    ;(addon as any).writeBytes(handle, code, hex)
+    const run = (addon as any).decodeRun(handle, code, hex.length / 2)
     expect(run.decodable).toBe(true)
-    expect(run.relocatable).toBe(true)
     expect(run.length).toBe(hex.length / 2)
+    // RIP-relative by construction, so decodeRun reports it position-
+    // dependent — correct, and harmless: it is assembled for the exact cave
+    // address it executes at and never moves. (relocatable is a check on
+    // DISPLACED game code, which this is not.)
+    expect(run.relocatable).toBe(false)
+    // It must write the source register and NOTHING else — no scratch GPR
+    // staging an immediate, no second XMM holding the factor. That is the
+    // whole point of reading the factor out of the slot instead. (The name
+    // is whatever Zydis calls xmm3's largest enclosing register, which
+    // widens to ymm3/zmm3 depending on the build's feature set.)
+    expect(run.clobbers.length).toBe(1)
+    expect(run.clobbers[0]).toMatch(/mm3$/)
+    expect(run.clobbers).not.toContain('rax')
+  })
+
+  it('refuses a slot too far away to reach RIP-relative', () => {
+    expect(() => (addon as any).encodeScale('xmm0', '0x1000', '0x8000000000')).toThrow()
   })
 
   it('rejects an unknown source register instead of encoding nonsense', () => {
-    expect(() => (addon as any).encodeScale('notareg', 0)).toThrow()
+    expect(() => (addon as any).encodeScale('notareg', '0x1008', '0x1000')).toThrow()
   })
 
   it('rejects a GPR name — only xmm registers hold a float mid-computation', () => {
-    expect(() => (addon as any).encodeScale('rax', 0)).toThrow()
+    expect(() => (addon as any).encodeScale('rax', '0x1008', '0x1000')).toThrow()
   })
 })
 
@@ -542,6 +587,94 @@ describe('capture injection — end to end', () => {
 
       // The captured pointer must actually address the field the harness writes.
       expect('0x' + pointer.toString(16)).toBe(forceAddress)
+    } finally {
+      ;(addon as any).suspendThreads(handle, harness.pid)
+      try {
+        ;(addon as any).writeBytes(handle, site, displaced)
+      } finally {
+        (addon as any).resumeThreads()
+      }
+      await send('stopforce')
+    }
+  }, 30000)
+})
+
+describe('scale injection — end to end', () => {
+  it('multiplies the live float the game stores, clobbering nothing', async () => {
+    // The harness's force_write is `*p = v` under /Od, i.e. a real
+    // `movss [reg], xmm` — the exact site shape scale mode exists for.
+    ;(addon as any).startWriteWatch(harness.pid, forceAddress)
+    await send('forceloop')
+    let caught: any[] = []
+    for (let i = 0; i < 40 && caught.length === 0; i++) {
+      await sleep(50)
+      caught = (addon as any).pollWriteWatch()
+    }
+    const insn = (addon as any).stopWriteWatch()[0]
+    const site = insn.instructionAddress
+    const run = (addon as any).decodeRun(handle, site, 5)
+    expect(run.relocatable).toBe(true)
+    const displaced: string = (addon as any).readBytes(handle, site, run.length)
+
+    // Which XMM register the store reads is a property of the compiler's
+    // output, not something to assume — read it out of the instruction.
+    // `movss m32, xmm` is [REX] F3 0F 11 /r, and the ModRM reg field plus
+    // REX.R names the source.
+    const bytes = displaced.match(/../g) as string[]
+    const opcodeAt = bytes.findIndex(
+      (b, i) => b === 'f3' && bytes[i + 1] === '0f' && bytes[i + 2] === '11'
+    )
+    expect(opcodeAt).toBeGreaterThanOrEqual(0)
+    const rexByte = opcodeAt > 0 ? parseInt(bytes[opcodeAt - 1], 16) : 0
+    const rexR = rexByte >= 0x40 && rexByte <= 0x4f ? (rexByte >> 2) & 1 : 0
+    const modrm = parseInt(bytes[opcodeAt + 3], 16)
+    const sourceXmm = 'xmm' + (((modrm >> 3) & 7) + rexR * 8)
+
+    const cave: string = (addon as any).allocateCave(handle, site)
+    const codeAddress = '0x' + (BigInt(cave) + 8n).toString(16)
+
+    // 8.0f as raw bits, written into the cave's slot — the same thing
+    // patchEngine.ts's install branch does before writing the body. A power
+    // of two makes the assertion below exact and flake-free: force_thread
+    // ramps v through whole numbers, so every scaled sample must be an
+    // exact multiple of 8, which an unscaled ramp is only 1 sample in 8.
+    const bits = new DataView(new ArrayBuffer(4))
+    bits.setFloat32(0, 8, true)
+    const slotHex = [...new Uint8Array(bits.buffer)]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    expect((addon as any).writeBytes(handle, cave, slotHex)).toBe(true)
+
+    // The effect runs FIRST — it has to mutate the register before the
+    // game's own store replays and writes it through.
+    const effect: string = (addon as any).encodeScale(sourceXmm, codeAddress, cave)
+    const returnTo = '0x' + (BigInt(site) + BigInt(run.length)).toString(16)
+    const jumpBackFrom =
+      '0x' + (BigInt(codeAddress) + BigInt(effect.length / 2 + displaced.length / 2)).toString(16)
+    const body = effect + displaced + (addon as any).encodeJump(jumpBackFrom, returnTo)
+    expect((addon as any).writeBytes(handle, codeAddress, body)).toBe(true)
+
+    const padded =
+      (addon as any).encodeJump(site, codeAddress) + '90'.repeat(run.length - 5)
+    ;(addon as any).suspendThreads(handle, harness.pid)
+    try {
+      expect((addon as any).writeBytes(handle, site, padded)).toBe(true)
+    } finally {
+      (addon as any).resumeThreads()
+    }
+
+    try {
+      await sleep(200)
+      let sawNonZero = false
+      for (let i = 0; i < 5; i++) {
+        const value = parseFloat((await send('getforce')).split(' ')[1])
+        expect(value % 8).toBe(0)
+        if (value !== 0) sawNonZero = true
+        await sleep(60)
+      }
+      // A stuck-at-zero field would satisfy `% 8 === 0` vacuously — the
+      // failure a clobbered scratch register would most plausibly produce.
+      expect(sawNonZero).toBe(true)
     } finally {
       ;(addon as any).suspendThreads(handle, harness.pid)
       try {

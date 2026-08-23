@@ -361,63 +361,45 @@ Napi::Value EncodeStoreRegister(const Napi::CallbackInfo& info) {
   return Napi::String::New(env, BytesToHex(buf, (size_t)len));
 }
 
-// mov eax, factorBits ; movd xmmScratch, eax ; mulss sourceXmmReg, xmmScratch
-// — scale mode's whole effect: multiply the XMM register the game is about
-// to store (source) by a runtime factor, in place, before the displaced run
-// replays the game's own (unmodified) store instruction. xmmScratch is
-// xmm0 unless the source itself is xmm0, in which case xmm1 — it only ever
-// holds the factor bits, so any register other than the source works.
+// `mulss sourceXmmReg, dword ptr [rip+disp]` — scale mode's whole effect:
+// multiply the XMM register the game is about to store (source) by a runtime
+// factor, in place, before the displaced run replays the game's own
+// (unmodified) store instruction.
+//
+// The factor lives in the cave's own reserved slot (the same first 8 bytes
+// EncodeCaptureOnce and the guard arming use for their pointer), written
+// there by the installer before the code body goes down. Reading it
+// RIP-relative is what makes this ONE instruction that clobbers nothing —
+// no scratch GPR to load the immediate through, no scratch XMM to hold it.
+// That matters more here than anywhere else in this file: the effect runs
+// FIRST, ahead of the displaced game instructions, so any register it
+// destroyed would be destroyed while the game still needs it, and an SSE
+// store site is exactly where RAX and XMM0 (the calling convention's return
+// and first-float-argument registers) are most likely to be live. Every
+// other effect in this file is scrupulously non-destructive — pushfq/popfq
+// around EncodeCaptureOnce's compare, push/pop r11 in EncodeGuardedSkip —
+// and this one now needs no save/restore at all to match them.
+//
+// A RIP displacement is relative to the END of its own instruction, whose
+// length depends on the displacement's encoding, so — exactly as the
+// EncodeCaptureOnce comment below explains — encode once with a placeholder
+// to learn the length, then again with the real value. Assembling for a
+// known cave address is what makes this safe: unlike a displaced
+// instruction, it is built for exactly where it will execute and never
+// moves afterwards.
 Napi::Value EncodeScale(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::string srcRegName = info[0].As<Napi::String>().Utf8Value();
-  uint32_t factorBits = info[1].As<Napi::Number>().Uint32Value();
+  uintptr_t at = ParseHex(info[1].As<Napi::String>().Utf8Value());
+  uintptr_t slot = ParseHex(info[2].As<Napi::String>().Utf8Value());
 
   ZydisRegister srcReg = XmmRegisterByName(srcRegName);
   if (srcReg == ZYDIS_REGISTER_NONE) {
     Napi::Error::New(env, "unknown source xmm register").ThrowAsJavaScriptException();
     return env.Null();
   }
-  ZydisRegister scratchReg =
-      (srcReg == ZYDIS_REGISTER_XMM0) ? ZYDIS_REGISTER_XMM1 : ZYDIS_REGISTER_XMM0;
 
-  uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
-  std::string out;
-
-  {
-    ZydisEncoderRequest req;
-    memset(&req, 0, sizeof(req));
-    req.mnemonic = ZYDIS_MNEMONIC_MOV;
-    req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
-    req.operand_count = 2;
-    req.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
-    req.operands[0].reg.value = ZYDIS_REGISTER_EAX;
-    req.operands[1].type = ZYDIS_OPERAND_TYPE_IMMEDIATE;
-    req.operands[1].imm.u = factorBits;
-    ZyanUSize len = sizeof(buf);
-    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
-      Napi::Error::New(env, "failed to encode mov eax, imm32").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    out += BytesToHex(buf, (size_t)len);
-  }
-  {
-    ZydisEncoderRequest req;
-    memset(&req, 0, sizeof(req));
-    req.mnemonic = ZYDIS_MNEMONIC_MOVD;
-    req.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
-    req.operand_count = 2;
-    req.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
-    req.operands[0].reg.value = scratchReg;
-    req.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
-    req.operands[1].reg.value = ZYDIS_REGISTER_EAX;
-    ZyanUSize len = sizeof(buf);
-    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
-      Napi::Error::New(env, "failed to encode movd").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    out += BytesToHex(buf, (size_t)len);
-  }
-  {
+  auto encode = [&](int32_t displacement, uint8_t* out, ZyanUSize* len) -> bool {
     ZydisEncoderRequest req;
     memset(&req, 0, sizeof(req));
     req.mnemonic = ZYDIS_MNEMONIC_MULSS;
@@ -425,16 +407,45 @@ Napi::Value EncodeScale(const Napi::CallbackInfo& info) {
     req.operand_count = 2;
     req.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
     req.operands[0].reg.value = srcReg;
-    req.operands[1].type = ZYDIS_OPERAND_TYPE_REGISTER;
-    req.operands[1].reg.value = scratchReg;
-    ZyanUSize len = sizeof(buf);
-    if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, buf, &len))) {
-      Napi::Error::New(env, "failed to encode mulss").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    out += BytesToHex(buf, (size_t)len);
+    req.operands[1].type = ZYDIS_OPERAND_TYPE_MEMORY;
+    req.operands[1].mem.base = ZYDIS_REGISTER_RIP;
+    req.operands[1].mem.displacement = displacement;
+    req.operands[1].mem.size = 4; // dword — a single-precision float
+    return ZYAN_SUCCESS(ZydisEncoderEncodeInstruction(&req, out, len));
+  };
+
+  // Pass 1: a placeholder displacement, purely to learn the length.
+  uint8_t probe[ZYDIS_MAX_INSTRUCTION_LENGTH];
+  ZyanUSize probeLen = sizeof(probe);
+  if (!encode(0, probe, &probeLen)) {
+    Napi::Error::New(env, "failed to encode mulss").ThrowAsJavaScriptException();
+    return env.Null();
   }
-  return Napi::String::New(env, out);
+
+  const int64_t d = (int64_t)slot - (int64_t)(at + (size_t)probeLen);
+  if (d > INT32_MAX || d < INT32_MIN) {
+    Napi::Error::New(env, "slot out of RIP-relative range").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Pass 2: the real displacement, now that the end-of-instruction address
+  // is known.
+  uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
+  ZyanUSize len = sizeof(buf);
+  if (!encode((int32_t)d, buf, &len)) {
+    Napi::Error::New(env, "failed to encode mulss").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  // A RIP-relative operand is always mod=00/rm=101 with a full disp32, so
+  // the two passes must agree. If they ever didn't, the displacement would
+  // be measured from the wrong end and the multiply would read garbage —
+  // refuse rather than emit it.
+  if (len != probeLen) {
+    Napi::Error::New(env, "mulss encoding length changed with the displacement")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  return Napi::String::New(env, BytesToHex(buf, (size_t)len));
 }
 
 // `mov [rip+disp], reg` — the displacement is relative to the END of the

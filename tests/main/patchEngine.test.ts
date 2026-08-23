@@ -104,9 +104,9 @@ class FakeOps implements PatchOps {
     this.encodeStoreRegisterCalls.push({ destRegister, offset, sourceRegister })
     return '89870000' + '0000' // fixed stand-in, mirrors encodeStore's fixed-output style
   }
-  encodeScaleCalls: { sourceXmmRegister: string; factorBits: number }[] = []
-  encodeScale(sourceXmmRegister: string, factorBits: number): string {
-    this.encodeScaleCalls.push({ sourceXmmRegister, factorBits })
+  encodeScaleCalls: { sourceXmmRegister: string; atAddress: string; slotAddress: string }[] = []
+  encodeScale(sourceXmmRegister: string, atAddress: string, slotAddress: string): string {
+    this.encodeScaleCalls.push({ sourceXmmRegister, atAddress, slotAddress })
     return 'aabbcc' // fixed stand-in, mirrors encodeStoreRegister's fixed-output style
   }
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string {
@@ -1374,11 +1374,37 @@ describe('PatchEngine — scale injection', () => {
     expect(ops.memory.get(codeAddress)).toBe('aabbcc' + ORIGINAL + 'e900000000')
   })
 
-  it('passes the source register and the multiplier\'s float bits', async () => {
+  it('encodes the mulss for the address it executes at, reading the cave slot', async () => {
     await engine.apply(scalePatch)
+    const cave = ops.caves[0]
+    const codeAddress = '0x' + (BigInt(cave) + 8n).toString(16)
+    // The mulss is RIP-relative, so like the capture store it must be
+    // encoded for codeAddress — where it actually runs — and pointed at the
+    // cave's own slot, where the factor was just written.
     expect(ops.encodeScaleCalls).toEqual([
-      { sourceXmmRegister: 'xmm5', factorBits: valueBits(2, 'float') }
+      { sourceXmmRegister: 'xmm5', atAddress: codeAddress, slotAddress: cave }
     ])
+  })
+
+  it('writes the multiplier\'s float bits into the cave slot', async () => {
+    const result = await engine.apply(scalePatch)
+    expect(result.ok).toBe(true)
+    // 2.0f = 0x40000000, little-endian in the slot's low dword. Unlike the
+    // guard/immune arming write this is unconditional — there is no
+    // "unarmed" scale patch, and a zeroed slot would multiply by 0.0.
+    expect(ops.memory.get(ops.caves[0])).toBe('00000040')
+    expect(valueBits(2, 'float')).toBe(0x40000000)
+  })
+
+  it('normalizes an uppercase register name before it reaches the encoder', async () => {
+    // The native lookup is exact-case, and it runs AFTER allocateCave with
+    // no try/catch around it — an un-normalized "XMM5" passed validation
+    // (which lowercases) and then threw from inside the cave-allocated
+    // section, leaking a 4KB cave in the target process.
+    const upper = { ...scalePatch, id: 'patch-scale-upper', sourceRegister: 'XMM5' } as PatchCheat
+    const result = await engine.apply(upper)
+    expect(result.ok).toBe(true)
+    expect(ops.encodeScaleCalls[0].sourceXmmRegister).toBe('xmm5')
   })
 
   it('installs without a base register or field offset, which it never uses', async () => {
