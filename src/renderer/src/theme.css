@@ -332,7 +332,7 @@ li:hover {
     minmax(140px, 1.4fr)
     76px
     minmax(120px, 1fr)
-    48px
+    160px
     32px;
   align-items: center;
   column-gap: var(--s3);
