@@ -843,6 +843,18 @@ export default function CheatList({
     setRenamingId(null)
   }
 
+  // MultiplierSlider's own range is fixed at 1x-20x (see its component and
+  // EditPatchModal/EditCheatModal's matching validity bounds) — a cheat
+  // deliberately tuned past that (e.g. a huge "instant level up" value set
+  // directly in games/*.json, not through this UI) would otherwise render
+  // a slider that clamps to its own max and silently misrepresents what's
+  // actually installed. Falling back to the plain toggle for an
+  // out-of-range factor is honest about what the control can and can't
+  // show, rather than showing a control that lies.
+  function inSliderRange(factor: number): boolean {
+    return factor >= 1 && factor <= 20
+  }
+
   // Writes a value cheat back to the profile. If it's enabled, restart the
   // freeze loop on it — targets, dataType, mode, or value may all have just
   // changed, and toggleFreeze(cheat, false) then true keeps a running cheat
@@ -1684,12 +1696,13 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                   cheat.mode === 'freeze' ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <Toggle enabled={isEnabled} onChange={() => toggle(cheat)} />
-                      {cheat.multiplierBaseline !== undefined && (
-                        <MultiplierSlider
-                          factor={cheat.value / cheat.multiplierBaseline}
-                          onCommit={(factor) => void commitMultiplier(cheat, factor)}
-                        />
-                      )}
+                      {cheat.multiplierBaseline !== undefined &&
+                        inSliderRange(cheat.value / cheat.multiplierBaseline) && (
+                          <MultiplierSlider
+                            factor={cheat.value / cheat.multiplierBaseline}
+                            onCommit={(factor) => void commitMultiplier(cheat, factor)}
+                          />
+                        )}
                     </div>
                   ) : (
                     <button className="btn-sm" onClick={() => window.tamper.oneShot(cheat)}>
@@ -1827,7 +1840,7 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                       onChange={() => togglePatch(patch)}
                       disabled={patchBusy.has(patch.id)}
                     />
-                    {patch.mode === 'scale' && (
+                    {patch.mode === 'scale' && inSliderRange(patch.value ?? 1) && (
                       <MultiplierSlider
                         factor={patch.value ?? 1}
                         onCommit={(factor) => void commitScaleFactor(patch, factor)}

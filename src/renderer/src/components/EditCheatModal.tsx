@@ -174,11 +174,12 @@ export default function EditCheatModal({
 }) {
   const targets = cheat.targets
   const factor = cheat.multiplierBaseline !== undefined ? cheat.value / cheat.multiplierBaseline : null
-  const valid =
-    Number.isFinite(cheat.value) &&
-    (factor === null || (factor >= 1 && factor <= 20)) &&
-    targets.length > 0 &&
-    targets.every(targetIsValid)
+  // Same reasoning as EditPatchModal's scaleInSliderRange: a value tuned
+  // past the slider's own 1x-20x range is legitimate (an "instant" cheat
+  // wanting something far bigger), so it isn't rejected here — just shown
+  // as a plain number instead of a slider that would misrepresent it.
+  const factorInSliderRange = factor !== null && factor >= 1 && factor <= 20
+  const valid = Number.isFinite(cheat.value) && targets.length > 0 && targets.every(targetIsValid)
 
   function updateTarget(i: number, next: CheatTarget) {
     const copy = targets.slice()
@@ -256,22 +257,30 @@ export default function EditCheatModal({
           {cheat.multiplierBaseline !== undefined ? (
             <div className="field-row">
               <label>Multiplier</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+              {factorInSliderRange ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                  <input
+                    type="range"
+                    min={1}
+                    max={20}
+                    step={0.5}
+                    value={cheat.value / cheat.multiplierBaseline}
+                    onChange={(e) =>
+                      onChange({ ...cheat, value: Number(e.target.value) * (cheat.multiplierBaseline as number) })
+                    }
+                    style={{ flex: 1 }}
+                  />
+                  <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
+                    {(cheat.value / cheat.multiplierBaseline).toFixed(1)}x
+                  </span>
+                </div>
+              ) : (
                 <input
-                  type="range"
-                  min={1}
-                  max={20}
-                  step={0.5}
-                  value={cheat.value / cheat.multiplierBaseline}
-                  onChange={(e) =>
-                    onChange({ ...cheat, value: Number(e.target.value) * (cheat.multiplierBaseline as number) })
-                  }
-                  style={{ flex: 1 }}
+                  value={String(cheat.value)}
+                  onChange={(e) => onChange({ ...cheat, value: Number(e.target.value) })}
+                  placeholder="a value past the 1x-20x slider range"
                 />
-                <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
-                  {(cheat.value / cheat.multiplierBaseline).toFixed(1)}x
-                </span>
-              </div>
+              )}
             </div>
           ) : (
             <div className="field-row">
