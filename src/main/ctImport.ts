@@ -135,7 +135,8 @@ const MAX_CHEAT_ENTRIES = 10_000
 // in nesting depth: ~4000 levels of nested <CheatEntry> (a ~100 KB file)
 // took over a minute and froze the single-threaded Electron main process
 // with no timeout or recovery — reachable from any hostile/compromised
-// .CT file fetched via ctSource.ts. Walking the original string once and
+// .CT file a user picks via the file-import dialog. Walking the original
+// string once and
 // only recording offsets (no copying) makes this linear in file size
 // regardless of nesting depth; the actual substring slice happens exactly
 // once per entry, in the caller, from the stored offsets.

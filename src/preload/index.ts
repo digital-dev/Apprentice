@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat, CheatTarget } from '../main/store'
-import type { CtSearchResult } from '../main/ctSource'
 
 contextBridge.exposeInMainWorld('tamper', {
   listProcesses: () => ipcRenderer.invoke('process:list'),
@@ -71,9 +70,6 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('mono:readLiveValue', className, staticFieldName, instanceFieldName),
   importCheatTable: (exeName: string) => ipcRenderer.invoke('ct:import', exeName),
   exportCheatTable: (exeName: string) => ipcRenderer.invoke('ct:export', exeName),
-  searchCtTables: (gameName: string) => ipcRenderer.invoke('ctSource:search', gameName),
-  fetchCtTable: (exeName: string, result: CtSearchResult) =>
-    ipcRenderer.invoke('ctSource:fetch', exeName, result),
   onHotkeyFired: (
     cb: (payload: { cheatId: string; outcome: 'on' | 'off' | 'applied' | 'error'; error?: string }) => void
   ) => {

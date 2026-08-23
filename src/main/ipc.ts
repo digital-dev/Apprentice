@@ -20,8 +20,6 @@ import {
   type ScriptCheat
 } from './store'
 import { importCheatTableWithBudget } from './ctImportSafe'
-import { searchCtTables, fetchCtTable, CT_REPOS, MAX_TABLE_BYTES } from './ctSource'
-import type { CtSearchResult } from './ctSource'
 import { buildCheatTable } from './ctExport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
@@ -114,6 +112,8 @@ function fullOffsets(target: ChainTarget): string[] {
 // small pure pieces of a handler's logic so they can be unit-tested without
 // standing up electron's ipcMain/dialog mocks. Returns an error message, or
 // null if the size is acceptable.
+export const MAX_TABLE_BYTES = 5 * 1024 * 1024
+
 export function checkTableSize(sizeBytes: number): string | null {
   if (sizeBytes > MAX_TABLE_BYTES) {
     return `File is ${sizeBytes} bytes, exceeding the ${MAX_TABLE_BYTES}-byte limit for a .CT table — refusing to import.`
@@ -1222,12 +1222,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       })
       if (result.canceled || result.filePaths.length === 0) return null
 
-      // Mirrors ctSource.ts's fetch-path size cap (MAX_TABLE_BYTES) — that
-      // one only ever applied to a REMOTELY fetched table; a local file
-      // picked off disk went through with no size check at all, so a
-      // hostile/corrupt oversized .CT file here still reached the parser
-      // unbounded. Checked via statSync before reading, so an oversized
-      // file is never even read into memory.
+      // A local file picked off disk otherwise went through with no size
+      // check at all, so a hostile/corrupt oversized .CT file here still
+      // reached the parser unbounded. Checked via statSync before reading,
+      // so an oversized file is never even read into memory.
       let sizeBytes: number
       try {
         sizeBytes = fs.statSync(result.filePaths[0]).size
@@ -1252,71 +1250,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   )
 
-  // Searches the curated GitHub repo list (see ctSource.ts) for a .CT file
-  // matching gameName. Never throws to the renderer — a search failure
-  // (offline, rate-limited) comes back as an empty result list plus an
-  // error string, so the UI can show it without a try/catch of its own.
-  // searchCtTables itself never throws, but it still reports how many of
-  // the curated repos failed to fetch — surfaced here as a descriptive
-  // `error` (rather than always null) so "no results" (genuinely nothing
-  // available) is distinguishable in the UI from "couldn't reach GitHub"
-  // (offline/rate-limited), which used to look identical.
-  ipcMain.handle(
-    'ctSource:search',
-    async (_e, gameName: string): Promise<{ results: CtSearchResult[]; error: string | null }> => {
-      try {
-        const { results, failedRepoCount } = await searchCtTables(gameName)
-        const error =
-          failedRepoCount === 0
-            ? null
-            : failedRepoCount === CT_REPOS.length
-              ? `Couldn't reach GitHub (${failedRepoCount} of ${CT_REPOS.length} repositories failed — offline or rate-limited).`
-              : `${failedRepoCount} of ${CT_REPOS.length} repositories couldn't be searched (offline or rate-limited) — results may be incomplete.`
-        return { results, error }
-      } catch (err) {
-        return { results: [], error: String(err) }
-      }
-    }
-  )
-
-  // Fetches one search result and imports it through the same
-  // importCheatTable pipeline ct:import uses — picking a result IS the
-  // confirm gesture, matching ct:import's own "no separate confirm step"
-  // convention.
-  //
-  // The whole body (fetch, parse, save) is wrapped in one try/catch —
-  // not just the fetch — so a throw from importCheatTable (e.g. a future
-  // parser regression) or from saveCheat (e.g. a disk error) rejects with
-  // a readable { error } shape instead of an unhandled IPC rejection the
-  // renderer can't show.
-  ipcMain.handle(
-    'ctSource:fetch',
-    async (
-      _e,
-      exeName: string,
-      result: CtSearchResult
-    ): Promise<{ importedNames: string[]; skipped: { description: string; reason: string }[] } | { error: string }> => {
-      try {
-        // Structurally enforce the "curated, closed list" property — the
-        // renderer only ever echoes back what ctSource:search gave it
-        // today, but nothing stops that from changing later, and the host
-        // being pinned to raw.githubusercontent.com/${result.repo} is not
-        // a substitute for actually checking repo/branch against CT_REPOS.
-        const known = CT_REPOS.find((r) => `${r.owner}/${r.repo}` === result.repo)
-        if (!known || (result.branch !== undefined && result.branch !== known.branch)) {
-          return { error: 'Unknown source repository.' }
-        }
-        const xml = await fetchCtTable(result)
-        const parsed = await importCheatTableWithBudget(xml)
-        if ('error' in parsed) return parsed
-        const { imported, skipped } = parsed
-        for (const cheat of imported) saveCheat(exeName, cheat)
-        return { importedNames: imported.map((c) => c.name), skipped }
-      } catch (err) {
-        return { error: String(err) }
-      }
-    }
-  )
 
   // Opens a native save dialog and writes out every 'force'-mode patch as
   // a Cheat Engine Auto Assembler entry — the exact reverse of ct:import
