@@ -5,3 +5,5 @@ native/build/
 test-harness/*.obj
 test-harness/*.lib
 test-harness/*.exp
+mcp-server/node_modules/
+mcp-server/dist/

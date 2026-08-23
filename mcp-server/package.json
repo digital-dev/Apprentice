@@ -1,0 +1,18 @@
+{
+  "name": "game-trainer-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only MCP server exposing the trainer app's native memory-introspection primitives for live reverse-engineering sessions.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}
