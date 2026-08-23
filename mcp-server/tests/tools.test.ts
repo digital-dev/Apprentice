@@ -5,8 +5,20 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { registerProcessTools } from '../src/tools/process'
 import { registerReadTools } from '../src/tools/read'
 import { registerScanTools } from '../src/tools/scan'
+import { registerMonoTools } from '../src/tools/mono'
+import { registerDisasmTools } from '../src/tools/disasm'
 
 let harness: ChildProcessWithoutNullStreams
+
+// Sends one command to the harness's stdin and resolves with its next
+// stdout line — same protocol tests/native/mono_bridge.test.ts already
+// uses against the same harness ("loadmono" -> "OK 0x<base>").
+function send(cmd: string): Promise<string> {
+  return new Promise((resolve) => {
+    harness.stdout.once('data', (d) => resolve(d.toString().trim()))
+    harness.stdin.write(cmd + '\n')
+  })
+}
 
 beforeAll(async () => {
   harness = spawn(path.resolve(__dirname, '../../test-harness/harness.exe'))
@@ -86,5 +98,95 @@ describe('scan tools', () => {
     const candidates = JSON.parse(result.content[0].text as string)
     expect(Array.isArray(candidates)).toBe(true)
     expect(candidates.length).toBeGreaterThan(0)
+  })
+})
+
+describe('mono discovery tools', () => {
+  async function attachAndLoadMono(): Promise<{ handle: number; monoDllBase: string }> {
+    const processServer = new FakeServer()
+    registerProcessTools(processServer as unknown as McpServer)
+    const attachResult = await processServer.call('attach', { pid: harness.pid })
+    const { handle } = JSON.parse(attachResult.content[0].text as string)
+    const reply = await send('loadmono')
+    const monoDllBase = reply.split(' ')[1]
+    return { handle, monoDllBase }
+  }
+
+  it('mono_list_assemblies lists the two fixture assembly handles', async () => {
+    const { handle, monoDllBase } = await attachAndLoadMono()
+    const server = new FakeServer()
+    registerMonoTools(server as unknown as McpServer)
+    const result = await server.call('mono_list_assemblies', { handle, monoDllBase })
+    expect(result.isError).toBeUndefined()
+    const handles = JSON.parse(result.content[0].text as string)
+    expect(Array.isArray(handles)).toBe(true)
+    expect(handles.length).toBe(2)
+  })
+
+  it('mono_list_assembly_names lists both fixture assemblies with readable names', async () => {
+    const { handle, monoDllBase } = await attachAndLoadMono()
+    const server = new FakeServer()
+    registerMonoTools(server as unknown as McpServer)
+    const result = await server.call('mono_list_assembly_names', { handle, monoDllBase })
+    expect(result.isError).toBeUndefined()
+    const assemblies = JSON.parse(result.content[0].text as string) as { image: string; name: string }[]
+    const names = assemblies.map((a) => a.name)
+    expect(names).toContain('FakeAssemblyA')
+    expect(names).toContain('FakeAssemblyB')
+  })
+
+  it('mono_list_classes_in_image chains off mono_list_assembly_names\' image field to list its classes', async () => {
+    const { handle, monoDllBase } = await attachAndLoadMono()
+    const server = new FakeServer()
+    registerMonoTools(server as unknown as McpServer)
+
+    const namesResult = await server.call('mono_list_assembly_names', { handle, monoDllBase })
+    const assemblies = JSON.parse(namesResult.content[0].text as string) as { image: string; name: string }[]
+    const assemblyA = assemblies.find((a) => a.name === 'FakeAssemblyA')!
+
+    const result = await server.call('mono_list_classes_in_image', {
+      handle,
+      monoDllBase,
+      imageHandle: assemblyA.image
+    })
+    expect(result.isError).toBeUndefined()
+    const classes = JSON.parse(result.content[0].text as string) as {
+      namespaceName: string
+      className: string
+      classHandle: string
+    }[]
+    expect(classes).toHaveLength(1)
+    expect(classes[0].className).toBe('Player')
+    expect(classes[0].namespaceName).toBe('')
+    expect(classes[0].classHandle).toMatch(/^0x[0-9a-f]+$/)
+  })
+})
+
+describe('disasm tools', () => {
+  it('decodes an unspaced hex buffer', async () => {
+    const server = new FakeServer()
+    registerDisasmTools(server as unknown as McpServer)
+    const result = await server.call('disassemble_buffer', { bufferHex: '90', baseAddress: '0x1000' })
+    expect(result.isError).toBeUndefined()
+    const rows = JSON.parse(result.content[0].text as string)
+    expect(Array.isArray(rows)).toBe(true)
+    expect(rows.length).toBeGreaterThan(0)
+  })
+
+  it('decodes a spaced hex buffer (the scan_aob signature convention)', async () => {
+    const server = new FakeServer()
+    registerDisasmTools(server as unknown as McpServer)
+    const result = await server.call('disassemble_buffer', { bufferHex: '90 90', baseAddress: '0x1000' })
+    expect(result.isError).toBeUndefined()
+    const rows = JSON.parse(result.content[0].text as string)
+    expect(Array.isArray(rows)).toBe(true)
+    expect(rows.length).toBeGreaterThan(0)
+  })
+
+  it('returns an error result, not a truncated success, for a genuinely invalid hex character', async () => {
+    const server = new FakeServer()
+    registerDisasmTools(server as unknown as McpServer)
+    const result = await server.call('disassemble_buffer', { bufferHex: '48 8b zz10', baseAddress: '0x1000' })
+    expect(result.isError).toBe(true)
   })
 })
