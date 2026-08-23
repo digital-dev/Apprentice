@@ -36,6 +36,7 @@ export interface PatchOps {
   }
   encodeStore(baseRegister: string, offset: number, imm32: number): string
   encodeStoreRegister(destRegister: string, offset: number, sourceRegister: string): string
+  encodeScale(sourceXmmRegister: string, factorBits: number): string
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string
   encodeGuardedSkip(
     baseRegister: string,
@@ -139,7 +140,7 @@ interface AppliedPatch {
   caveAddress: string | null
   // Only a capture patch has a readable slot; recorded so slotAddress can
   // tell a capture cave from a force cave without re-deriving the mode.
-  mode: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy'
+  mode: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
 }
 
 // A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
@@ -563,7 +564,7 @@ export class PatchEngine {
     // possibly-unset one carried across this whole function.
     const mode = patchMode(patch)
     try {
-      if (typeof patch.baseRegister !== 'string') {
+      if (mode !== 'scale' && typeof patch.baseRegister !== 'string') {
         throw new Error('missing base register')
       }
       // capture and guard both need only the register: capture records it,
@@ -604,6 +605,21 @@ export class PatchEngine {
         }
         BigInt(patch.fieldOffset as string) // throws on unparsable hex
       }
+      if (mode === 'scale') {
+        // scale never uses fieldOffset/baseRegister — only a recognized
+        // xmm source register and a float multiplier.
+        if (
+          typeof patch.sourceRegister !== 'string' ||
+          !/^xmm(1[0-5]|[0-9])$/.test(patch.sourceRegister.toLowerCase())
+        ) {
+          throw new Error('missing or unrecognized scale-mode source register')
+        }
+        if (typeof patch.value !== 'number' || patch.dataType !== 'float') {
+          // Scale only multiplies a float register — int32 has no XMM
+          // representation this mode's mulss could operate on.
+          throw new Error('missing or unencodable scale-mode multiplier')
+        }
+      }
     } catch {
       return {
         ok: false,
@@ -612,7 +628,9 @@ export class PatchEngine {
             ? "This patch is missing the register a capture injection needs — can't install it."
             : mode === 'copy'
               ? "This patch is missing the register or offset a copy injection needs, its source register isn't a recognized register, or its offset isn't valid hex — can't compute what to write."
-              : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
+              : mode === 'scale'
+                ? "This patch is missing its source xmm register or its multiplier, or the source register isn't recognized — can't compute what to write."
+                : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
         caveAddress: null,
         displaced: null
       }
@@ -769,7 +787,7 @@ export class PatchEngine {
       body = guardBytes + displaced + this.ops.encodeJump(jumpBackFrom, returnTo)
     } else {
       const replay =
-        mode === 'capture' || mode === 'guard' ? displaced : displaced.slice(patch.length * 2)
+        mode === 'capture' || mode === 'guard' || mode === 'scale' ? displaced : displaced.slice(patch.length * 2)
 
       // The capture store is RIP-relative, so it must be encoded for the
       // address it actually executes at — codeAddress, now that it runs
@@ -788,17 +806,22 @@ export class PatchEngine {
                 cave,
                 returnTo
               )
-            : mode === 'copy'
-              ? this.ops.encodeStoreRegister(
-                  patch.baseRegister as string,
-                  Number(BigInt(patch.fieldOffset as string)),
-                  GPR64_ALIASES[(patch.sourceRegister as string).toLowerCase()]
+            : mode === 'scale'
+              ? this.ops.encodeScale(
+                  patch.sourceRegister as string,
+                  valueBits(patch.value as number, 'float')
                 )
-              : this.ops.encodeStore(
-                  patch.baseRegister as string,
-                  Number(BigInt(patch.fieldOffset as string)),
-                  valueBits(patch.value as number, patch.dataType as DataType)
-                )
+              : mode === 'copy'
+                ? this.ops.encodeStoreRegister(
+                    patch.baseRegister as string,
+                    Number(BigInt(patch.fieldOffset as string)),
+                    GPR64_ALIASES[(patch.sourceRegister as string).toLowerCase()]
+                  )
+                : this.ops.encodeStore(
+                    patch.baseRegister as string,
+                    Number(BigInt(patch.fieldOffset as string)),
+                    valueBits(patch.value as number, patch.dataType as DataType)
+                  )
       const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
       body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
     }

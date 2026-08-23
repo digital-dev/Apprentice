@@ -104,6 +104,11 @@ class FakeOps implements PatchOps {
     this.encodeStoreRegisterCalls.push({ destRegister, offset, sourceRegister })
     return '89870000' + '0000' // fixed stand-in, mirrors encodeStore's fixed-output style
   }
+  encodeScaleCalls: { sourceXmmRegister: string; factorBits: number }[] = []
+  encodeScale(sourceXmmRegister: string, factorBits: number): string {
+    this.encodeScaleCalls.push({ sourceXmmRegister, factorBits })
+    return 'aabbcc' // fixed stand-in, mirrors encodeStoreRegister's fixed-output style
+  }
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string {
     this.encodeCaptureOnceCalls.push({ baseRegister, atAddress, slotAddress })
     return '488905' + '00000000'
@@ -1339,5 +1344,75 @@ describe('PatchEngine — immune injection, Mono-anchored re-arming', () => {
     const slot = ops.memory.get(ops.caves[0]) as string
     // little-endian 0xdeaddeaddead — the fallback armValue, better than refusing outright
     expect(slot).toBe('addeaddeadde0000')
+  })
+})
+
+describe('PatchEngine — scale injection', () => {
+  const scalePatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'scale',
+    id: 'patch-damage-x2',
+    name: 'Damage x2',
+    originalBytes: ORIGINAL,
+    length: 5,
+    signature: 'f3 0f 11 41 10',
+    moduleName: 'game.exe',
+    moduleOffset: '0x100',
+    sourceRegister: 'xmm5',
+    value: 2,
+    dataType: 'float'
+  }
+
+  // scale replays the game's own write, scaled — unlike force mode, which
+  // replaces it outright — so the original bytes MUST still be in the cave,
+  // after the effect.
+  it('keeps the game\'s own write in the cave, after the effect', async () => {
+    const result = await engine.apply(scalePatch)
+    expect(result.ok).toBe(true)
+
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    expect(ops.memory.get(codeAddress)).toBe('aabbcc' + ORIGINAL + 'e900000000')
+  })
+
+  it('passes the source register and the multiplier\'s float bits', async () => {
+    await engine.apply(scalePatch)
+    expect(ops.encodeScaleCalls).toEqual([
+      { sourceXmmRegister: 'xmm5', factorBits: valueBits(2, 'float') }
+    ])
+  })
+
+  it('installs without a base register or field offset, which it never uses', async () => {
+    expect(scalePatch.baseRegister).toBeUndefined()
+    expect(scalePatch.fieldOffset).toBeUndefined()
+    const result = await engine.apply(scalePatch)
+    expect(result.ok).toBe(true)
+  })
+
+  it('refuses, before allocating a cave, when sourceRegister is missing', async () => {
+    const noReg = { ...scalePatch, id: 'patch-scale-noreg', sourceRegister: undefined } as PatchCheat
+    const result = await engine.apply(noReg)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+  })
+
+  it('refuses, before allocating a cave, when sourceRegister is not a recognized xmm register', async () => {
+    const bogus = { ...scalePatch, id: 'patch-scale-bogus', sourceRegister: 'notareg' } as PatchCheat
+    const result = await engine.apply(bogus)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+  })
+
+  it('refuses, before allocating a cave, when value or dataType is missing', async () => {
+    const noValue = { ...scalePatch, id: 'patch-scale-noval', value: undefined } as PatchCheat
+    const result = await engine.apply(noValue)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+  })
+
+  it('refuses when dataType is not float — scale only multiplies floats', async () => {
+    const wrongType = { ...scalePatch, id: 'patch-scale-int', dataType: 'int32' } as PatchCheat
+    const result = await engine.apply(wrongType)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
   })
 })

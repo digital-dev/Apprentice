@@ -184,6 +184,11 @@ export const nativeAddon = {
     addon.encodeStore(baseRegister, offset, imm32),
   encodeStoreRegister: (destRegister: string, offset: number, sourceRegister: string): string =>
     addon.encodeStoreRegister(destRegister, offset, sourceRegister),
+  // scale mode's effect: multiply an XMM register in place by a runtime
+  // factor. See cave_ops.cc's EncodeScale comment for the three-instruction
+  // shape (mov eax,imm32 / movd xmmScratch,eax / mulss source,xmmScratch).
+  encodeScale: (sourceXmmRegister: string, factorBits: number): string =>
+    addon.encodeScale(sourceXmmRegister, factorBits),
   encodeCaptureOnce: (baseRegister: string, atAddress: string, slotAddress: string): string =>
     addon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   // The guard prefix for a shared write: compares the object register

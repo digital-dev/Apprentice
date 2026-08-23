@@ -90,7 +90,7 @@ export interface PatchCheat {
   kind: 'patch'
   // How this patch changes the game. Absent means 'nop': every patch saved
   // before injection existed keeps working through the same code path.
-  mode?: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy'
+  mode?: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
   id: string
   name: string
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
@@ -160,10 +160,15 @@ export interface PatchCheat {
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
   fieldOffset?: string
-  // copy only: which register's live value to store — the "set this field
-  // to whatever that register currently holds" shape force mode cannot
+  // copy: which GPR's live value to store — the "set this field to
+  // whatever that register currently holds" shape force mode cannot
   // represent (force only encodes a fixed 32-bit immediate known at
   // capture/import time).
+  // scale: which XMM register holds the float the game is about to store
+  // — the register scale multiplies in place by `value` before the game's
+  // own (unmodified) store replays. Same field, disjoint meaning: a patch
+  // is either copy or scale, never both, so one name can carry either a
+  // GPR or an XMM register name depending on mode.
   sourceRegister?: string
   value?: number
   dataType?: DataType
@@ -195,7 +200,9 @@ export function isScriptCheat(cheat: StoredCheat): cheat is ScriptCheat {
   return (cheat as ScriptCheat).kind === 'script'
 }
 
-export function patchMode(patch: PatchCheat): 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' {
+export function patchMode(
+  patch: PatchCheat
+): 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale' {
   return patch.mode ?? 'nop'
 }
 
