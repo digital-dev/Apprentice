@@ -52,6 +52,17 @@ export interface MonoTarget {
   className: string
   staticFieldName: string
   instanceFieldName?: string
+  // The class instanceFieldName is actually DECLARED on, when it isn't
+  // className itself — e.g. m_localPlayer's declared type is Player, but
+  // m_runSpeed lives on Character, a base class Player inherits from
+  // without redeclaring. The native field lookup doesn't walk the
+  // inheritance chain (confirmed live: resolving "m_runSpeed" against
+  // Player's own class handle returns null; against Character's, it
+  // resolves), so a field inherited from an ancestor needs that ancestor's
+  // own class resolved separately from the one the static field lives on.
+  // Absent means "same class as className" — every existing target keeps
+  // resolving exactly as it did before this field existed.
+  instanceClassName?: string
   // A second hop past instanceFieldName, for a field that sits on an object
   // reached THROUGH the first one rather than on it directly — e.g.
   // InventoryGui.m_instance -> .m_dragItem gets you the ADDRESS OF THE

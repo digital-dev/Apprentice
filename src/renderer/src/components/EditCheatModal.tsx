@@ -91,6 +91,16 @@ function TargetEditor({
             placeholder="optional, e.g. m_baseHP"
           />
         </div>
+        <div className="field-row">
+          <label>Instance field's class</label>
+          <input
+            value={target.instanceClassName ?? ''}
+            onChange={(e) =>
+              onChange({ ...target, instanceClassName: e.target.value || undefined })
+            }
+            placeholder={`optional — only if the instance field is inherited from a base class (e.g. "Character" for a Player target's m_runSpeed)`}
+          />
+        </div>
       </div>
     )
   }
