@@ -52,6 +52,21 @@ export interface MonoTarget {
   className: string
   staticFieldName: string
   instanceFieldName?: string
+  // A second hop past instanceFieldName, for a field that sits on an object
+  // reached THROUGH the first one rather than on it directly — e.g.
+  // InventoryGui.m_instance -> .m_dragItem gets you the ADDRESS OF THE
+  // POINTER FIELD holding the dragged ItemData, not the ItemData object
+  // itself; the field you actually want (ItemData.m_stack) is one more
+  // dereference away, at a fixed offset that never needed a class name to
+  // find (the same "0x38" convention code patches already hardcode).
+  // Absent means "not a two-hop target" — every existing MonoTarget keeps
+  // resolving exactly as before. See resolveMonoTargetAddress's comment for
+  // why this can't be expressed as a second instanceFieldName: the object it
+  // points into (ItemData) isn't necessarily the same class as the first
+  // hop's owner (InventoryGui), so there is no single classHandle a second
+  // named field lookup could search against — only the raw offset is
+  // portable here.
+  pointerFieldOffset?: string
 }
 
 export type CheatTarget = ChainTarget | AnchorTarget | MonoTarget
@@ -119,6 +134,18 @@ export interface PatchCheat {
   // existing patch keeps resolving exactly as before.
   monoClass?: string
   monoMethod?: string
+  // Bytes past the method's own compiled start to patch, for a site that
+  // isn't the method's entry — e.g. the merge point right before a method
+  // returns, where the computed value sits in a register regardless of
+  // which internal branch got there. Mono's JIT is deterministic per IL
+  // input on a fixed game build (no tiered/adaptive recompilation the way
+  // V8 has), so an offset captured this session reliably lands on the same
+  // instruction next session even though the bytes there differ (embedded
+  // pointers vary; instruction boundaries and ordering don't) — the same
+  // property that makes compileMethod's own address resolution reliable
+  // session to session. Absent means the patch targets the method's start,
+  // exactly as before this field existed.
+  monoMethodOffset?: string
   // force, capture, guard and immune: which register held the object at
   // capture time (for immune: which register the hooked method's entry
   // point receives its "this" argument in — rcx for a Mono-JIT instance

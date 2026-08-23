@@ -110,8 +110,18 @@ export async function resolvePatchAddress(
         scanned: false
       }
     }
-    const address = await monoOps.compileMethod(monoDllBase, classHandle, patch.monoMethod)
-    if (address === null) {
+    const methodStart = await monoOps.compileMethod(monoDllBase, classHandle, patch.monoMethod)
+    if (methodStart === null) {
+      return { address: null, matchCount: null, reason: 'not-yet-compiled', relearnedOffset: null, scanned: false }
+    }
+    // PatchCheat isn't runtime-validated — a hand-edited games/*.json can
+    // carry a monoMethodOffset that isn't valid hex. BigInt() throws on
+    // that rather than failing gracefully, same hazard moduleOffset already
+    // guards against elsewhere in this file.
+    let address: string
+    try {
+      address = patch.monoMethodOffset === undefined ? methodStart : addHex(methodStart, BigInt(patch.monoMethodOffset))
+    } catch {
       return { address: null, matchCount: null, reason: 'not-yet-compiled', relearnedOffset: null, scanned: false }
     }
     // Deliberately no bytesMatch() gate here, unlike every other path below.

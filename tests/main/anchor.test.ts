@@ -268,6 +268,28 @@ describe('resolvePatchAddress — mono path', () => {
     expect(result.reason).toBe('not-yet-compiled')
   })
 
+  it('adds monoMethodOffset to the resolved method start', async () => {
+    const ops = new FakeOps()
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+    const offsetPatch = { ...monoPatch, monoMethodOffset: '0xeb' }
+
+    const result = await resolvePatchAddress(offsetPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBe('0x7000eb')
+    expect(result.reason).toBeNull()
+  })
+
+  it('reports not-yet-compiled rather than throwing when monoMethodOffset is not valid hex', async () => {
+    const ops = new FakeOps()
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+    const badPatch = { ...monoPatch, monoMethodOffset: 'not-hex' }
+
+    const result = await resolvePatchAddress(badPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBeNull()
+    expect(result.reason).toBe('not-yet-compiled')
+  })
+
   it('does not attempt the mono path for a patch that names a module', async () => {
     const ops = new FakeOps()
     ops.memory.set('0x10000100', ORIGINAL)
