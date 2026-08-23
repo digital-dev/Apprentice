@@ -26,7 +26,17 @@ export default function EditPatchModal({
   // enforces at creation time (see its "Force mode can only set whole
   // numbers (4 bytes) or floats" comment).
   const forceModeWidthOk = dataType === 'int32' || dataType === 'float'
-  const valid = Number.isFinite(value) && (patch.mode !== 'force' || forceModeWidthOk)
+  // scale's multiplier has no natural upper bound the engine itself
+  // enforces, but a bare number input invites "0" (silently zeroes the
+  // field — the same edge case force mode already has, see
+  // patchEngine.ts's own comment on it) or a value nobody would want a
+  // physical dial to even reach. 1x-20x covers "no change" through
+  // "one-shot everything" without needing a text field's full range.
+  const isScale = patch.mode === 'scale'
+  const valid =
+    Number.isFinite(value) &&
+    (patch.mode !== 'force' || forceModeWidthOk) &&
+    (!isScale || (value >= 1 && value <= 20))
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -53,28 +63,53 @@ export default function EditPatchModal({
         </div>
 
         <div className="modal-body">
-          <div className="field-row">
-            <label>Value</label>
-            <input value={String(value)} onChange={(e) => onChange({ ...patch, value: Number(e.target.value) })} />
-          </div>
-          <div className="field-row">
-            <label>Data type</label>
-            <select
-              value={dataType}
-              onChange={(e) => onChange({ ...patch, dataType: e.target.value as DataType })}
-            >
-              <option value="int32">int32</option>
-              <option value="float">float</option>
-              {patch.mode !== 'force' && (
-                <>
-                  <option value="int8">int8</option>
-                  <option value="int16">int16</option>
-                  <option value="int64">int64</option>
-                  <option value="double">double</option>
-                </>
-              )}
-            </select>
-          </div>
+          {isScale ? (
+            <div className="field-row">
+              <label>Multiplier</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={0.5}
+                  value={value}
+                  onChange={(e) => onChange({ ...patch, value: Number(e.target.value), dataType: 'float' })}
+                  style={{ flex: 1 }}
+                />
+                <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right' }}>
+                  {value.toFixed(1)}x
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="field-row">
+                <label>Value</label>
+                <input
+                  value={String(value)}
+                  onChange={(e) => onChange({ ...patch, value: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field-row">
+                <label>Data type</label>
+                <select
+                  value={dataType}
+                  onChange={(e) => onChange({ ...patch, dataType: e.target.value as DataType })}
+                >
+                  <option value="int32">int32</option>
+                  <option value="float">float</option>
+                  {patch.mode !== 'force' && (
+                    <>
+                      <option value="int8">int8</option>
+                      <option value="int16">int16</option>
+                      <option value="int64">int64</option>
+                      <option value="double">double</option>
+                    </>
+                  )}
+                </select>
+              </div>
+            </>
+          )}
           {patch.mode === 'force' && !forceModeWidthOk && (
             <p style={{ color: 'var(--error)', margin: 0, fontSize: 12 }}>
               Force mode can only set whole numbers (4 bytes) or floats.
