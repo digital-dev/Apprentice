@@ -16,6 +16,7 @@ import CheatRow, { type CheatRowVM, type RailState } from '../components/CheatRo
 import ScriptEditor from '../components/ScriptEditor'
 import EditCheatModal from '../components/EditCheatModal'
 import EditPatchModal from '../components/EditPatchModal'
+import MultiplierSlider from '../components/MultiplierSlider'
 import { playOn, playOff, playError } from '../sound'
 
 // Deliberately re-declared here instead of importing store.ts's
@@ -902,23 +903,61 @@ export default function CheatList({
     setRenamingId(null)
   }
 
-  // Writes editingCheat back to the profile. If the cheat is enabled,
-  // restart the freeze loop on it — targets, dataType, mode, or value may
-  // all have just changed, and toggleFreeze(cheat, false) then true keeps
-  // a running cheat from writing through a stale definition until it's
-  // next manually toggled.
+  // Writes a value cheat back to the profile. If it's enabled, restart the
+  // freeze loop on it — targets, dataType, mode, or value may all have just
+  // changed, and toggleFreeze(cheat, false) then true keeps a running cheat
+  // from writing through a stale definition until it's next manually
+  // toggled. Shared by the edit modal's Save and the inline multiplier
+  // slider on a cheat's row — both are "the saved definition changed,
+  // reassert it if live," just reached from different controls.
+  async function persistCheatChange(next: CheatDefinition): Promise<void> {
+    const wasEnabled = enabled.has(next.id)
+    if (wasEnabled) await window.tamper.toggleFreeze(next, false)
+    await window.tamper.saveCheat(exeName, next)
+    setCheats((prev) => prev.map((c) => (c.id === next.id ? next : c)))
+    if (wasEnabled) await window.tamper.toggleFreeze(next, true)
+  }
+
   async function saveEditedCheat() {
     if (!editingCheat) return
     setEditError(null)
     try {
-      const wasEnabled = enabled.has(editingCheat.id)
-      if (wasEnabled) await window.tamper.toggleFreeze(editingCheat, false)
-      await window.tamper.saveCheat(exeName, editingCheat)
-      setCheats((prev) => prev.map((c) => (c.id === editingCheat.id ? editingCheat : c)))
-      if (wasEnabled) await window.tamper.toggleFreeze(editingCheat, true)
+      await persistCheatChange(editingCheat)
       setEditingCheat(null)
     } catch (err) {
       setEditError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // A dedicated inline row control for a freeze cheat with multiplierBaseline
+  // set — see EditCheatModal's own slider for why this exists at all.
+  // Errors surface the same way saveEditedCheat's do, just without a modal
+  // to close.
+  async function commitMultiplier(cheat: CheatDefinition, factor: number) {
+    if (cheat.multiplierBaseline === undefined) return
+    try {
+      await persistCheatChange({ ...cheat, value: factor * cheat.multiplierBaseline })
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Patch counterpart to persistCheatChange. Unlike a value cheat, an
+  // enabled patch's install IS its value — force/scale mode encode `value`
+  // straight into the installed bytes/cave slot (see cave_ops.cc's
+  // encodeStore/EncodeScale) — so a live-toggled patch must be restored and
+  // reapplied for a new value to actually take effect, not just have its
+  // saved definition updated underneath it.
+  async function persistPatchChange(next: PatchCheat): Promise<void> {
+    const wasEnabled = patchEnabled.has(next.id)
+    if (wasEnabled) await window.tamper.restorePatch(next)
+    await window.tamper.saveCheat(exeName, next)
+    setPatches((prev) => prev.map((p) => (p.id === next.id ? next : p)))
+    if (wasEnabled) {
+      const result = await window.tamper.applyPatch(next)
+      if (!result.ok) {
+        setPatchError((prev) => new Map(prev).set(next.id, result.error ?? 'Reapply after edit failed'))
+      }
     }
   }
 
@@ -926,24 +965,19 @@ export default function CheatList({
     if (!editingPatch) return
     setEditError(null)
     try {
-      // Unlike a value cheat, an enabled patch's install IS its value —
-      // force mode encodes `value` straight into the installed bytes (see
-      // cave_ops.cc's encodeStore) — so a live-toggled patch must be
-      // restored and reapplied for a new value to actually take effect,
-      // not just have its saved definition updated underneath it.
-      const wasEnabled = patchEnabled.has(editingPatch.id)
-      if (wasEnabled) await window.tamper.restorePatch(editingPatch)
-      await window.tamper.saveCheat(exeName, editingPatch)
-      setPatches((prev) => prev.map((p) => (p.id === editingPatch.id ? editingPatch : p)))
-      if (wasEnabled) {
-        const result = await window.tamper.applyPatch(editingPatch)
-        if (!result.ok) {
-          setPatchError((prev) =>
-            new Map(prev).set(editingPatch.id, result.error ?? 'Reapply after edit failed')
-          )
-        }
-      }
+      await persistPatchChange(editingPatch)
       setEditingPatch(null)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // scale mode's `value` IS the multiplier directly (no baseline division
+  // needed the way a freeze cheat's multiplierBaseline requires) — see
+  // EditPatchModal's own slider.
+  async function commitScaleFactor(patch: PatchCheat, factor: number) {
+    try {
+      await persistPatchChange({ ...patch, value: factor })
     } catch (err) {
       setEditError(err instanceof Error ? err.message : String(err))
     }
@@ -1755,7 +1789,15 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                 railState,
                 control:
                   cheat.mode === 'freeze' ? (
-                    <Toggle enabled={isEnabled} onChange={() => toggle(cheat)} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <Toggle enabled={isEnabled} onChange={() => toggle(cheat)} />
+                      {cheat.multiplierBaseline !== undefined && (
+                        <MultiplierSlider
+                          factor={cheat.value / cheat.multiplierBaseline}
+                          onCommit={(factor) => void commitMultiplier(cheat, factor)}
+                        />
+                      )}
+                    </div>
                   ) : (
                     <button className="btn-sm" onClick={() => window.tamper.oneShot(cheat)}>
                       Apply
@@ -1889,18 +1931,29 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                 status: rowStatus,
                 railState,
                 control: (
-                  <Toggle
-                    enabled={isEnabled}
-                    onChange={() => togglePatch(patch)}
-                    disabled={patchBusy.has(patch.id)}
-                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Toggle
+                      enabled={isEnabled}
+                      onChange={() => togglePatch(patch)}
+                      disabled={patchBusy.has(patch.id)}
+                    />
+                    {patch.mode === 'scale' && (
+                      <MultiplierSlider
+                        factor={patch.value ?? 1}
+                        onCommit={(factor) => void commitScaleFactor(patch, factor)}
+                      />
+                    )}
+                  </div>
                 ),
                 menuItems: [
-                  // Only force/immune patches carry a value/dataType of
-                  // their own to retune — nop has neither, and
+                  // Only force/immune/scale patches carry a value/dataType
+                  // of their own to retune — nop has neither, and
                   // capture/guard's value lives on the anchored value cheat
-                  // instead (edit that cheat's "Edit…" to change it).
-                  ...((patch.mode ?? 'nop') === 'force' || patch.mode === 'immune'
+                  // instead (edit that cheat's "Edit…" to change it). scale
+                  // also has the inline slider above now, but the modal
+                  // stays reachable too — e.g. to see/set dataType, or on a
+                  // platform where dragging a tiny row slider is awkward.
+                  ...((patch.mode ?? 'nop') === 'force' || patch.mode === 'immune' || patch.mode === 'scale'
                     ? [{ label: 'Edit…', onClick: () => setEditingPatch(patch) }]
                     : []),
                   {
