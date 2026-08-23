@@ -190,6 +190,13 @@ export const nativeAddon = {
   // nothing — see cave_ops.cc's EncodeScale comment.
   encodeScale: (sourceXmmRegister: string, atAddress: string, slotAddress: string): string =>
     addon.encodeScale(sourceXmmRegister, atAddress, slotAddress),
+  encodeConditionalScale: (
+    sourceXmmRegister: string,
+    baseRegister: string,
+    methodAddress: string,
+    atAddress: string,
+    slotAddress: string
+  ): string => addon.encodeConditionalScale(sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress),
   encodeCaptureOnce: (baseRegister: string, atAddress: string, slotAddress: string): string =>
     addon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   // The guard prefix for a shared write: compares the object register

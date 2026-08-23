@@ -352,6 +352,110 @@ describe('encodeScale', () => {
   })
 })
 
+describe('encodeConditionalScale', () => {
+  // Slot layout for this mode only: [0..8) armed comparison pointer,
+  // [8..12) factor bits, [12..16) xmm0 spill scratch — 16 bytes, not the
+  // 8 every other mode's slot uses. Code starts at cave+16 for a real
+  // install; these tests place their own scratch code wherever is
+  // convenient and pass that address as `at` directly.
+  function floatBits(f: number): number {
+    const buf = Buffer.alloc(4)
+    buf.writeFloatLE(f)
+    return buf.readUInt32LE(0)
+  }
+  function leHex(n: bigint, bytes: number): string {
+    let out = ''
+    for (let i = 0; i < bytes; i++) { out += (n & 0xffn).toString(16).padStart(2, '0'); n >>= 8n }
+    return out
+  }
+
+  it('rejects an unknown source register', () => {
+    expect(() =>
+      (addon as any).encodeConditionalScale('notareg', 'rcx', '0x1000', '0x1008', '0x1000')
+    ).toThrow()
+  })
+
+  it('rejects an unknown base register', () => {
+    expect(() =>
+      (addon as any).encodeConditionalScale('xmm0', 'notareg', '0x1000', '0x1008', '0x1000')
+    ).toThrow()
+  })
+
+  it('refuses r10 and r11 as the base register — they are this effect\'s own scratch', () => {
+    expect(() =>
+      (addon as any).encodeConditionalScale('xmm0', 'r10', '0x1000', '0x1008', '0x1000')
+    ).toThrow()
+    expect(() =>
+      (addon as any).encodeConditionalScale('xmm0', 'r11', '0x1000', '0x1008', '0x1000')
+    ).toThrow()
+  })
+
+  it('produces a fixed-length blob, longer by exactly the REX bytes an extended xmm register needs', () => {
+    // decodeRun can't validate this blob the way it validates a plain
+    // effect: it contains an internal jne branching over the mulss, and
+    // decodeRun's linear walker exists to check DISPLACED GAME code for
+    // relocation safety, never an effect's own control flow (same reason
+    // no guard/immune test below asks decodeRun to walk their blobs
+    // either). The live end-to-end test above is this blob's real proof;
+    // this just pins its size against silent drift.
+    const nonExt: string = (addon as any).encodeConditionalScale('xmm0', 'rsi', '0x140000000', '0x1000', '0x2000')
+    const ext: string = (addon as any).encodeConditionalScale('xmm9', 'rsi', '0x140000000', '0x1000', '0x2000')
+    expect(nonExt.length / 2).toBe(70)
+    // xmm8-15 costs one extra REX.R byte at each of the three places
+    // srcXmmReg appears: the spill, the reload, and the mulss.
+    expect(ext.length / 2).toBe(73)
+  })
+
+  // The real proof: calls a genuine function (harness's own resolve_attacker,
+  // which touches xmm registers internally — exactly the hazard the spill/
+  // restore around the call exists for), compares its return against an
+  // armed slot value, and scales xmm0 only on a match. Driven through
+  // callRemoteFunctionFloat, whose CreateRemoteThread entry reaches this
+  // code via a real `call` (RSP 8-mod-16 at entry, per that function's own
+  // documented ABI reasoning) — the exact non-16-aligned condition the
+  // encoder's dynamic `and rsp,-16` exists to handle, not the aligned case
+  // a hand-picked test address could accidentally get right by luck.
+  it('scales xmm0 only when the called method\'s return matches the armed pointer', async () => {
+    const resolveAttackerAddr = (await send('getresolveattackeraddr')).split(' ')[1]
+    const near = (addon as any).attach(harness.pid).baseAddress
+    const cave: string = (addon as any).allocateCave(handle, near)
+    const codeAddress = '0x' + (BigInt(cave) + 16n).toString(16)
+    const dataAddr = '0x' + (BigInt(cave) + 4000n).toString(16)
+
+    async function run(armedAddr: string, hitArg: string, factor: number, baseReg: string): Promise<number> {
+      const slotHex =
+        leHex(BigInt(armedAddr), 8) + leHex(BigInt(floatBits(factor)), 4) + '00000000'
+      ;(addon as any).writeBytes(handle, cave, slotHex)
+      ;(addon as any).writeBytes(handle, dataAddr, leHex(BigInt(floatBits(10.0)), 4))
+
+      const dPreamble = BigInt(dataAddr) - (BigInt(codeAddress) + 8n)
+      let preamble = 'f30f1005' + leHex(dPreamble < 0n ? (1n << 32n) + dPreamble : dPreamble, 4)
+      if (baseReg === 'rsi') preamble += '4889ce' // mov rsi, rcx — hitArg arrives in rcx via the stub
+
+      const blobAddress = '0x' + (BigInt(codeAddress) + BigInt(preamble.length / 2)).toString(16)
+      const blob: string = (addon as any).encodeConditionalScale(
+        'xmm0',
+        baseReg,
+        resolveAttackerAddr,
+        blobAddress,
+        cave
+      )
+      ;(addon as any).writeBytes(handle, codeAddress, preamble + blob + 'c3')
+
+      return (addon as any).callRemoteFunctionFloat(handle, codeAddress, [hitArg])
+    }
+
+    const armed = '0x' + (BigInt(cave) + 3000n).toString(16)
+    const other = '0x' + (BigInt(cave) + 3100n).toString(16)
+
+    expect(await run(armed, armed, 3.0, 'rcx')).toBeCloseTo(30.0)
+    expect(await run(armed, other, 3.0, 'rcx')).toBeCloseTo(10.0)
+    // The real deployment shape: "hit" lives in rsi at the actual
+    // HitData.GetTotalDamage hook site, not rcx.
+    expect(await run(armed, armed, 2.0, 'rsi')).toBeCloseTo(20.0)
+  })
+})
+
 describe('encodeCaptureOnce', () => {
   it('emits a decodable blob whose RIP displacements both resolve to the slot', async () => {
     const near = (addon as any).attach(harness.pid).baseAddress

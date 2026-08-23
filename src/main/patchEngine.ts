@@ -37,6 +37,17 @@ export interface PatchOps {
   encodeStore(baseRegister: string, offset: number, imm32: number): string
   encodeStoreRegister(destRegister: string, offset: number, sourceRegister: string): string
   encodeScale(sourceXmmRegister: string, atAddress: string, slotAddress: string): string
+  // scale's conditional sibling: same multiply, but only when a call to
+  // methodAddress (with baseRegister as its sole argument) returns the
+  // pointer armed in slotAddress[0..8) — see cave_ops.cc's own comment on
+  // the 16-byte slot layout this needs, vs. plain scale's 8.
+  encodeConditionalScale(
+    sourceXmmRegister: string,
+    baseRegister: string,
+    methodAddress: string,
+    atAddress: string,
+    slotAddress: string
+  ): string
   encodeCaptureOnce(baseRegister: string, atAddress: string, slotAddress: string): string
   encodeGuardedSkip(
     baseRegister: string,
@@ -434,9 +445,10 @@ export class PatchEngine {
       // scanning (store.ts's own comment on armPointerClassName documents
       // guard falling back to self-arming, i.e. this pair was always meant
       // to cover it too; this condition just never included it).
+      const isConditionalScale = mode === 'scale' && patch.compareMonoMethod !== undefined
       let armValueOverride: string | undefined
       if (
-        (mode === 'immune' || mode === 'guard') &&
+        (mode === 'immune' || mode === 'guard' || isConditionalScale) &&
         patch.armPointerClassName !== undefined &&
         patch.armPointerFieldName !== undefined &&
         this.monoOps?.resolvePointer
@@ -452,10 +464,28 @@ export class PatchEngine {
           if (resolved !== null) armValueOverride = resolved
         }
       }
+      // Re-resolved fresh every install for the same reason armValueOverride
+      // is: JIT code moves between game sessions, so a compareMonoMethod
+      // address is only ever trustworthy from THIS process instance.
+      let compareMethodAddress: string | undefined
+      if (isConditionalScale && patch.monoClass !== undefined && this.monoOps) {
+        const monoDllBase = this.monoOps.monoDllBase()
+        if (monoDllBase !== null) {
+          const classHandle = await this.monoOps.resolveClass(monoDllBase, patch.monoClass)
+          if (classHandle !== null) {
+            const resolved = await this.monoOps.compileMethod(
+              monoDllBase,
+              classHandle,
+              patch.compareMonoMethod as string
+            )
+            if (resolved !== null) compareMethodAddress = resolved
+          }
+        }
+      }
       const installed =
         mode === 'nop'
           ? this.installNop(patch, status.address)
-          : this.installInjection(patch, status.address, armValueOverride)
+          : this.installInjection(patch, status.address, armValueOverride, compareMethodAddress)
       if (!installed.ok) return { ok: false, error: installed.error }
       caveAddress = installed.caveAddress
       // An injection's displaced run is frequently longer than patch.length
@@ -554,7 +584,16 @@ export class PatchEngine {
   // `armValueOverride`, when provided, is used in place of patch.armValue —
   // the caller's freshly-resolved pointer for THIS install, see apply()'s
   // comment on why a stored armValue alone goes stale across game restarts.
-  private installInjection(patch: PatchCheat, address: string, armValueOverride?: string): InstallResult {
+  // `compareMethodAddress`, when provided, is a conditional scale's
+  // freshly-resolved compareMonoMethod JIT address for THIS install — same
+  // "resolve fresh every time, JIT code moves" reasoning as armValueOverride,
+  // just for a method address instead of a field pointer.
+  private installInjection(
+    patch: PatchCheat,
+    address: string,
+    armValueOverride?: string,
+    compareMethodAddress?: string
+  ): InstallResult {
     const run = this.ops.decodeRun(address, JUMP_LENGTH)
     if (!run.decodable) {
       return {
@@ -592,8 +631,13 @@ export class PatchEngine {
     // compiler can enforce it's a plain `number` rather than a
     // possibly-unset one carried across this whole function.
     const mode = patchMode(patch)
+    // A conditional scale needs everything plain scale doesn't: the base
+    // register to call compareMonoMethod on, the resolved method address
+    // itself, and an armed comparison pointer — see store.ts's own comment
+    // on compareMonoMethod for what this whole shape is for.
+    const conditionalScale = mode === 'scale' && patch.compareMonoMethod !== undefined
     try {
-      if (mode !== 'scale' && typeof patch.baseRegister !== 'string') {
+      if ((mode !== 'scale' || conditionalScale) && typeof patch.baseRegister !== 'string') {
         throw new Error('missing base register')
       }
       // capture and guard both need only the register: capture records it,
@@ -653,6 +697,19 @@ export class PatchEngine {
           // representation this mode's mulss could operate on.
           throw new Error('missing or unencodable scale-mode multiplier')
         }
+        if (conditionalScale) {
+          if (compareMethodAddress === undefined) {
+            // Refused here rather than left to encodeConditionalScale: an
+            // unresolved compareMonoMethod means the class/method didn't
+            // resolve THIS install (game not far enough loaded, wrong
+            // name) — a caller bug or a transient timing issue, not
+            // something to guess an address for.
+            throw new Error('compareMonoMethod did not resolve to a method address this install')
+          }
+          if ((armValueOverride ?? patch.armValue) === undefined) {
+            throw new Error('conditional scale has no armed comparison pointer')
+          }
+        }
       }
     } catch {
       return {
@@ -663,7 +720,9 @@ export class PatchEngine {
             : mode === 'copy'
               ? "This patch is missing the register or offset a copy injection needs, its source register isn't a recognized register, or its offset isn't valid hex — can't compute what to write."
               : mode === 'scale'
-                ? "This patch is missing its source xmm register or its multiplier, or the source register isn't recognized — can't compute what to write."
+                ? conditionalScale
+                  ? "This conditional scale is missing its base register, source xmm register, multiplier, resolved compare-method address, or armed comparison pointer — can't compute what to write."
+                  : "This patch is missing its source xmm register or its multiplier, or the source register isn't recognized — can't compute what to write."
                 : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
         caveAddress: null,
         displaced: null
@@ -734,8 +793,11 @@ export class PatchEngine {
 
     // The slot occupies the first 8 bytes so capture mode can find it at a
     // fixed offset; code starts after it in both modes, so the layout is
-    // the same whichever mode installed the cave.
-    const codeAddress = addHex(cave, 8)
+    // the same whichever mode installed the cave. Conditional scale is the
+    // one exception: its slot holds an armed 8-byte pointer AND 4 bytes of
+    // factor bits (cave_ops.cc's EncodeConditionalScale comment has the
+    // full layout), so its code starts 8 bytes further in.
+    const codeAddress = addHex(cave, conditionalScale ? 16 : 8)
 
     // The effect runs FIRST, before any displaced bytes.
     //
@@ -841,19 +903,33 @@ export class PatchEngine {
                 returnTo
               )
             : mode === 'scale'
-              ? // The multiplier lives in the cave's slot (written just
-                // below, before the body goes down) and the mulss reads it
-                // RIP-relative, so like the capture store this must be
-                // encoded for the address it actually executes at —
-                // codeAddress. XMM_REGISTERS supplies the exact-case name
-                // the native lookup matches on; passing patch.sourceRegister
-                // raw would let "XMM5" pass validation and then throw from
-                // inside the native call, after the cave already exists.
-                this.ops.encodeScale(
-                  XMM_REGISTERS[(patch.sourceRegister as string).toLowerCase()],
-                  codeAddress,
-                  cave
-                )
+              ? conditionalScale
+                ? // Same RIP-relative-to-codeAddress reasoning as plain
+                  // scale below, plus the resolved compare-method address
+                  // and the base register to call it on — normalized
+                  // through GPR64_ALIASES the same way copy's sourceRegister
+                  // already is, since a hand-edited games/*.json could name
+                  // a 32-bit alias.
+                  this.ops.encodeConditionalScale(
+                    XMM_REGISTERS[(patch.sourceRegister as string).toLowerCase()],
+                    GPR64_ALIASES[(patch.baseRegister as string).toLowerCase()],
+                    compareMethodAddress as string,
+                    codeAddress,
+                    cave
+                  )
+                : // The multiplier lives in the cave's slot (written just
+                  // below, before the body goes down) and the mulss reads it
+                  // RIP-relative, so like the capture store this must be
+                  // encoded for the address it actually executes at —
+                  // codeAddress. XMM_REGISTERS supplies the exact-case name
+                  // the native lookup matches on; passing patch.sourceRegister
+                  // raw would let "XMM5" pass validation and then throw from
+                  // inside the native call, after the cave already exists.
+                  this.ops.encodeScale(
+                    XMM_REGISTERS[(patch.sourceRegister as string).toLowerCase()],
+                    codeAddress,
+                    cave
+                  )
               : mode === 'copy'
                 ? this.ops.encodeStoreRegister(
                     patch.baseRegister as string,
@@ -870,13 +946,17 @@ export class PatchEngine {
     }
 
     // scale's slot is not an arming slot — it holds the multiplier its mulss
-    // reads RIP-relative out of the cave's first bytes. So it is written
-    // unconditionally for every scale patch (there is no "unarmed" scale),
-    // and, like the arming write below, before the body goes down: the cave
-    // must never be reachable holding a zeroed factor, which would multiply
-    // the game's value by 0.0 rather than leaving it alone.
+    // reads RIP-relative out of the cave's first bytes (plain scale) or
+    // second 4 bytes (conditional scale, whose first 8 bytes are the armed
+    // comparison pointer instead — written in the guard/immune/conditional-
+    // scale block just below). Written unconditionally for every scale
+    // patch (there is no "unarmed" multiplier), and, like the arming write
+    // below, before the body goes down: the cave must never be reachable
+    // holding a zeroed factor, which would multiply the game's value by
+    // 0.0 rather than leaving it alone.
     if (mode === 'scale') {
-      if (!this.ops.writeBytes(cave, bitsToSlotHex(valueBits(patch.value as number, 'float')))) {
+      const factorAddress = conditionalScale ? addHex(cave, 8) : cave
+      if (!this.ops.writeBytes(factorAddress, bitsToSlotHex(valueBits(patch.value as number, 'float')))) {
         this.ops.freeCave(cave)
         return {
           ok: false,
@@ -887,16 +967,17 @@ export class PatchEngine {
       }
     }
 
-    // Pre-arm the guard/immune-check before anything can reach the cave.
-    // Self-arming takes whichever entity the game touches first, and at a
-    // site that runs for every loaded creature that is essentially never
-    // the player — a real session watched it lock onto a stranger three
-    // times running. The capture already recorded the register's value at
-    // the moment it wrote the address the user was watching, which is by
-    // construction theirs. immune has already refused above if
-    // effectiveArmValue is missing, so this always fires for it once
-    // installation gets here.
-    if ((mode === 'guard' || mode === 'immune') && effectiveArmValue) {
+    // Pre-arm the guard/immune/conditional-scale check before anything can
+    // reach the cave. Self-arming takes whichever entity the game touches
+    // first, and at a site that runs for every loaded creature that is
+    // essentially never the player — a real session watched it lock onto a
+    // stranger three times running. The capture already recorded the
+    // register's value at the moment it wrote the address the user was
+    // watching, which is by construction theirs. immune and conditional
+    // scale have already refused above if effectiveArmValue is missing —
+    // neither has a self-arming fallback the way guard does — so this
+    // always fires for them once installation gets here.
+    if ((mode === 'guard' || mode === 'immune' || conditionalScale) && effectiveArmValue) {
       if (!this.ops.writeBytes(cave, pointerToSlotHex(effectiveArmValue))) {
         this.ops.freeCave(cave)
         return {

@@ -266,6 +266,26 @@ static unsigned __stdcall probe_thread(void* arg) {
 }
 #pragma optimize("", on)
 
+// A real, non-inlined call target for cave_ops.test.ts's conditional-scale
+// tests: echoes its argument back unchanged, but deliberately touches xmm
+// registers on the way (real x64 float math, not something the compiler
+// can fold away) — so a trampoline that fails to spill/restore xmm0
+// around the call it makes to this function produces a visibly WRONG
+// result instead of merely happening to work. Reached via
+// callRemoteFunctionFloat, whose CreateRemoteThread entry point already
+// guarantees a properly aligned fresh stack, isolating this test from the
+// separate (also tested, structurally) question of whether the encoder's
+// own dynamic stack-alignment sequence is correct for an arbitrary
+// mid-function entry point.
+#pragma optimize("", off)
+static void* resolve_attacker(void* hit) {
+  volatile float scratch = 7.0f;
+  scratch = scratch * 3.0f - 1.0f;
+  (void)scratch;
+  return hit;
+}
+#pragma optimize("", on)
+
 #pragma optimize("", off)
 static void write_negdisp(float* end, float v) {
   *(end - 1) = v; // base register = `end`, encoded displacement = -4
@@ -498,6 +518,8 @@ int main(void) {
     } else if (strncmp(line, "stopprobe", 9) == 0) {
       g_probe_running = 0;
       printf("OK\n");
+    } else if (strncmp(line, "getresolveattackeraddr", 22) == 0) {
+      printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)&resolve_attacker);
     } else if (sscanf(line, "setnegdisp %f", &fval) == 1) {
       g_negdisp_value = fval;
       printf("OK\n");

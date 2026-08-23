@@ -362,6 +362,8 @@ const patchOps: PatchOps = {
     nativeAddon.encodeStoreRegister(destRegister, offset, sourceRegister),
   encodeScale: (sourceXmmRegister, atAddress, slotAddress) =>
     nativeAddon.encodeScale(sourceXmmRegister, atAddress, slotAddress),
+  encodeConditionalScale: (sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress) =>
+    nativeAddon.encodeConditionalScale(sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress),
   encodeCaptureOnce: (baseRegister, atAddress, slotAddress) =>
     nativeAddon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   encodeGuardedSkip: (baseRegister, atAddress, slotAddress, returnAddress) =>

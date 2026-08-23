@@ -448,6 +448,178 @@ Napi::Value EncodeScale(const Napi::CallbackInfo& info) {
   return Napi::String::New(env, BytesToHex(buf, (size_t)len));
 }
 
+// scale's conditional sibling: multiply srcXmmReg by the slot's factor
+// ONLY when calling methodAddress with baseRegister as its sole argument
+// returns the pointer already armed in the slot — otherwise leave
+// srcXmmReg untouched. Built for HitData.GetTotalDamage-shaped hooks: the
+// value a "damage dealt" cheat needs to scale has no attacker identity of
+// its own, but the HitData object the captured register still holds does,
+// via a resolver method (GetAttacker()) the game already has.
+//
+// Slot layout (16 bytes, vs. every other mode's 8 — installInjection must
+// size the cave accordingly and start code at slot+16, not slot+8):
+//   [0..8)   armed comparison pointer (Player.m_localPlayer, resolved and
+//            written the same way guard/immune already arm their slot)
+//   [8..12)  the multiplier's float bits
+//   [12..16) xmm0 spill scratch — see below
+//
+// Effect, in order:
+//   1. spill srcXmmReg to the slot (a real call is about to clobber it —
+//      xmm0-5 are all volatile under the Windows x64 ABI, and a Mono-JIT'd
+//      method is exactly the kind of callee that touches them)
+//   2. mov rcx, baseRegister                    ("this" for the call)
+//   3. mov r10, rsp                              (save — see below)
+//   4. and rsp, -16                              (force 16-byte alignment:
+//      this cave runs from a mid-function jmp, NOT a call site, so unlike
+//      every real call boundary in the process there is no alignment
+//      guarantee here at all — the ONLY safe assumption is none)
+//   5. sub rsp, 0x20                             (shadow space for the call)
+//   6. mov r11, methodAddress ; call r11         (the same "load absolute
+//      then indirect-call" shape the game's own JIT output uses
+//      everywhere in this codebase's disassembly)
+//   7. mov rsp, r10                              (restore — undoes 3-5 in
+//      one move, exactly, regardless of what they did)
+//   8. reload srcXmmReg from the slot (unconditionally — a mismatch still
+//      needs the game's real, unscaled value, not garbage)
+//   9. mov r11, [rip+armedSlot] ; cmp rax, r11 ; jne skip
+//  10. mulss srcXmmReg, [rip+factorSlot]
+//  skip:
+//
+// Every RIP-relative displacement here is fixed at build time, not
+// two-pass like EncodeScale's own single mulss: x86-64 RIP-relative
+// addressing always encodes a full disp32 (there is no shorter form to
+// second-guess), so once srcXmmReg's width (REX or not) is known, every
+// instruction's length — and therefore every later instruction's start
+// offset — is already determined before any byte is written.
+Napi::Value EncodeConditionalScale(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::string srcRegName = info[0].As<Napi::String>().Utf8Value();
+  std::string baseRegName = info[1].As<Napi::String>().Utf8Value();
+  uintptr_t methodAddress = ParseHex(info[2].As<Napi::String>().Utf8Value());
+  uintptr_t at = ParseHex(info[3].As<Napi::String>().Utf8Value());
+  uintptr_t slot = ParseHex(info[4].As<Napi::String>().Utf8Value());
+
+  ZydisRegister srcReg = XmmRegisterByName(srcRegName);
+  if (srcReg == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown source xmm register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  ZydisRegister baseReg = RegisterByName(baseRegName);
+  if (baseReg == ZYDIS_REGISTER_NONE) {
+    Napi::Error::New(env, "unknown base register").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  // r10/r11 are this blob's own scratch registers (rsp-save and the call
+  // target/comparison value respectively) — a base register that collided
+  // with either would have the effect fight its own bookkeeping, the same
+  // hazard EncodeGuardedSkip already refuses r11 for.
+  int baseIdx = (int)(baseReg - ZYDIS_REGISTER_RAX);
+  if (baseReg == ZYDIS_REGISTER_R10 || baseReg == ZYDIS_REGISTER_R11) {
+    Napi::Error::New(env, "cannot use r10 or r11 as the base register — they are this effect's own scratch registers")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  const bool srcExt = srcReg >= ZYDIS_REGISTER_XMM8;
+  const uint8_t srcLow = (uint8_t)((srcReg - ZYDIS_REGISTER_XMM0) & 0x7);
+  const bool baseExt = baseIdx >= 8;
+  const uint8_t baseLow = (uint8_t)(baseIdx & 0x7);
+  const size_t xmmInsnLen = srcExt ? 9 : 8; // F3 0F 11/10 + [REX.R] + ModRM + disp32
+
+  // Running offsets, computed once every earlier instruction's real length
+  // is known — see the function comment on why this can be a single
+  // forward pass rather than two-pass per instruction.
+  size_t off = 0;
+  const size_t spillEnd = off += xmmInsnLen;  // 1. spill srcXmmReg
+  off += 3;                                   // 2. mov rcx, base (REX+opcode+ModRM)
+  off += 3;                                   // 3. mov r10, rsp
+  off += 4;                                   // 4. and rsp, -16
+  off += 4;                                   // 5. sub rsp, 0x20
+  off += 10;                                  // 6a. mov r11, imm64
+  off += 3;                                   // 6b. call r11
+  off += 3;                                   // 7. mov rsp, r10
+  const size_t reloadEnd = off += xmmInsnLen; // 8. reload srcXmmReg
+  const size_t movArmedEnd = off += 7;        // 9a. mov r11, [rip+armed]
+  off += 3;                                   // 9b. cmp rax, r11
+  const size_t jneEnd = off += 6;             // 9c. jne skip
+  const size_t mulssEnd = off += xmmInsnLen;  // 10. mulss (== skip:)
+  const size_t total = mulssEnd;
+
+  const int64_t dSpill = (int64_t)(slot + 12) - (int64_t)(at + spillEnd);
+  const int64_t dReload = (int64_t)(slot + 12) - (int64_t)(at + reloadEnd);
+  const int64_t dArmed = (int64_t)slot - (int64_t)(at + movArmedEnd);
+  const int64_t dFactor = (int64_t)(slot + 8) - (int64_t)(at + mulssEnd);
+  const int64_t jneRel = (int64_t)(at + mulssEnd) - (int64_t)(at + jneEnd);
+  if (dSpill > INT32_MAX || dSpill < INT32_MIN || dReload > INT32_MAX || dReload < INT32_MIN ||
+      dArmed > INT32_MAX || dArmed < INT32_MIN || dFactor > INT32_MAX || dFactor < INT32_MIN ||
+      jneRel > INT32_MAX || jneRel < INT32_MIN) {
+    Napi::Error::New(env, "conditional scale target out of 32-bit range").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  const int32_t dSpill32 = (int32_t)dSpill, dReload32 = (int32_t)dReload;
+  const int32_t dArmed32 = (int32_t)dArmed, dFactor32 = (int32_t)dFactor;
+  const int32_t jneRel32 = (int32_t)jneRel;
+
+  std::vector<uint8_t> b(total);
+  size_t i = 0;
+
+  // 1. movss [rip+dSpill], srcXmmReg
+  if (srcExt) b[i++] = 0x44;
+  b[i++] = 0xF3; b[i++] = 0x0F; b[i++] = 0x11;
+  b[i++] = (uint8_t)(0x05 | (srcLow << 3));
+  memcpy(&b[i], &dSpill32, 4); i += 4;
+
+  // 2. mov rcx, baseRegister  (REX.W[+R] 89 /r, dest=rcx in r/m field)
+  b[i++] = (uint8_t)(0x48 | (baseExt ? 0x04 : 0x00));
+  b[i++] = 0x89;
+  b[i++] = (uint8_t)(0xC1 | (baseLow << 3));
+
+  // 3. mov r10, rsp
+  b[i++] = 0x4C; b[i++] = 0x8B; b[i++] = 0xD4;
+
+  // 4. and rsp, -16
+  b[i++] = 0x48; b[i++] = 0x83; b[i++] = 0xE4; b[i++] = 0xF0;
+
+  // 5. sub rsp, 0x20
+  b[i++] = 0x48; b[i++] = 0x83; b[i++] = 0xEC; b[i++] = 0x20;
+
+  // 6a. mov r11, imm64(methodAddress)
+  b[i++] = 0x49; b[i++] = 0xBB;
+  uint64_t methodAddr64 = (uint64_t)methodAddress;
+  memcpy(&b[i], &methodAddr64, 8); i += 8;
+
+  // 6b. call r11
+  b[i++] = 0x41; b[i++] = 0xFF; b[i++] = 0xD3;
+
+  // 7. mov rsp, r10
+  b[i++] = 0x4C; b[i++] = 0x89; b[i++] = 0xD4;
+
+  // 8. movss srcXmmReg, [rip+dReload]  (reload, unconditional)
+  if (srcExt) b[i++] = 0x44;
+  b[i++] = 0xF3; b[i++] = 0x0F; b[i++] = 0x10;
+  b[i++] = (uint8_t)(0x05 | (srcLow << 3));
+  memcpy(&b[i], &dReload32, 4); i += 4;
+
+  // 9a. mov r11, [rip+dArmed]
+  b[i++] = 0x4C; b[i++] = 0x8B; b[i++] = 0x1D;
+  memcpy(&b[i], &dArmed32, 4); i += 4;
+
+  // 9b. cmp rax, r11
+  b[i++] = 0x4C; b[i++] = 0x39; b[i++] = 0xD8;
+
+  // 9c. jne skip
+  b[i++] = 0x0F; b[i++] = 0x85;
+  memcpy(&b[i], &jneRel32, 4); i += 4;
+
+  // 10. mulss srcXmmReg, [rip+dFactor]   (skip: lands here)
+  if (srcExt) b[i++] = 0x44;
+  b[i++] = 0xF3; b[i++] = 0x0F; b[i++] = 0x59;
+  b[i++] = (uint8_t)(0x05 | (srcLow << 3));
+  memcpy(&b[i], &dFactor32, 4); i += 4;
+
+  return Napi::String::New(env, BytesToHex(b.data(), total));
+}
+
 // `mov [rip+disp], reg` — the displacement is relative to the END of the
 // instruction, whose length depends on the displacement's own encoding, so
 // encode once with a placeholder to learn the length, then again with the

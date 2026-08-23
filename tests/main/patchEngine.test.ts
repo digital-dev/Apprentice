@@ -113,6 +113,23 @@ class FakeOps implements PatchOps {
     this.encodeCaptureOnceCalls.push({ baseRegister, atAddress, slotAddress })
     return '488905' + '00000000'
   }
+  encodeConditionalScaleCalls: {
+    sourceXmmRegister: string
+    baseRegister: string
+    methodAddress: string
+    atAddress: string
+    slotAddress: string
+  }[] = []
+  encodeConditionalScale(
+    sourceXmmRegister: string,
+    baseRegister: string,
+    methodAddress: string,
+    atAddress: string,
+    slotAddress: string
+  ): string {
+    this.encodeConditionalScaleCalls.push({ sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress })
+    return 'ddeeff' // fixed stand-in, mirrors encodeScale's fixed-output style
+  }
   encodeGuardedSkipCalls: {
     baseRegister: string
     atAddress: string
@@ -1440,5 +1457,132 @@ describe('PatchEngine — scale injection', () => {
     const result = await engine.apply(wrongType)
     expect(result.ok).toBe(false)
     expect(ops.caves).toHaveLength(0)
+  })
+})
+
+describe('PatchEngine — conditional scale injection', () => {
+  const conditionalPatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'scale',
+    id: 'patch-damage-dealt-x2',
+    name: 'Damage Multiplier (dealt only)',
+    originalBytes: ORIGINAL,
+    length: 5,
+    signature: 'f3 0f 11 41 10',
+    moduleName: 'game.exe',
+    moduleOffset: '0x100',
+    monoClass: 'HitData',
+    compareMonoMethod: 'GetAttacker',
+    baseRegister: 'rsi',
+    sourceRegister: 'xmm0',
+    value: 2,
+    dataType: 'float',
+    armPointerClassName: 'Player',
+    armPointerFieldName: 'm_localPlayer'
+  }
+
+  it('resolves the compare method and the armed pointer, then encodes the call', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x400900'
+    monoOps.pointerValue = '0x1c6986d75e4'
+    engine.setMonoOps(monoOps as any)
+
+    const result = await engine.apply(conditionalPatch)
+    expect(result.ok).toBe(true)
+
+    const cave = ops.caves[0]
+    const codeAddress = '0x' + (BigInt(cave) + 16n).toString(16) // 16, not 8 — the wider slot
+    expect(ops.encodeConditionalScaleCalls).toEqual([
+      {
+        sourceXmmRegister: 'xmm0',
+        baseRegister: 'rsi',
+        methodAddress: '0x400900',
+        atAddress: codeAddress,
+        slotAddress: cave
+      }
+    ])
+  })
+
+  it('writes the armed pointer at slot+0 and the factor bits at slot+8', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = '0x1c6986d75e4'
+    engine.setMonoOps(monoOps as any)
+
+    const result = await engine.apply(conditionalPatch)
+    expect(result.ok).toBe(true)
+
+    const cave = ops.caves[0]
+    const factorSlot = '0x' + (BigInt(cave) + 8n).toString(16)
+    // 0x1c6986d75e4 as 8 little-endian bytes.
+    expect(ops.memory.get(cave)).toBe('e4756d98c6010000')
+    expect(ops.memory.get(factorSlot)).toBe('00000040') // 2.0f
+  })
+
+  it('places code at cave+16, not the usual cave+8, to leave room for the wider slot', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = '0x1c6986d75e4'
+    engine.setMonoOps(monoOps as any)
+
+    const result = await engine.apply(conditionalPatch)
+    expect(result.ok).toBe(true)
+
+    const cave = ops.caves[0]
+    const codeAddress = '0x' + (BigInt(cave) + 16n).toString(16)
+    expect(ops.memory.get(codeAddress)).toBe('ddeeff' + ORIGINAL + 'e900000000')
+  })
+
+  it('refuses, before allocating a cave, when compareMonoMethod does not resolve', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = null
+    monoOps.pointerValue = '0x1c6986d75e4'
+    engine.setMonoOps(monoOps as any)
+
+    const result = await engine.apply(conditionalPatch)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+  })
+
+  it('refuses, before allocating a cave, when there is no armed comparison pointer', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = null // resolvePointer returns null; no armValue fallback either
+    engine.setMonoOps(monoOps as any)
+
+    const noFallback = { ...conditionalPatch, id: 'patch-no-fallback', armValue: undefined } as PatchCheat
+    const result = await engine.apply(noFallback)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+  })
+
+  it('falls back to a stale armValue when live resolution fails, like guard/immune do', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = null
+    engine.setMonoOps(monoOps as any)
+
+    const withStale = { ...conditionalPatch, id: 'patch-stale', armValue: '0xdeaddead' } as PatchCheat
+    const result = await engine.apply(withStale)
+    expect(result.ok).toBe(true)
+    expect(ops.memory.get(ops.caves[0])).toBe('addeadde00000000') // 0xdeaddead, 8 bytes little-endian
+  })
+
+  it('refuses, before allocating a cave, without a base register — plain scale never needs one, this does', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = '0x1c6986d75e4'
+    engine.setMonoOps(monoOps as any)
+
+    const noBase = { ...conditionalPatch, id: 'patch-no-base', baseRegister: undefined } as PatchCheat
+    const result = await engine.apply(noBase)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+  })
+
+  it('keeps the game\'s own write in the cave, after the effect — replays like plain scale', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.pointerValue = '0x1c6986d75e4'
+    engine.setMonoOps(monoOps as any)
+
+    const result = await engine.apply(conditionalPatch)
+    expect(result.ok).toBe(true)
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 16n).toString(16)
+    expect(ops.memory.get(codeAddress)).toBe('ddeeff' + ORIGINAL + 'e900000000')
   })
 })

@@ -197,6 +197,20 @@ export interface PatchCheat {
   // is either copy or scale, never both, so one name can carry either a
   // GPR or an XMM register name depending on mode.
   sourceRegister?: string
+  // scale only: gates the multiply on a comparison instead of running it
+  // unconditionally. Names a method on monoClass (e.g. HitData's
+  // "GetAttacker") called with baseRegister as its sole argument at
+  // install time's every execution; the multiply only runs when that
+  // call's return matches the pointer armPointerClassName/
+  // armPointerFieldName (or armValue) resolves to — e.g. "only when the
+  // hit's attacker is the local player." Absent means the plain,
+  // unconditional scale every existing scale patch already has —
+  // baseRegister isn't even required without it. Reuses monoClass (the
+  // same class the patch site itself is anchored to) as the class this
+  // method is resolved against, since every use so far has needed exactly
+  // that class's own resolver method; a use needing a different class
+  // would need a new field, not a repurposed one.
+  compareMonoMethod?: string
   value?: number
   dataType?: DataType
   // Same meaning as CheatDefinition.hotkey above.
