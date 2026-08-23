@@ -27,6 +27,10 @@ export interface ChainTarget {
   moduleName: string
   baseOffset: string
   offsets: string[]
+  // See MonoTarget.value/dataType below — the same per-target override,
+  // available on every target kind.
+  value?: number
+  dataType?: DataType
 }
 
 // A target reached through a pointer captured by an injection, rather than
@@ -39,6 +43,10 @@ export interface AnchorTarget {
   kind: 'anchor'
   patchId: string
   offset: string
+  // See MonoTarget.value/dataType below — the same per-target override,
+  // available on every target kind.
+  value?: number
+  dataType?: DataType
 }
 
 // A value reached through Mono-resolved metadata by name, instead of a
@@ -78,6 +86,18 @@ export interface MonoTarget {
   // named field lookup could search against — only the raw offset is
   // portable here.
   pointerFieldOffset?: string
+  // Per-target override for the cheat's own `value`/`dataType`. writeCheat
+  // (ipc.ts) writes ONE value/dataType to every target in a cheat's list by
+  // default — fine when all targets are redundant paths to the same
+  // logical field, but not when a single cheat needs to drive two
+  // DIFFERENT fields of different types in lockstep (e.g. "God Mode"
+  // arming Player.m_godMode, an int8 bool, while ALSO freezing
+  // Character.m_health, a float, at a max-HP constant — two fields that
+  // must flip together but can't share one value or width). Absent means
+  // "use the cheat's own value/dataType", exactly as every target behaved
+  // before this field existed.
+  value?: number
+  dataType?: DataType
 }
 
 export type CheatTarget = ChainTarget | AnchorTarget | MonoTarget

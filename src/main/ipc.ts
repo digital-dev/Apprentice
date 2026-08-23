@@ -234,29 +234,29 @@ async function resolveMonoTarget(handle: number, target: MonoTarget): Promise<st
 async function writeCheat(handle: number, cheat: CheatDefinition): Promise<boolean> {
   let anySucceeded = false
   for (const target of cheat.targets) {
+    // Per-target value/dataType override (see MonoTarget.value's doc in
+    // store.ts) — lets one cheat drive multiple, differently-typed fields
+    // in lockstep. Absent on every target means this behaves exactly as
+    // before: the cheat's own value/dataType, for all targets.
+    const dataType = target.dataType ?? cheat.dataType
+    const value = target.value ?? cheat.value
     if (isAnchorTarget(target)) {
       const resolved = resolveAnchor(handle, target)
       if (resolved === null) continue
-      const ok = nativeAddon.writeValue(handle, resolved, [], cheat.dataType, cheat.value)
+      const ok = nativeAddon.writeValue(handle, resolved, [], dataType, value)
       if (ok) anySucceeded = true
       continue
     }
     if (isMonoTarget(target)) {
       const resolved = await resolveMonoTarget(handle, target)
       if (resolved === null) continue
-      const ok = nativeAddon.writeValue(handle, resolved, [], cheat.dataType, cheat.value)
+      const ok = nativeAddon.writeValue(handle, resolved, [], dataType, value)
       if (ok) anySucceeded = true
       continue
     }
     const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
     if (moduleBase === null) continue
-    const ok = nativeAddon.writeValue(
-      handle,
-      moduleBase,
-      fullOffsets(target),
-      cheat.dataType,
-      cheat.value
-    )
+    const ok = nativeAddon.writeValue(handle, moduleBase, fullOffsets(target), dataType, value)
     if (ok) anySucceeded = true
   }
   return anySucceeded
@@ -292,32 +292,30 @@ async function verifyCheat(
 ): Promise<TargetStatus[]> {
   return Promise.all(
     cheat.targets.map(async (target): Promise<TargetStatus> => {
+      // Per-target override — see writeCheat's matching comment.
+      const dataType = target.dataType ?? cheat.dataType
+      const expected = target.value !== undefined ? target.value : expectedValue
       if (isAnchorTarget(target)) {
         const resolved = resolveAnchor(handle, target)
         if (resolved === null) return { alive: false, value: null }
-        const value = nativeAddon.tryReadValue(handle, resolved, [], cheat.dataType)
+        const value = nativeAddon.tryReadValue(handle, resolved, [], dataType)
         if (value === null) return { alive: false, value: null }
-        const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
+        const alive = expected === null ? true : valueMatches(value, expected, dataType)
         return { alive, value }
       }
       if (isMonoTarget(target)) {
         const resolved = await resolveMonoTarget(handle, target)
         if (resolved === null) return { alive: false, value: null }
-        const value = nativeAddon.tryReadValue(handle, resolved, [], cheat.dataType)
+        const value = nativeAddon.tryReadValue(handle, resolved, [], dataType)
         if (value === null) return { alive: false, value: null }
-        const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
+        const alive = expected === null ? true : valueMatches(value, expected, dataType)
         return { alive, value }
       }
       const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
       if (moduleBase === null) return { alive: false, value: null }
-      const value = nativeAddon.tryReadValue(
-        handle,
-        moduleBase,
-        fullOffsets(target),
-        cheat.dataType
-      )
+      const value = nativeAddon.tryReadValue(handle, moduleBase, fullOffsets(target), dataType)
       if (value === null) return { alive: false, value: null }
-      const alive = expectedValue === null ? true : valueMatches(value, expectedValue, cheat.dataType)
+      const alive = expected === null ? true : valueMatches(value, expected, dataType)
       return { alive, value }
     })
   )
