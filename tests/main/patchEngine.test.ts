@@ -880,6 +880,72 @@ describe('PatchEngine.apply / restore', () => {
     expect(ops.memory.get('0x7ff000001000')).toBe(ORIGINAL)
   })
 
+  describe('replace mode', () => {
+    const REPLACEMENT = '31d29090' // xor edx,edx; nop; nop — same 4 bytes replaced
+    const replacePatch: PatchCheat = {
+      ...modulePatch,
+      id: 'replace-patch',
+      mode: 'replace',
+      originalBytes: '0fb7501a', // movzx edx,word ptr [rax+1A], 4 bytes
+      length: 4,
+      replacementBytes: REPLACEMENT
+    }
+
+    beforeEach(() => {
+      ops.memory.set('0x400100', replacePatch.originalBytes)
+    })
+
+    it('writes replacementBytes in place and reports it applied', async () => {
+      const result = await engine.apply(replacePatch)
+      expect(result.ok).toBe(true)
+      expect(ops.memory.get('0x400100')).toBe(REPLACEMENT)
+      expect(engine.isApplied('replace-patch')).toBe(true)
+    })
+
+    it('restores the original bytes and forgets the patch', async () => {
+      await engine.apply(replacePatch)
+      expect(engine.restore(replacePatch)).toBe(true)
+      expect(ops.memory.get('0x400100')).toBe(replacePatch.originalBytes)
+      expect(engine.isApplied('replace-patch')).toBe(false)
+    })
+
+    it('applying an already-installed replace patch is a no-op success', async () => {
+      ops.memory.set('0x400100', REPLACEMENT)
+      const result = await engine.apply(replacePatch)
+      expect(result.ok).toBe(true)
+      expect(ops.writes).toHaveLength(0)
+      expect(engine.isApplied('replace-patch')).toBe(true)
+      expect(engine.restore(replacePatch)).toBe(true)
+      expect(ops.memory.get('0x400100')).toBe(replacePatch.originalBytes)
+    })
+
+    it('refuses when replacementBytes is missing', async () => {
+      const result = await engine.apply({ ...replacePatch, replacementBytes: undefined })
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('replace mode needs exactly')
+      expect(ops.writes).toHaveLength(0)
+      expect(engine.isApplied('replace-patch')).toBe(false)
+    })
+
+    it("refuses when replacementBytes' length does not match length", async () => {
+      const result = await engine.apply({ ...replacePatch, replacementBytes: '31d2' })
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('replace mode needs exactly 4 bytes')
+      expect(ops.writes).toHaveLength(0)
+    })
+
+    it('does not require platform injection support', async () => {
+      // Mirrors ipc.ts's patch:apply gate: 'replace', like 'nop', never
+      // allocates a cave, so it must not be blocked when injection isn't
+      // supported. Exercised at the engine level here since platformSupportsInjection
+      // itself lives in ipc.ts, not PatchEngine — this just confirms
+      // PatchEngine's own apply() path has no cave dependency for replace.
+      const result = await engine.apply(replacePatch)
+      expect(result.ok).toBe(true)
+      expect(ops.caves).toHaveLength(0)
+    })
+  })
+
   it('restoreAll restores every applied patch and clears the set', async () => {
     ops.aobMatches = ['0x7ff000001000']
     ops.memory.set('0x7ff000001000', ORIGINAL)

@@ -184,11 +184,24 @@ export interface PatchCheat {
   kind: 'patch'
   // How this patch changes the game. Absent means 'nop': every patch saved
   // before injection existed keeps working through the same code path.
-  mode?: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
+  mode?: 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
   id: string
   name: string
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
-  length: number // bytes to NOP == instruction length
+  length: number // bytes to NOP (or replace) == instruction length
+  // replace only: the bytes written in the captured instruction's place —
+  // unspaced lowercase hex, exactly `length` bytes long. Sits between 'nop'
+  // (always 0x90, nothing else expressible) and a real 'force'/'copy'
+  // injection (a cave-relocated jump, for when the replacement needs more
+  // room than the site it displaces): some fixes need a specific FIXED
+  // instruction in-place — e.g. replacing a 4-byte `movzx edx,word ptr
+  // [rax+1A]` with `xor edx,edx; nop; nop` so a since-zeroed register reads
+  // as "0 required" downstream, without touching game memory at all — and
+  // the replacement is exactly as long as what it displaces, so there's no
+  // need for a cave or a jump either. Required when mode is 'replace';
+  // apply() refuses to install without it, or if its length doesn't match
+  // `length` exactly.
+  replacementBytes?: string
   signature: string // AOB with ?? wildcards, for relocating JIT code
   // How many signature bytes precede the captured instruction. The pattern
   // covers the surrounding method for uniqueness — a short method's own
@@ -322,7 +335,7 @@ export function isScriptCheat(cheat: StoredCheat): cheat is ScriptCheat {
 
 export function patchMode(
   patch: PatchCheat
-): 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale' {
+): 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale' {
   return patch.mode ?? 'nop'
 }
 

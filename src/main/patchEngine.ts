@@ -151,7 +151,7 @@ interface AppliedPatch {
   caveAddress: string | null
   // Only a capture patch has a readable slot; recorded so slotAddress can
   // tell a capture cave from a force cave without re-deriving the mode.
-  mode: 'nop' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
+  mode: 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
 }
 
 // A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
@@ -369,6 +369,16 @@ export class PatchEngine {
 
     if (current.toLowerCase() === nopHex(patch.length))
       return { address, state: 'applied', applicable: true, matchCount }
+    // replace mode's installed state is whatever replacementBytes says, not
+    // a fixed NOP fill — same "already there, nothing to do" outcome as the
+    // NOP check above, just for the mode where "applied" isn't 0x90 repeated.
+    if (
+      patchMode(patch) === 'replace' &&
+      patch.replacementBytes !== undefined &&
+      current.toLowerCase() === patch.replacementBytes.toLowerCase()
+    ) {
+      return { address, state: 'applied', applicable: true, matchCount }
+    }
     // A jmp trampoline this engine instance isn't tracking: an injection
     // installed by a previous Tamper session (crash, or relaunch) is still
     // live in the game. We cannot restore it correctly (Finding 1's missing
@@ -485,7 +495,9 @@ export class PatchEngine {
       const installed =
         mode === 'nop'
           ? this.installNop(patch, status.address)
-          : this.installInjection(patch, status.address, armValueOverride, compareMethodAddress)
+          : mode === 'replace'
+            ? this.installReplace(patch, status.address)
+            : this.installInjection(patch, status.address, armValueOverride, compareMethodAddress)
       if (!installed.ok) return { ok: false, error: installed.error }
       caveAddress = installed.caveAddress
       // An injection's displaced run is frequently longer than patch.length
@@ -574,6 +586,36 @@ export class PatchEngine {
     }
     // The NOP path always displaces exactly patch.length bytes — the
     // captured instruction locate() already verified is sitting there.
+    return { ok: true, error: null, caveAddress: null, displaced: patch.originalBytes.toLowerCase() }
+  }
+
+  // In-place, equal-length byte substitution — see PatchCheat.replacementBytes'
+  // doc in store.ts for why this exists as its own mode instead of overloading
+  // 'nop' (fixed 0x90 fill only) or 'force'/'copy' (a cave-relocated jump,
+  // more machinery than a same-length swap needs). Refuses rather than
+  // guessing if replacementBytes is missing or the wrong length — writing the
+  // wrong byte count either overruns into the next instruction or leaves some
+  // of the original one behind, either of which corrupts code no restore can
+  // undo cleanly since the "original" bytes to restore from come from
+  // elsewhere (locate()'s own capture), not from what actually got written.
+  private installReplace(patch: PatchCheat, address: string): InstallResult {
+    const replacement = (patch.replacementBytes ?? '').toLowerCase()
+    if (replacement.length !== patch.length * 2) {
+      return {
+        ok: false,
+        error: `replace mode needs exactly ${patch.length} bytes of replacementBytes — got ${replacement.length / 2}.`,
+        caveAddress: null,
+        displaced: null
+      }
+    }
+    if (!this.ops.writeBytes(address, replacement)) {
+      return {
+        ok: false,
+        error: 'Write failed — the patch was not applied.',
+        caveAddress: null,
+        displaced: null
+      }
+    }
     return { ok: true, error: null, caveAddress: null, displaced: patch.originalBytes.toLowerCase() }
   }
 

@@ -1085,7 +1085,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle('patch:apply', (_e, patch: PatchCheat) => {
     if (attachedHandle === null) throw new Error('not attached')
-    if (patchMode(patch) !== 'nop' && !platformSupportsInjection) {
+    // 'replace' is a same-length in-place byte swap, same as 'nop' — neither
+    // one allocates a cave or installs a jump, so neither needs the
+    // injection-capable check the cave-relocated modes (force/copy/scale/
+    // capture/guard/immune) require.
+    const mode = patchMode(patch)
+    if (mode !== 'nop' && mode !== 'replace' && !platformSupportsInjection) {
       return { ok: false, error: 'Code injection is not supported on this platform yet.' }
     }
     // Arming is the retrying state machine now, not a one-shot apply: this
