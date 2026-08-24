@@ -843,7 +843,19 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('cheats:delete', (_e, exeName: string, cheatId: string) => {
+  ipcMain.handle('cheats:delete', async (_e, exeName: string, cheatId: string) => {
+    // A deleted value cheat with an offValue is the same "still armed,
+    // about to lose its record" situation toggleFreeze's disable handles —
+    // see CheatDefinition.offValue's doc in store.ts. Must run before
+    // freezeLoop.disable/deleteCheat below, while the stored definition
+    // (and freezeLoop's own copy, if this cheat happens to be a still-
+    // active flag) is still around to write from.
+    if (freezeLoop.isEnabled(cheatId) && attachedHandle !== null) {
+      const stored = loadCheats(exeName).find((c) => c.id === cheatId)
+      if (stored && !isPatchCheat(stored) && !isScriptCheat(stored) && stored.offValue !== undefined) {
+        await writeCheat(attachedHandle, { ...stored, value: stored.offValue })
+      }
+    }
     freezeLoop.disable(cheatId)
     // A deleted script must not leave its enabled flag and captured `state`
     // behind: ids are reused (a new cheat can be created with the same id
@@ -868,9 +880,22 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('cheats:toggleFreeze', (_e, cheat: CheatDefinition, enabled: boolean) => {
-    if (enabled) freezeLoop.enable(cheat)
-    else freezeLoop.disable(cheat.id)
+  ipcMain.handle('cheats:toggleFreeze', async (_e, cheat: CheatDefinition, enabled: boolean) => {
+    if (enabled) {
+      freezeLoop.enable(cheat)
+      return
+    }
+    // See CheatDefinition.offValue's doc in store.ts: a plain freeze
+    // disable never restores anything, which is silently wrong for a field
+    // (e.g. a debug/cheat flag byte) the game itself never touches back to
+    // some other value. Written once, best-effort, before the loop stops
+    // tracking this cheat — a failed write here (target unreachable, no
+    // attached process) is the same "nothing to restore right now" outcome
+    // a stale target has everywhere else, not an error to surface.
+    if (cheat.offValue !== undefined && attachedHandle !== null) {
+      await writeCheat(attachedHandle, { ...cheat, value: cheat.offValue })
+    }
+    freezeLoop.disable(cheat.id)
   })
 
   ipcMain.handle('cheats:oneShot', async (_e, cheat: CheatDefinition) => {

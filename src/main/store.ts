@@ -157,6 +157,22 @@ export interface CheatDefinition {
   // not Apprentice, has focus) only while this cheat's exe is attached —
   // see hotkeys.ts.
   hotkey?: string
+  // Written once, to every target, the moment this cheat is disabled — see
+  // freezeLoop.ts's disable()/FreezeLoop.disable doc. A freeze cheat's
+  // disable has always meant "stop re-asserting `value`," never "put it
+  // back" — fine for a stat the game keeps updating on its own (health,
+  // stamina), where normal play immediately overwrites whatever was there.
+  // It's silently wrong for a field the game itself never touches, like a
+  // debug/cheat flag byte: nothing else will ever clear it, so disabling
+  // the cheat leaves it permanently stuck at `value` (confirmed live —
+  // Elden Ring's ChrDbgFlags bits stayed armed after being "disabled" in
+  // the UI, still altering behavior with the cheat showing off). Absent
+  // means the old behavior exactly: stop writing, touch nothing on the way
+  // out — every cheat saved before this field existed keeps working
+  // unchanged. A bitIndex target's off state is "cleared", so 0 is the
+  // right offValue for those; a plain value target's off state depends on
+  // the field (its normal in-game default, if there is one).
+  offValue?: number
 }
 
 // A code patch: NOP out the instruction the game uses to write a value,
