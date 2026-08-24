@@ -524,6 +524,15 @@ export default function CheatList({
       const loadedPatches = all.filter(isPatch)
       setCheats(loaded)
       setPatches(loadedPatches)
+      // Re-derive which value cheats are already running from the freeze
+      // loop's own authoritative state, same reasoning as loadedScripts'
+      // isScriptEnabled pull just below — CheatList remounts on every
+      // visit to this screen (see App.tsx), so without this a cheat
+      // toggled on before a tab switch would read back as off.
+      const freezeEnabledEntries = await Promise.all(
+        loaded.map(async (c) => [c.id, await window.tamper.isFreezeEnabled(c.id)] as const)
+      )
+      setEnabled(new Set(freezeEnabledEntries.filter(([, on]) => on).map(([id]) => id)))
       const loadedScripts = all.filter(isScript)
       setScripts(loadedScripts)
       const enabledEntries = await Promise.all(

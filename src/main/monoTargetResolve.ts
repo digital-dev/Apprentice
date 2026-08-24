@@ -33,7 +33,18 @@ export async function resolveMonoTargetAddress(
 
   if (target.instanceFieldName === undefined) return staticAddress
 
-  const field = await ops.resolveField(handle, monoDllBase, classHandle, target.instanceFieldName)
+  // The instance field can be declared on a base class rather than
+  // className itself (native field lookup doesn't walk the inheritance
+  // chain — see MonoTarget.instanceClassName's own comment in store.ts).
+  // Absent means "same class as the static field", exactly as before this
+  // field existed.
+  const fieldClassHandle =
+    target.instanceClassName === undefined
+      ? classHandle
+      : await ops.resolveClass(handle, monoDllBase, '', target.instanceClassName)
+  if (fieldClassHandle === null) return null
+
+  const field = await ops.resolveField(handle, monoDllBase, fieldClassHandle, target.instanceFieldName)
   if (field === null) return null
 
   const pointerHex = ops.readBytes(staticAddress, 8)
@@ -41,7 +52,20 @@ export async function resolveMonoTargetAddress(
   const objectPointer = littleEndianToBigInt(pointerHex)
   if (objectPointer === 0n) return null // the game hasn't set this yet this session
 
-  return addHex('0x' + objectPointer.toString(16), BigInt(field.offset))
+  const firstHopAddress = addHex('0x' + objectPointer.toString(16), BigInt(field.offset))
+  if (target.pointerFieldOffset === undefined) return firstHopAddress
+
+  // Second hop: firstHopAddress is itself a field holding a POINTER to
+  // another object (e.g. InventoryGui.m_dragItem, an ItemData reference),
+  // not the final value — dereference it and add the raw offset into that
+  // second object. Same "unset means not touched this session" convention
+  // as the first hop above.
+  const secondPointerHex = ops.readBytes(firstHopAddress, 8)
+  if (secondPointerHex === null) return null
+  const secondObjectPointer = littleEndianToBigInt(secondPointerHex)
+  if (secondObjectPointer === 0n) return null
+
+  return addHex('0x' + secondObjectPointer.toString(16), BigInt(target.pointerFieldOffset))
 }
 
 // Resolves a live object pointer by dereferencing a class's static field,

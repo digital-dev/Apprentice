@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('tamper', {
   toggleFreeze: (cheat: CheatDefinition, enabled: boolean) =>
     ipcRenderer.invoke('cheats:toggleFreeze', cheat, enabled),
   oneShot: (cheat: CheatDefinition) => ipcRenderer.invoke('cheats:oneShot', cheat),
+  isFreezeEnabled: (cheatId: string) => ipcRenderer.invoke('cheats:isEnabled', cheatId),
   runScript: (source: string, stateIn: Record<string, string | number | boolean>) =>
     ipcRenderer.invoke('scripts:run', source, stateIn),
   toggleScript: (cheat: ScriptCheat, enabled: boolean) =>

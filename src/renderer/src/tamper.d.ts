@@ -56,6 +56,14 @@ declare global {
       deleteCheat: (exeName: string, cheatId: string) => Promise<void>
       toggleFreeze: (cheat: CheatDefinition, enabled: boolean) => Promise<void>
       oneShot: (cheat: CheatDefinition) => Promise<boolean>
+      // Current freezeLoop-tracked enabled state for a value cheat — pulled
+      // on CheatList mount to seed its `enabled` set correctly. CheatList
+      // is remounted per visit to the cheats screen (see App.tsx), so
+      // without this every toggled-on cheat would read back as off the
+      // moment the user switched tabs and came back, even though the
+      // freeze loop (main-process-authoritative) never stopped. Mirrors
+      // isScriptEnabled's pull-based pattern above.
+      isFreezeEnabled: (cheatId: string) => Promise<boolean>
       // Runs `source` as a one-shot Lua chunk against the attached
       // process — used only by ScriptEditor's ad-hoc "Run enable/disable
       // now" test buttons, against a throwaway state (the script may not

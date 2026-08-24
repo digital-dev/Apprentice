@@ -6,40 +6,8 @@
     {
       "kind": "patch",
       "mode": "force",
-      "id": "ct-import-infinite-stamina-v2",
-      "name": "<= Infinite Stamina v2",
-      "originalBytes": "f30f11af18080000",
-      "length": 8,
-      "signature": "f3 0f 11 af 18 08 00 00 48 8b 7d",
-      "signatureOffset": 0,
-      "moduleName": null,
-      "moduleOffset": null,
-      "baseRegister": "rdi",
-      "fieldOffset": "0x818",
-      "value": 350,
-      "dataType": "float"
-    },
-    {
-      "kind": "patch",
-      "mode": "force",
-      "id": "ct-import-unlimited-inventory-carry-weight-htkey-f3",
-      "name": "<= unlimited inventory carry weight        htkey: F3",
-      "originalBytes": "f30f104038",
-      "length": 5,
-      "signature": "f3 0f 10 40 38 f3 0f 5a c0 f2 0f 5a e8 f3 0f 11 6d f4",
-      "signatureOffset": 0,
-      "moduleName": null,
-      "moduleOffset": null,
-      "baseRegister": "rax",
-      "fieldOffset": "0x38",
-      "value": 3,
-      "dataType": "float"
-    },
-    {
-      "kind": "patch",
-      "mode": "force",
       "id": "ct-import-infinite-weapons-durability-v2-htkey-f4",
-      "name": "<= infinite Weapons Durability v2             htkey: F4",
+      "name": "Infinite Weapon Durability",
       "originalBytes": "f30f116e3c",
       "length": 5,
       "signature": "ca f2 0f 5c c1 f2 0f 5a e8 f3 0f 11 6e 3c",
@@ -52,58 +20,131 @@
       "dataType": "float"
     },
     {
-      "kind": "patch",
-      "mode": "force",
-      "id": "ct-import-infinite-coins-items-when-buying",
-      "name": "<= infinite coins & items when buying",
-      "originalBytes": "4863463885c0",
-      "length": 6,
-      "signature": "48 63 46 38 85 c0 40",
-      "signatureOffset": 0,
-      "moduleName": null,
-      "moduleOffset": null,
-      "baseRegister": "rsi",
-      "fieldOffset": "0x38",
-      "value": 9999,
-      "dataType": "int32"
+      "id": "basehealth",
+      "name": "BaseHealth",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_baseHP"
+        }
+      ],
+      "value": 400,
+      "hotkey": "num1"
     },
     {
-      "kind": "patch",
-      "mode": "force",
-      "id": "ct-import-infinite-items-when-looting-htkey-f5",
-      "name": "<= infinite items when looting                      htkey: F5",
-      "originalBytes": "49634638498b4e10",
-      "length": 8,
-      "signature": "49 63 46 38 49 8b 4e 10",
-      "signatureOffset": 0,
-      "moduleName": null,
-      "moduleOffset": null,
-      "baseRegister": "r14",
-      "fieldOffset": "0x38",
-      "value": 9999,
-      "dataType": "int32"
+      "id": "mono-godmode",
+      "name": "God Mode",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_godMode"
+        },
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_health",
+          "instanceClassName": "Character",
+          "dataType": "float",
+          "value": 1000
+        }
+      ],
+      "value": 1,
+      "hotkey": "num2"
     },
     {
-      "kind": "patch",
-      "mode": "force",
-      "id": "ct-import-infinite-hammer-items-htkey-f6",
-      "name": "<= infinite hammer items                              htkey: F6",
-      "originalBytes": "4d636c2438",
-      "length": 5,
-      "signature": "4d 63 6c 24 38",
-      "signatureOffset": 0,
-      "moduleName": null,
-      "moduleOffset": null,
-      "baseRegister": "r12",
-      "fieldOffset": "0x38",
-      "value": 101,
-      "dataType": "int32"
+      "id": "mono-stamina",
+      "name": "Infinite Stamina (Mono)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_stamina"
+        }
+      ],
+      "value": 999,
+      "hotkey": "num3"
+    },
+    {
+      "id": "mono-eitr",
+      "name": "Infinite Eitr (Mono)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_eitr"
+        }
+      ],
+      "value": 999,
+      "hotkey": "num4"
+    },
+    {
+      "id": "mono-max-carry-weight",
+      "name": "Unlimited Carry Weight (Mono)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_maxCarryWeight"
+        }
+      ],
+      "value": 50000,
+      "hotkey": "num5"
+    },
+    {
+      "id": "mono-no-placement-cost",
+      "name": "No Placement Cost",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_noPlacementCost"
+        }
+      ],
+      "value": 1,
+      "hotkey": "num6"
+    },
+    {
+      "id": "mono-always-hidden",
+      "name": "Always Hidden (Stealth)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_stealthFactor"
+        }
+      ],
+      "value": 0,
+      "hotkey": "num7"
     },
     {
       "kind": "patch",
       "mode": "force",
       "id": "ct-import-set-food-timer-to-50m-never-hungry-htkey-f7",
-      "name": "<= Set Food Timer to 50m / never hungry    htkey: F7",
+      "name": "Set Food Timer to 50m / never hungry",
       "originalBytes": "f30f104620",
       "length": 5,
       "signature": "f3 0f 10 46 20 f3 0f 5a c0 48 8b",
@@ -118,17 +159,111 @@
     {
       "kind": "patch",
       "mode": "force",
-      "id": "ct-import-no-cooldown-for-power-22-sec-htkey-f8",
-      "name": "<= No cooldown for Power #22 sec              htkey: F8",
-      "originalBytes": "f30f11aec4070000",
-      "length": 8,
-      "signature": "f3 0f 11 ae c4 07 00 00 f3",
-      "signatureOffset": 0,
+      "id": "patch-maxitemstacks1",
+      "name": "Infinite Items (on-move)",
+      "originalBytes": "41894638",
+      "length": 4,
+      "signature": "49 bb ?? ?? ?? ?? ?? ?? ?? ?? 41 ff d3 49 63 46 38 41 2b c7 41 89 46 38 b8 01 00 00 00 4c 0f b6 e0 49 8b cd 48 8d 6d 00 49 bb ?? ?? ?? ?? ?? ?? ?? ??",
+      "signatureOffset": 20,
       "moduleName": null,
       "moduleOffset": null,
+      "baseRegister": "r14",
+      "fieldOffset": "56",
+      "value": 100,
+      "dataType": "int32",
+      "hotkey": "num9"
+    },
+    {
+      "kind": "patch",
+      "mode": "scale",
+      "id": "mono-damage-multiplier",
+      "name": "Damage Multiplier (dealt only)",
+      "originalBytes": "488b75f0",
+      "length": 4,
+      "signature": "48 8b 75 f0",
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "HitData",
+      "monoMethod": "GetTotalDamage",
+      "monoMethodOffset": "0xeb",
       "baseRegister": "rsi",
-      "fieldOffset": "0x7c4",
-      "value": 22,
+      "compareMonoMethod": "GetAttacker",
+      "armPointerClassName": "Player",
+      "armPointerFieldName": "m_localPlayer",
+      "sourceRegister": "xmm0",
+      "value": 1,
+      "dataType": "float",
+      "hotkey": "num8"
+    },
+    {
+      "id": "mono-run-speed-multiplier",
+      "name": "Run Speed Multiplier",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_runSpeed",
+          "instanceClassName": "Character"
+        }
+      ],
+      "value": 7,
+      "multiplierBaseline": 7,
+      "offValue": 7
+    },
+    {
+      "kind": "patch",
+      "mode": "immune",
+      "id": "mono-craft-without-materials",
+      "name": "Easy Crafting and Unlock all Recipes",
+      "originalBytes": "55488bec4883ec50",
+      "length": 8,
+      "signature": "55 48 8b ec 48 83 ec 50",
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Player",
+      "monoMethod": "HaveRequirements",
+      "baseRegister": "rcx",
+      "armPointerClassName": "Player",
+      "armPointerFieldName": "m_localPlayer",
+      "value": 1,
+      "dataType": "int32"
+    },
+    {
+      "kind": "patch",
+      "mode": "immune",
+      "id": "mono-unlock-all-build-pieces",
+      "name": "Unlock All Build Pieces (Hammer)",
+      "originalBytes": "55488bec4883ec30",
+      "length": 8,
+      "signature": "55 48 8b ec 48 83 ec 30",
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Player",
+      "monoMethod": "IsPieceAvailable",
+      "baseRegister": "rcx",
+      "armPointerClassName": "Player",
+      "armPointerFieldName": "m_localPlayer",
+      "value": 1,
+      "dataType": "int32"
+    },
+    {
+      "kind": "patch",
+      "mode": "scale",
+      "id": "mono-skill-xp-multiplier",
+      "name": "Instant Skill Level Up",
+      "originalBytes": "f30f1155e0",
+      "length": 5,
+      "signature": "f3 0f 11 55 e0",
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Player",
+      "monoMethod": "RaiseSkill",
+      "monoMethodOffset": "0x16",
+      "sourceRegister": "xmm2",
+      "value": 10000,
       "dataType": "float"
     }
   ]

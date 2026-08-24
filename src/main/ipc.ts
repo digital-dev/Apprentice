@@ -759,6 +759,15 @@ export function releaseTarget(): void {
   } catch {
     // No session, or the target is already gone — nothing to disarm.
   }
+  // Cancel every cheatRuntime backoff timer (and bump its generations)
+  // BEFORE restoring. Without this, a patch mid-retry (e.g. still waiting
+  // on 'not-yet-compiled') can fire its scheduled attempt() after
+  // restoreAll() below has already cleaned up, locate+apply it again, and
+  // leave the game patched at the moment Tamper exits — the exact bug
+  // restoreAll exists to prevent. processExited() resets cheatRuntime's
+  // states to idle without writing anything, which is fine here since
+  // restoreAll() is the thing that actually puts bytes back.
+  cheatRuntime.processExited()
   patchEngine.restoreAll()
   hotkeyManager.unregisterAll()
   for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
@@ -897,6 +906,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
     freezeLoop.disable(cheat.id)
   })
+
+  // Mirrors scripts:isEnabled below — lets the renderer re-derive which
+  // value cheats are currently live from the main-process-authoritative
+  // freeze loop, instead of assuming everything starts off. CheatList
+  // remounts on every visit to the cheats screen (see App.tsx's comment on
+  // why), and without this its `enabled` state reset to empty every time,
+  // showing a toggled-on cheat as off even though it was still freezing.
+  ipcMain.handle('cheats:isEnabled', (_e, cheatId: string): boolean => freezeLoop.isEnabled(cheatId))
 
   ipcMain.handle('cheats:oneShot', async (_e, cheat: CheatDefinition) => {
     if (attachedHandle === null) return false

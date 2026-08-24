@@ -1,0 +1,1226 @@
+{
+  "schema": 2,
+  "exe": "start_protected_game",
+  "modules": {},
+  "cheats": [
+    {
+      "id": "er-infinite-health",
+      "name": "Infinite Health",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x0",
+            "0x138"
+          ]
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x0",
+            "0x144"
+          ]
+        }
+      ],
+      "value": 9999,
+      "hotkey": "num1"
+    },
+    {
+      "id": "er-infinite-fp",
+      "name": "Infinite FP",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x0",
+            "0x148"
+          ]
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x0",
+            "0x150"
+          ]
+        }
+      ],
+      "value": 999,
+      "hotkey": "num2"
+    },
+    {
+      "id": "er-infinite-stamina",
+      "name": "Infinite Stamina",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x0",
+            "0x154"
+          ]
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x0",
+            "0x15c"
+          ]
+        }
+      ],
+      "value": 999,
+      "hotkey": "num3"
+    },
+    {
+      "id": "er-infinite-runes",
+      "name": "Infinite Runes",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d5df38",
+          "offsets": [
+            "0x8",
+            "0x6c"
+          ]
+        }
+      ],
+      "value": 999999999,
+      "hotkey": "num4"
+    },
+    {
+      "id": "er-no-death",
+      "name": "No Death",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x19b"
+          ],
+          "bitIndex": 0
+        }
+      ],
+      "value": 1,
+      "hotkey": "num5",
+      "offValue": 0
+    },
+    {
+      "id": "er-no-damage",
+      "name": "No Damage",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x19b"
+          ],
+          "bitIndex": 1
+        }
+      ],
+      "value": 1,
+      "hotkey": "num6",
+      "offValue": 0
+    },
+    {
+      "id": "er-no-fp-consume",
+      "name": "No FP Consumption",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x19b"
+          ],
+          "bitIndex": 2
+        }
+      ],
+      "value": 1,
+      "hotkey": "num7",
+      "offValue": 0
+    },
+    {
+      "id": "er-no-stamina-consume",
+      "name": "No Stamina Consumption",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d65f88",
+          "offsets": [
+            "0x10ef8",
+            "0x0",
+            "0x190",
+            "0x19b"
+          ],
+          "bitIndex": 3
+        }
+      ],
+      "value": 1,
+      "hotkey": "num8",
+      "offValue": 0
+    },
+    {
+      "id": "er-one-shot-kill",
+      "name": "One-Shot Kill",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d661a2",
+          "offsets": []
+        }
+      ],
+      "value": 1,
+      "hotkey": "num9",
+      "offValue": 0
+    },
+    {
+      "id": "er-no-arrows-consume",
+      "name": "No Arrow/Ammo Consumption",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d661a6",
+          "offsets": []
+        }
+      ],
+      "value": 1,
+      "offValue": 0
+    },
+    {
+      "id": "er-no-ashofwar-fp-consume",
+      "name": "No Ash of War FP Cost",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d661b1",
+          "offsets": []
+        }
+      ],
+      "value": 1,
+      "offValue": 0
+    },
+    {
+      "id": "er-unlock-all-recipes",
+      "name": "Unlock All Recipes (Cookbooks)",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x899"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x898"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x89e"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x89d"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x89b"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x85d"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8e6"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x84d"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x85a"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x84e"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8b1"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8b4"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x84f"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x853"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8bb"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x882"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x850"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x868"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x854"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x857"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8b9"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8bd"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x871"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x859"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x86e"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x855"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x869"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x85c"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8bc"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x858"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8be"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x866"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x867"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x870"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x86d"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x873"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x872"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x86c"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8ca"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8cb"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8cd"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8cc"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8e3"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8e5"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8e4"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8b6"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8b7"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8b8"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8c0"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x880"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x885"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x889"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x87f"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x881"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x886"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x887"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x884"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8fc"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x8fd"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x913"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x925"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x920"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x915"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x916"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x924"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x918"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x91f"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x91a"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x91b"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x91c"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x917"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x921"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x922"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x92c"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x92a"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x93a"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x92e"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x930"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x939"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x93e"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x926"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x92b"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x929"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x940"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x933"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x927"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x91d"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x938"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x93f"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x934"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x936"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x93d"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x912"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x93b"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x935"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x90b"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x90c"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x90d"
+          ],
+          "bitIndex": 3
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x90e"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x910"
+          ],
+          "bitIndex": 7
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x909"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x931"
+          ],
+          "bitIndex": 1
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x92f"
+          ],
+          "bitIndex": 5
+        },
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d68448",
+          "offsets": [
+            "0x28",
+            "0x911"
+          ],
+          "bitIndex": 5
+        }
+      ],
+      "value": 1,
+      "offValue": 0
+    },
+    {
+      "kind": "patch",
+      "mode": "nop",
+      "id": "er-easy-craft-quantity",
+      "name": "Easy Crafting: No Quantity Check",
+      "originalBytes": "0f4ff8",
+      "length": 3,
+      "signature": "0f 4f f8 48 83 c3",
+      "signatureOffset": 0,
+      "moduleName": "start_protected_game.exe",
+      "moduleOffset": null
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "er-easy-craft-material",
+      "name": "Easy Crafting: No Material Requirement",
+      "originalBytes": "0fb7501a",
+      "length": 4,
+      "replacementBytes": "31d29090",
+      "signature": "0f b7 50 ?? 66 3b ca 77",
+      "signatureOffset": 0,
+      "moduleName": "start_protected_game.exe",
+      "moduleOffset": null
+    }
+  ]
+}

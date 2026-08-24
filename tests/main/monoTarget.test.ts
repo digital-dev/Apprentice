@@ -79,6 +79,117 @@ describe('resolveMonoTargetAddress', () => {
   })
 })
 
+// m_runSpeed lives on Character, not Player — Player.m_localPlayer's
+// declared type is Player, but the live object is a Player instance, which
+// inherits Character's fields at fixed offsets without redeclaring them.
+// The native field lookup doesn't walk the inheritance chain (confirmed
+// live against Valheim: resolving "m_runSpeed" against Player's own class
+// handle returns null; against Character's, it resolves) — instanceClassName
+// exists so a target can name the field's actual declaring class separately
+// from the class the static field itself lives on.
+const runSpeedTarget: MonoTarget = {
+  kind: 'mono',
+  className: 'Player',
+  staticFieldName: 'm_localPlayer',
+  instanceFieldName: 'm_runSpeed',
+  instanceClassName: 'Character'
+}
+
+describe('resolveMonoTargetAddress — instanceClassName (inherited field)', () => {
+  it('resolves the instance field against instanceClassName, not className', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.classes.set('Character', '0xc3')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.staticAddresses.set('0xc3.m_runSpeed', '496') // declared on Character's own class handle
+    ops.memory.set('0x9100', '0030000000000000') // little-endian pointer 0x3000
+
+    const addr = await resolveMonoTargetAddress(runSpeedTarget, 1, '0x400000', ops)
+    expect(addr).toBe('0x' + (0x3000 + 496).toString(16))
+  })
+
+  it('returns null when instanceClassName itself does not resolve', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    // 'Character' deliberately never added to ops.classes.
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.memory.set('0x9100', '0030000000000000')
+
+    const addr = await resolveMonoTargetAddress(runSpeedTarget, 1, '0x400000', ops)
+    expect(addr).toBeNull()
+  })
+
+  it('returns null when the field is not found on instanceClassName either', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.classes.set('Character', '0xc3')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    // 'm_runSpeed' deliberately never registered under '0xc3.*'.
+    ops.memory.set('0x9100', '0030000000000000')
+
+    const addr = await resolveMonoTargetAddress(runSpeedTarget, 1, '0x400000', ops)
+    expect(addr).toBeNull()
+  })
+
+  it('leaves targets with no instanceClassName resolving against className, exactly as before', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.staticAddresses.set('0xc2.m_godMode', '1681')
+    ops.memory.set('0x9100', '5030000000000000')
+
+    const addr = await resolveMonoTargetAddress(godModeTarget, 1, '0x400000', ops)
+    expect(addr).toBe('0x' + (0x3050 + 1681).toString(16))
+  })
+})
+
+// The InventoryGui.m_instance -> .m_dragItem -> ItemData.m_stack shape:
+// pointerFieldOffset dereferences ONE MORE TIME past the normal single-hop
+// address (which, for a two-hop target, is the address of a pointer FIELD,
+// not a final scalar) and adds a raw offset with no class name involved.
+const dragItemStackTarget: MonoTarget = {
+  kind: 'mono',
+  className: 'InventoryGui',
+  staticFieldName: 'm_instance',
+  instanceFieldName: 'm_dragItem',
+  pointerFieldOffset: '0x38'
+}
+
+describe('resolveMonoTargetAddress — two-hop (pointerFieldOffset)', () => {
+  it('dereferences past the first-hop field address and adds the raw offset', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('InventoryGui', '0xc9')
+    ops.staticAddresses.set('0xc9.m_instance', '0x9200') // InventoryGui singleton's own storage
+    ops.staticAddresses.set('0xc9.m_dragItem', '48') // offset of the drag-item pointer FIELD
+    ops.memory.set('0x9200', '0060000000000000') // InventoryGui instance pointer 0x6000
+    // first hop address = 0x6000 + 48 = 0x6030 — holds the ItemData pointer
+    ops.memory.set('0x6030', '0070000000000000') // ItemData instance pointer 0x7000
+    const addr = await resolveMonoTargetAddress(dragItemStackTarget, 1, '0x400000', ops)
+    expect(addr).toBe('0x' + (0x7000 + 0x38).toString(16))
+  })
+
+  it('returns null when nothing is currently being dragged (second pointer reads zero)', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('InventoryGui', '0xc9')
+    ops.staticAddresses.set('0xc9.m_instance', '0x9200')
+    ops.staticAddresses.set('0xc9.m_dragItem', '48')
+    ops.memory.set('0x9200', '0060000000000000')
+    ops.memory.set('0x6030', '0000000000000000')
+    const addr = await resolveMonoTargetAddress(dragItemStackTarget, 1, '0x400000', ops)
+    expect(addr).toBeNull()
+  })
+
+  it('leaves single-hop targets (no pointerFieldOffset) resolving exactly as before', async () => {
+    const ops = new FakeResolver()
+    ops.classes.set('Player', '0xc2')
+    ops.staticAddresses.set('0xc2.m_localPlayer', '0x9100')
+    ops.staticAddresses.set('0xc2.m_godMode', '1681')
+    ops.memory.set('0x9100', '5030000000000000')
+    const addr = await resolveMonoTargetAddress(godModeTarget, 1, '0x400000', ops)
+    expect(addr).toBe('0x' + (0x3050 + 1681).toString(16))
+  })
+})
+
 describe('resolveMonoPointerChain', () => {
   it('resolves a plain static pointer with no instance hop', async () => {
     const ops = new FakeResolver()

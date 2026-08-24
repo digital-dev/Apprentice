@@ -2,22 +2,25 @@
   "name": "apprentice",
   "version": "0.1.0",
   "description": "Offline Electron+React desktop app for game training",
+  "author": "digital-dev",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "dist": "electron-vite build && electron-builder --win",
     "test": "vitest run"
   },
   "dependencies": {
-    "electron": "^33.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "electron": "^33.0.0",
     "@types/node": "^20.0.0",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
     "@vitejs/plugin-react": "^4.0.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^1.0.0",
     "node-addon-api": "^7.0.0",
     "node-gyp": "^9.0.0",
@@ -28,6 +31,30 @@
   "allowScripts": {
     "electron@33.4.11": true,
     "esbuild@0.18.20": true,
-    "esbuild@0.21.5": true
+    "esbuild@0.21.5": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "build": {
+    "appId": "com.apprentice.trainer",
+    "productName": "Apprentice",
+    "directories": {
+      "output": "release"
+    },
+    "asar": false,
+    "files": [
+      "out/**/*",
+      "package.json",
+      { "from": "native/build/Release", "to": "native/build/Release", "filter": ["memory_addon.node"] },
+      { "from": "games", "to": "games", "filter": ["*.json"] }
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
