@@ -59,8 +59,38 @@ npx tsc --noEmit     # type check
 npm run build        # production bundle actually compiles
 ```
 
-Native tests drive a real child process (`test-harness/harness.exe`). If you
-change `test-harness/harness.c`, rebuild it **from PowerShell, not Bash**
+### The native test harness
+
+`tests/native/*.test.ts` don't touch a real game — they drive
+`test-harness/harness.exe`, a small standalone Windows binary
+(`test-harness/harness.c`) built for exactly this: a real process with known
+values at known addresses to scan for, freeze, patch, and watch. Each test
+file `spawn()`s it directly (`spawn(path.resolve('test-harness/harness.exe'))`)
+and talks to it over stdin/stdout — `npx vitest run` handles all of this for
+you, there's no separate step to start it yourself.
+
+The protocol is one command per line in, one `OK <result>` (or an error) per
+line out. A few of the commands, for a sense of what's being exercised:
+
+| Command | What it does |
+|---|---|
+| `drainloop` | Spin-writes a counter down — `patch_ops.test.ts` NOPs the write and checks it stops draining. |
+| `forceloop` / `shieldloop` | Keep re-asserting a value — proves a `force`/`guard`-mode injection actually pins it. |
+| `tight_write` | A real `movss [reg], xmm` store, back-to-back with no slack — the tightest case `write_watch` has to decode correctly. |
+| `bigalloc` / `bigcode` (+`free` variants) | Allocate an 8 MiB data/executable region, replying `OK <0xbase>` — used to prove chunked region reads never drop a value straddling a 4 MiB chunk boundary. |
+| `loaddll` / `loaddll2` / `unloaddll` | Load/unload a real DLL (`probe.dll`/`probe2.dll`) into the harness process — what `module_info.test.ts` uses to prove module-anchored patches survive a DLL reloading at a different base. |
+
+Full command set and exact reply formats live in `harness.c` itself — it's
+short and worth skimming before adding a test that needs a new one.
+
+**Two hazards** if you're adding tests around it (see `CODEBASE_MAP.md` for
+the full explanation): `cave_ops.test.ts` and `module_info.test.ts` must each
+keep exactly one top-level `beforeAll` — a second one spawning its own
+`AsyncWorker` reliably segfaults the vitest worker — and scans in the native
+tests are one-shot, keyed off a field's initial value, so the first test to
+touch a given field "wins" it.
+
+If you change `harness.c` itself, rebuild it **from PowerShell, not Bash**
 (Bash won't run `vcvars` and fails silently):
 
 ```powershell
