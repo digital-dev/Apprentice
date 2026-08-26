@@ -1338,11 +1338,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   )
 
 
-  // Opens a native save dialog and writes out every 'force'-mode patch as
-  // a Cheat Engine Auto Assembler entry — the exact reverse of ct:import
-  // above. Everything that mode can't represent (other patch modes, value
-  // cheats) is skipped and reported, not approximated; see ctExport.ts's
-  // module comment for why.
+  // Opens a native save dialog and writes out every exportable cheat —
+  // 'nop'/'replace'/'force'-mode patches as Auto Assembler entries, and
+  // plain-address value cheats as ordinary Cheat Engine CheatEntries — the
+  // exact reverse of ct:import above. Everything that can't be represented
+  // (Mono/capture-anchored targets, bit-flag targets, code-cave patch
+  // modes, Lua scripts) is skipped and reported, not approximated; see
+  // ctExport.ts's module comment for why.
   ipcMain.handle(
     'ct:export',
     async (
@@ -1357,13 +1359,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       const patches = allCheats.filter(isPatchCheat).filter((p) => !p.internal)
       const scripts = allCheats.filter(isScriptCheat)
       const valueCheats = allCheats.filter((c) => !isPatchCheat(c) && !isScriptCheat(c))
-      const { xml, exported, skipped: patchSkipped } = buildCheatTable(patches)
+      const { xml, exported, skipped: ctSkipped } = buildCheatTable(patches, valueCheats)
       const skipped = [
-        ...patchSkipped,
-        ...valueCheats.map((cheat) => ({
-          name: cheat.name,
-          reason: "Value cheats have no equivalent Auto Assembler script shape and can't be exported to .CT."
-        })),
+        ...ctSkipped,
         ...scripts.map((cheat) => ({
           name: cheat.name,
           reason: "Lua-scripted cheats have no equivalent Auto Assembler script shape and can't be exported to .CT."

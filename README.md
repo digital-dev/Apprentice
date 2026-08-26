@@ -180,8 +180,19 @@ Apprentice can import a Cheat Engine `.CT` table directly (Cheats screen →
 **Import Cheat Table (.CT)**) — it recognizes the common "replace one write
 with a fixed value" shape most CT entries use, and skips (with a reason)
 anything it can't safely translate. Going the other way, **Export to Cheat
-Table (.CT)** turns your `force`-mode patches back into a `.CT` file anyone
-with Cheat Engine can open.
+Table (.CT)** turns your cheats into a `.CT` file anyone with Cheat Engine
+can open — not just a select few: `nop`, `replace`, and `force`-mode patches
+all export as Auto Assembler scripts, and any value cheat resolved through a
+plain module+offset(+pointer chain) address exports as an ordinary Cheat
+Engine address entry, no script needed. What's left out is only what
+genuinely has no Cheat Engine equivalent — `capture`/`guard`/`immune`/
+`scale`/`copy`-mode patches (relocated code-cave injections, some with an
+object pointer resolved fresh every install from live Mono metadata Cheat
+Engine has no way to replicate), a value cheat resolved via Mono metadata or
+a capture patch's tracked pointer rather than a fixed address, and a
+single-bit cheat (freezing the whole byte in Cheat Engine would clobber
+other flags packed into it) — each reported with its specific reason rather
+than silently dropped.
 
 This is the fastest way to hand a friend a single cheat or a small set
 without either of you touching a `games/*.json` file by hand.
