@@ -23,10 +23,10 @@ shipped in `games/valheim.json`. The engine underneath isn't Valheim-specific
 
 ## Install
 
-Grab the latest installer from this repo's [Releases](../../releases) page
-and run it — no admin rights needed, it installs to your user profile.
-
-Prefer to build it yourself, or want to hack on it? Keep reading.
+No prebuilt installer is published yet — for now, build it yourself (a few
+minutes, see below). Once a [Release](../../releases) exists here, grab
+`Apprentice-Setup-<version>.exe` from it instead and run it — no admin
+rights needed, it installs to your user profile.
 
 ## Building from source
 
