@@ -12,9 +12,12 @@ Two ways to cheat:
   itself never puts the old value back. NOP it out, replace it, force a
   fixed result, or skip a method entirely for one object.
 
-Primary target so far is **Valheim** (Mono JIT), with 15 ready-made cheats
-shipped in `games/valheim.json`. The engine underneath isn't Valheim-specific
-— see [Sharing cheats](#sharing-cheats) below for adding your own game.
+Ships with two ready-made cheat sets: **Valheim** (Mono JIT — 15 cheats,
+`games/valheim.json`) and **Elden Ring** (native, pointer-chain value
+cheats — 14 cheats, `games/start_protected_game.json`, named for Elden
+Ring's EAC-protected executable). The engine underneath isn't tied to
+either game — see [Sharing cheats](#sharing-cheats) below for adding your
+own.
 
 > Windows only. The native addon's injection path is Win32; Linux is stubbed
 > out but not implemented (see `native/src/platform/platform_linux.cc`).
