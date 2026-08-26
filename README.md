@@ -132,6 +132,40 @@ the cheat (if applicable), and what you expected vs. what happened.
 
 ---
 
+## MCP server: memory introspection from an AI coding agent
+
+`mcp-server/` is a standalone, **read-only** [MCP](https://modelcontextprotocol.io)
+server that exposes the same native memory-introspection primitives
+Apprentice itself is built on — attach, scan, Mono class/field/method
+resolution, read, disassemble, write-watch — as tools an AI coding agent
+(Claude Code, etc.) can call directly against a live game process. It has no
+write operations by design: it's for *finding* the address/offset/signature
+a new cheat needs, not for installing one. See
+`docs/superpowers/specs/2026-08-22-mcp-memory-server-design.md` for the full
+design rationale.
+
+This is what makes "find this field, resolve that class, watch this write"
+a conversation instead of a manual Cheat Engine session — useful both for
+building out a new game's cheat set and for debugging why an existing patch
+stopped locating.
+
+Setup:
+
+```bash
+cd mcp-server && npm install    # also builds dist/ via the prepare hook
+```
+
+The native addon must already be built (`native/build/Release/memory_addon.node`
+— see [Building from source](#building-from-source) above); this package
+`require()`s it directly rather than shipping its own copy. `.mcp.json` at
+the repo root registers the server (`game-memory`) pointing at
+`mcp-server/dist/index.js` — an agent working in this repo picks it up
+automatically. Full tool list, dependency-pinning notes (there's a real
+reason `@modelcontextprotocol/sdk` is pinned exactly, not ranged), and more
+detail live in `mcp-server/README.md`.
+
+---
+
 ## Sharing cheats
 
 Every cheat lives in a per-game profile at `games/<exe-name>.json` — plain
