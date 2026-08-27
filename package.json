@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Offline Electron+React desktop app for game training",
   "author": "digital-dev",
+  "license": "GPL-3.0-only",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

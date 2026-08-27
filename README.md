@@ -1,8 +1,12 @@
 # Apprentice
 
-An offline Windows game trainer. Electron + React + TypeScript over a C++
-N-API addon that talks to a target process's memory directly — no server, no
-telemetry, no always-online requirement.
+A free, open-source Windows game trainer — an offline memory editor and
+cheat engine for PC games, for when you want a Cheat Engine/WeMod
+alternative that's transparent about what it's doing, doesn't phone home,
+and doesn't require a closed-source client to use cheats someone else
+built. Electron + React + TypeScript over a C++ N-API addon that talks to a
+target process's memory directly — no server, no telemetry, no
+always-online requirement.
 
 Two ways to cheat:
 
@@ -241,3 +245,11 @@ with repro steps.
 This tool touches only the process you explicitly attach it to, and does
 nothing without you turning a cheat on. It has no network calls of its own
 beyond an optional Cheat Table search/import feature you invoke by hand.
+
+---
+
+## License
+
+[GPL-3.0](LICENSE). Free to use, study, modify, and redistribute — including
+commercially — as long as anything you distribute that's built on this code
+stays open source under the same license.
