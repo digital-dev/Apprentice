@@ -700,6 +700,23 @@ export function hasProfile(exeName: string): boolean {
   }
 }
 
+// Every push event (main -> renderer) goes through this instead of calling
+// getWindow().webContents.send directly. The window can already be
+// destroyed by the time a push fires — e.g. closing Apprentice's window
+// destroys it, THEN 'window-all-closed' fires app.quit(), THEN 'before-quit'
+// runs releaseTarget(), which now cancels every armed patch's cheatRuntime
+// timer (processExited()) and that fires this same onChange callback for
+// each one. Calling .send on an already-destroyed webContents throws
+// "Object has been destroyed" — uncaught, since none of these callbacks
+// have anywhere to catch it — which crashed the whole main process on quit
+// with the release-cleanup work (stopWriteWatch, restoreAll,
+// hotkeyManager.unregisterAll) left undone.
+export function pushToWindow(getWindow: () => BrowserWindow, channel: string, payload: unknown): void {
+  const win = getWindow()
+  if (win.isDestroyed()) return
+  win.webContents.send(channel, payload)
+}
+
 // Notices games we have cheats for launching and closing, and auto-attaches
 // (read-capable handle) — never auto-arms. Arming stays a user action.
 const watcher = new ProcessWatcher({
@@ -710,7 +727,7 @@ const watcher = new ProcessWatcher({
 export function startWatching(getWindow: () => BrowserWindow): void {
   watcher.onAppear((proc) => {
     attachTo(proc.pid, proc.name)
-    getWindow().webContents.send('game:state', currentGameState())
+    pushToWindow(getWindow, 'game:state', currentGameState())
   })
   watcher.onVanish(() => {
     // The process is gone: reset the runtime WITHOUT restoring (there is no
@@ -731,7 +748,7 @@ export function startWatching(getWindow: () => BrowserWindow): void {
     attachedExe = null
     loadedModules = new Map()
     changedModules = []
-    getWindow().webContents.send('game:state', currentGameState())
+    pushToWindow(getWindow, 'game:state', currentGameState())
   })
   watcher.start()
 }
@@ -785,10 +802,10 @@ export function releaseTarget(): void {
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   hotkeyManager.onFired((cheatId, outcome, error) => {
-    getWindow().webContents.send('hotkey:fired', { cheatId, outcome, error })
+    pushToWindow(getWindow, 'hotkey:fired', { cheatId, outcome, error })
   })
   hotkeyManager.onConflict((failed) => {
-    getWindow().webContents.send('hotkey:conflict', failed)
+    pushToWindow(getWindow, 'hotkey:conflict', failed)
   })
 
   // Pull-based counterpart to the onConflict push above: registerAll() runs
@@ -805,14 +822,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     // degraded/recovered notions from silently diverging if that ever
     // changes.
     cheatRuntime.markDegraded(cheatId)
-    getWindow().webContents.send('cheat:broken', cheatId)
+    pushToWindow(getWindow, 'cheat:broken', cheatId)
   })
   freezeLoop.onRecovered((cheatId) => {
     cheatRuntime.markRecovered(cheatId)
-    getWindow().webContents.send('cheat:recovered', cheatId)
+    pushToWindow(getWindow, 'cheat:recovered', cheatId)
   })
   cheatRuntime.onChange((cheatId, status) => {
-    getWindow().webContents.send('cheat:state', { cheatId, status })
+    pushToWindow(getWindow, 'cheat:state', { cheatId, status })
   })
 
   ipcMain.handle('process:list', () => nativeAddon.listProcesses())

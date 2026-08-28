@@ -8,8 +8,10 @@ import {
   buildModuleContext,
   applyRelearn,
   checkTableSize,
-  MAX_TABLE_BYTES
+  MAX_TABLE_BYTES,
+  pushToWindow
 } from '../../src/main/ipc'
+import type { BrowserWindow } from 'electron'
 import { setGamesDir } from '../../src/main/store'
 import type { GameProfile } from '../../src/main/profile'
 import type { PatchCheat } from '../../src/main/store'
@@ -33,6 +35,41 @@ describe('littleEndianToBigInt', () => {
   it('round-trips a single non-zero low byte', () => {
     // Little-endian bytes 01 00 00 00 00 00 00 00 -> value 0x01.
     expect(littleEndianToBigInt('0100000000000000')).toBe(0x01n)
+  })
+})
+
+// Regression test for a real crash: closing Apprentice's window destroys
+// it, THEN 'window-all-closed' -> app.quit() -> 'before-quit' runs
+// releaseTarget(), which cancels every armed patch's cheatRuntime timer
+// (processExited()) — firing this same push path for each one, against a
+// window that's already gone. Every push (main -> renderer) event in
+// ipc.ts goes through pushToWindow instead of calling
+// getWindow().webContents.send directly, specifically so this can't
+// happen — see pushToWindow's own comment in ipc.ts.
+describe('pushToWindow', () => {
+  function fakeWindow(isDestroyed: boolean): { win: BrowserWindow; sent: [string, unknown][] } {
+    const sent: [string, unknown][] = []
+    const win = {
+      isDestroyed: () => isDestroyed,
+      webContents: {
+        send: (channel: string, payload: unknown) => {
+          sent.push([channel, payload])
+        }
+      }
+    } as unknown as BrowserWindow
+    return { win, sent }
+  }
+
+  it('sends on a live window', () => {
+    const { win, sent } = fakeWindow(false)
+    pushToWindow(() => win, 'cheat:state', { cheatId: 'x', status: 'active' })
+    expect(sent).toEqual([['cheat:state', { cheatId: 'x', status: 'active' }]])
+  })
+
+  it('no-ops instead of throwing against a destroyed window', () => {
+    const { win, sent } = fakeWindow(true)
+    expect(() => pushToWindow(() => win, 'cheat:state', { cheatId: 'x', status: 'active' })).not.toThrow()
+    expect(sent).toEqual([])
   })
 })
 

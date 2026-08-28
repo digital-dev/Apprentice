@@ -1,7 +1,13 @@
 {
   "schema": 2,
   "exe": "start_protected_game",
-  "modules": {},
+  "modules": {
+    "start_protected_game.exe": {
+      "size": 98572288,
+      "timestamp": 1776423303,
+      "version": "2.6.2.0"
+    }
+  },
   "cheats": [
     {
       "id": "er-infinite-health",
@@ -1207,7 +1213,7 @@
       "signature": "0f 4f f8 48 83 c3",
       "signatureOffset": 0,
       "moduleName": "start_protected_game.exe",
-      "moduleOffset": null
+      "moduleOffset": "0x78543b"
     },
     {
       "kind": "patch",
@@ -1220,7 +1226,7 @@
       "signature": "0f b7 50 ?? 66 3b ca 77",
       "signatureOffset": 0,
       "moduleName": "start_protected_game.exe",
-      "moduleOffset": null
+      "moduleOffset": "0x784aea"
     }
   ]
 }
