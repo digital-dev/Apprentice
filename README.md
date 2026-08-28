@@ -30,10 +30,9 @@ own.
 
 ## Install
 
-No prebuilt installer is published yet — for now, build it yourself (a few
-minutes, see below). Once a [Release](../../releases) exists here, grab
-`Apprentice-Setup-<version>.exe` from it instead and run it — no admin
-rights needed, it installs to your user profile.
+Grab the latest `Apprentice-Setup-<version>.exe` from [Releases](../../releases)
+and run it — no admin rights needed, it installs to your user profile.
+Prefer to build it yourself, or want to hack on it? Keep reading.
 
 ## Building from source
 
