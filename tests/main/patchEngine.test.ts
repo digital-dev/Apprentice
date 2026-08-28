@@ -1094,6 +1094,56 @@ describe('PatchEngine — guard injection', () => {
     expect(slot).not.toBe('addeaddeadde0000') // NOT the stale armValue
   })
 
+  // The non-Mono counterpart to the test above — same stale-snapshot
+  // problem, same fix, just for a game with no Mono runtime to ask:
+  // armPointerModuleName/armPointerBaseOffset/armPointerOffsets walk an
+  // ordinary pointer chain instead. Deliberately reuses the same resolved
+  // value (0x1c6986d75e4) and expected little-endian slot bytes as the
+  // Mono test above, to make the "both paths land the same way" parallel
+  // obvious.
+  it('re-resolves the arm pointer fresh via armPointerModuleName/BaseOffset/Offsets', async () => {
+    // Chain: game.exe+0x1000 -deref-> 0x500000, +0x8 -deref-> 0x1c6986d75e4
+    // (the final pointer value armPointerOffsets resolves to — one more
+    // dereference than a ChainTarget's own baseOffset+offsets stops at,
+    // since this wants the pointer VALUE, not an address to read/write).
+    ops.memory.set('0x401000', '0000500000000000') // game.exe base 0x400000 + 0x1000
+    ops.memory.set('0x500008', 'e4756d98c6010000') // 0x500000 + 0x8
+
+    const patch: PatchCheat = {
+      ...guardPatch,
+      id: 'patch-guard-chain',
+      // A stale snapshot from a previous process instance — must NOT be
+      // what ends up armed once the fresh chain walk succeeds.
+      armValue: '0xdeaddeaddead',
+      armPointerModuleName: 'game.exe',
+      armPointerBaseOffset: '0x1000',
+      armPointerOffsets: ['0x8']
+    }
+    const result = await engine.apply(patch)
+
+    expect(result.ok).toBe(true)
+    const slot = ops.memory.get(ops.caves[0]) as string
+    expect(slot).toBe('e4756d98c6010000') // little-endian 0x1c6986d75e4 — the FRESH value
+    expect(slot).not.toBe('addeaddeadde0000') // NOT the stale armValue
+  })
+
+  it('falls back to the stored armValue when the chain walk fails this attempt', async () => {
+    const patch: PatchCheat = {
+      ...guardPatch,
+      id: 'patch-guard-chain-fail',
+      armValue: '0x1c6986d75e4',
+      armPointerModuleName: 'game.exe',
+      armPointerBaseOffset: '0x1000',
+      armPointerOffsets: ['0x8']
+      // No memory set up at game.exe+0x1000 — the chain walk fails.
+    }
+    const result = await engine.apply(patch)
+
+    expect(result.ok).toBe(true)
+    const slot = ops.memory.get(ops.caves[0]) as string
+    expect(slot).toBe('e4756d98c6010000') // little-endian armValue, unchanged
+  })
+
   it('frees the allocated cave when arming the guard slot fails', async () => {
     const armed: PatchCheat = { ...guardPatch, id: 'patch-godmode-armfail', armValue: '0x1234' }
     // The cave allocates deterministically at 0x50001000 for the first

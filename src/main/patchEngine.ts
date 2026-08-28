@@ -3,6 +3,48 @@ import { patchMode } from './store'
 import { resolvePatchAddress } from './anchor'
 import type { AnchorReason, LoadedModule, MonoOps } from './anchor'
 
+// Local copy of ipc.ts's own littleEndianToBigInt — patchEngine.ts can't
+// import from ipc.ts (ipc.ts imports patchEngine.ts; that direction would
+// be circular), and this is a 3-line pure function, not worth a shared
+// module for. Same tolerance CODEBASE_MAP.md already documents for the
+// native side's duplicated ParseHex/ToHex.
+function littleEndianToBigInt(hex: string): bigint {
+  const swapped = (hex.match(/.{1,2}/g) ?? []).reverse().join('')
+  return BigInt('0x' + (swapped === '' ? '0' : swapped))
+}
+
+// Walks a plain module+baseOffset+offsets pointer chain to the live
+// POINTER VALUE it leads to — not an address, unlike ChainTarget's own
+// resolution (which stops one hop short, since a value cheat wants
+// somewhere to read/write, not what's stored there). This is the non-Mono
+// counterpart to MonoOps.resolvePointer below: same "re-resolve fresh
+// every install, a chain moves between game sessions" reasoning, just via
+// an ordinary ReadProcessMemory walk instead of Mono metadata — safe to
+// call anytime (no debugger, no hardware breakpoints), unlike the
+// find-what-writes capture that originally located this chain.
+function resolveChainPointer(
+  ops: PatchOps,
+  moduleName: string,
+  baseOffset: string,
+  offsets: string[]
+): string | null {
+  const moduleBase = ops.getModuleBase(moduleName)
+  if (moduleBase === null) return null
+  let addr = BigInt(moduleBase) + BigInt(baseOffset)
+  for (const offset of offsets) {
+    const bytes = ops.readBytes('0x' + addr.toString(16), 8)
+    if (bytes === null) return null
+    addr = littleEndianToBigInt(bytes) + BigInt(offset)
+  }
+  // One more dereference than the loop above performs per offset — addr
+  // right now is "base + last offset, not yet dereferenced" (exactly a
+  // ChainTarget's own final address); reading through it once more gets
+  // the pointer VALUE stored there, which is what this function promises.
+  const bytes = ops.readBytes('0x' + addr.toString(16), 8)
+  if (bytes === null) return null
+  return '0x' + littleEndianToBigInt(bytes).toString(16)
+}
+
 // Everything PatchEngine needs from the target process. Injected rather
 // than imported so the engine's locate/apply/restore logic — the part that
 // must never write to a wrong or unverified address — can be tested
@@ -473,6 +515,19 @@ export class PatchEngine {
           )
           if (resolved !== null) armValueOverride = resolved
         }
+      } else if (
+        (mode === 'immune' || mode === 'guard' || isConditionalScale) &&
+        patch.armPointerModuleName !== undefined &&
+        patch.armPointerBaseOffset !== undefined &&
+        patch.armPointerOffsets !== undefined
+      ) {
+        const resolved = resolveChainPointer(
+          this.ops,
+          patch.armPointerModuleName,
+          patch.armPointerBaseOffset,
+          patch.armPointerOffsets
+        )
+        if (resolved !== null) armValueOverride = resolved
       }
       // Re-resolved fresh every install for the same reason armValueOverride
       // is: JIT code moves between game sessions, so a compareMonoMethod

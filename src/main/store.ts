@@ -276,6 +276,23 @@ export interface PatchCheat {
   // static field's own dereferenced value IS the arm pointer, exactly as
   // before this field existed.
   armPointerInstanceFieldName?: string
+  // The non-Mono counterpart to armPointerClassName/armPointerFieldName —
+  // for a game with no Mono runtime to ask, a plain module+baseOffset+
+  // offsets pointer chain instead, re-walked fresh on every install (same
+  // "a resolved pointer is only valid for the process instance that
+  // produced it" reasoning armPointerClassName's own comment gives). Every
+  // offset is dereferenced, INCLUDING THE LAST — unlike a ChainTarget
+  // (store.ts's own, above), which wants an ADDRESS to read/write and
+  // deliberately stops one hop short, this wants the POINTER VALUE the
+  // chain leads to (e.g. the player's own character instance), to compare
+  // a guard/immune check's captured register against. All three must be
+  // present together; when they are, this pair wins over armValue exactly
+  // as armPointerClassName/armPointerFieldName do — armValue is the
+  // fallback if this particular install's resolve fails. Absent means no
+  // dynamic non-Mono re-arming, exactly as before this field existed.
+  armPointerModuleName?: string
+  armPointerBaseOffset?: string
+  armPointerOffsets?: string[]
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
   fieldOffset?: string
