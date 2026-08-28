@@ -124,48 +124,22 @@
       "hotkey": "num4"
     },
     {
-      "id": "er-no-death",
-      "name": "No Death",
-      "dataType": "int8",
-      "mode": "freeze",
-      "targets": [
-        {
-          "moduleName": "start_protected_game.exe",
-          "baseOffset": "0x3d65f88",
-          "offsets": [
-            "0x10ef8",
-            "0x0",
-            "0x190",
-            "0x19b"
-          ],
-          "bitIndex": 0
-        }
-      ],
-      "value": 1,
-      "hotkey": "num5",
-      "offValue": 0
-    },
-    {
-      "id": "er-no-damage",
-      "name": "No Damage",
-      "dataType": "int8",
-      "mode": "freeze",
-      "targets": [
-        {
-          "moduleName": "start_protected_game.exe",
-          "baseOffset": "0x3d65f88",
-          "offsets": [
-            "0x10ef8",
-            "0x0",
-            "0x190",
-            "0x19b"
-          ],
-          "bitIndex": 1
-        }
-      ],
-      "value": 1,
-      "hotkey": "num6",
-      "offValue": 0
+      "kind": "patch",
+      "mode": "guard",
+      "id": "er-no-damage-guard",
+      "name": "No Damage (blocks Death too)",
+      "originalBytes": "898138010000",
+      "length": 6,
+      "signature": "81 38 01 00 00 c3 44 3b c2 b8 38 01 00 00 41 b9 3c 01 00 00 41 0f 4f c1 8b 04 08 89 81 38 01 00 00 c3",
+      "signatureOffset": 27,
+      "moduleName": "start_protected_game.exe",
+      "moduleOffset": "0x438383",
+      "baseRegister": "rcx",
+      "armPointerModuleName": "start_protected_game.exe",
+      "armPointerBaseOffset": "0x3d65f88",
+      "armPointerOffsets": ["0x10ef8", "0x0", "0x190"],
+      "armValue": "0x7ff42d9556f0",
+      "hotkey": "num6"
     },
     {
       "id": "er-no-fp-consume",
