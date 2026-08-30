@@ -98,37 +98,48 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
 uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
                                     uintptr_t nsAddr, uintptr_t nameAddr);
 
-// Forward-declared here for the same reason as the two above; defined
-// below alongside BuildMemberSearchStub. Shared by field resolution and
-// method compilation: both are "attach, iterate a class's fields/methods
+// Forward-declared here for the same reason as ResolveClassSingleThread
+// above; defined below alongside BuildMemberByNameStub. Shared by field
+// resolution and method compilation: both are "attach, resolve one member
 // by name, optionally call one more function on the match, detach" — the
-// same shape as ResolveClassSingleThread, on one continuous thread for the
-// same reason (see that function's comment). `getItemsExport` is
-// "mono_class_get_fields" or "mono_class_get_methods"; `getNameExport` is
-// "mono_field_get_name" or "mono_method_get_name"; `finishExport` is
+// same shape ResolveClassSingleThread's comment explains, on one
+// continuous thread for the same reason. Rather than a hand-rolled
+// iterate-and-strcmp over mono_class_get_fields/methods (which only ever
+// sees a class's OWN declared members — those iterators do not walk to a
+// parent), this calls Mono's own "_from_name" lookup directly
+// (mono_class_get_field_from_name / mono_class_get_method_from_name), which
+// walks the class hierarchy internally, in Mono's native code — including
+// to a generic base like Unity's `Singleton<T>`, where a manager's static
+// instance field actually lives. `isMethod` selects the 3-argument method
+// form (klass, name, param_count=-1 for "any overload") over the
+// 2-argument field form (klass, name). `finishExport` is
 // "mono_field_get_offset" or "mono_compile_method" to call the matched
 // item through one more function before returning its result, or "" to
 // return the matched item's own address unchanged — a MonoClassField* or
 // MonoMethod*'s own metadata-descriptor address, NOT where a static
 // field's actual value lives at runtime. A static field's real storage
 // needs the field's OFFSET (finishExport = "mono_field_get_offset") added
-// to its class's static-data blob base (see StaticDataBaseSingleThread,
-// below) — monoStaticFieldAddress composes the two rather than ever
+// to its class's static-data blob base (see ResolveStaticFieldAddressSingleThread,
+// below) — monoStaticFieldAddress uses that dedicated resolver rather than ever
 // asking this function for a field's raw "" address.
-uintptr_t ResolveMemberSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
-                                    uintptr_t classHandle, const std::string& getItemsExport,
-                                    const std::string& getNameExport, const std::string& finishExport,
-                                    const std::string& targetName);
+uintptr_t ResolveMemberByNameSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
+                                          uintptr_t classHandle, const std::string& fromNameExport,
+                                          const std::string& finishExport, const std::string& targetName,
+                                          bool isMethod);
 
 // Forward-declared here for the same reason as the others above; defined
-// below alongside BuildStaticDataBaseStub. mono_class_vtable(domain,
-// classHandle) -> mono_vtable_get_static_field_data(vtable) -> that
-// class's static-data blob base for the current domain — add a static
-// field's own offset (from ResolveMemberSingleThread's "mono_field_get_
-// offset" path) to get where its value actually lives. Returns 0 on any
-// resolution failure.
-uintptr_t StaticDataBaseSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
-                                     uintptr_t classHandle);
+// below alongside BuildStaticFieldAddressStub. The full chain a static
+// field's actual runtime address needs: resolve the field by name (walking
+// to a parent class, same as ResolveMemberByNameSingleThread), then
+// mono_field_get_parent to find which class actually DECLARES it — C#
+// static-field storage is never duplicated per subclass, so an inherited
+// field's storage belongs to its declaring class's vtable (e.g. Unity's
+// `Singleton<MoneyManager>`), never classHandle itself when the field is
+// inherited — then mono_class_vtable + mono_vtable_get_static_field_data on
+// THAT class, plus the field's own offset. Returns 0 on any resolution
+// failure.
+uintptr_t ResolveStaticFieldAddressSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
+                                                uintptr_t classHandle, const std::string& targetName);
 
 // Forward-declared here for the same reason as the others above; defined
 // below alongside BuildMemberListStub. Attach, collect EVERY field/method
@@ -321,34 +332,33 @@ class MonoResolveFieldWorker : public Napi::AsyncWorker {
   }
 
   void Run() {
-    // Attach, iterate, and call mono_field_get_offset on the match, all on
-    // one continuous injected thread, via ResolveMemberSingleThread — see
-    // ResolveClassSingleThread's comment for why per-call throwaway threads
-    // calling Mono metadata functions is unsafe. Always resolves the
-    // OFFSET now (never the field's own "" metadata address — see
-    // ResolveMemberSingleThread's comment on why that was never the right
-    // answer for a static field's actual storage location).
-    uintptr_t item = ResolveMemberSingleThread(
-        handle_, monoDllBase_, classHandle_, "mono_class_get_fields", "mono_field_get_name",
-        "mono_field_get_offset", fieldName_);
-    if (!item) return;
     if (!wantAddress_) {
+      // Attach, resolve via mono_class_get_field_from_name (walks to a
+      // parent class — including a generic base like Singleton<T> — unlike
+      // the raw mono_class_get_fields iterator, which only sees a class's
+      // OWN declared fields), then call mono_field_get_offset on the
+      // match, all on one continuous injected thread.
+      uintptr_t item = ResolveMemberByNameSingleThread(
+          handle_, monoDllBase_, classHandle_, "mono_class_get_field_from_name",
+          "mono_field_get_offset", fieldName_, /*isMethod=*/false);
+      if (!item) return;
       ok_ = true;
       offset_ = static_cast<int32_t>(item);
       return;
     }
-    // wantAddress_: compose the static-data blob base with this offset —
-    // the two-step indirection an actual static field's value needs (see
-    // StaticDataBaseSingleThread's comment). A second attach/detach cycle,
-    // not folded into one stub with the field walk above: the field search
-    // and the vtable/static-data lookup are independent operations sharing
-    // no state, and keeping ResolveMemberSingleThread generic (usable for
-    // methods too, which have no static-data concept at all) matters more
-    // than saving one attach round-trip here.
-    uintptr_t staticBase = StaticDataBaseSingleThread(handle_, monoDllBase_, classHandle_);
-    if (!staticBase) return;
+    // wantAddress_: an INHERITED static field's storage belongs to the
+    // class that actually DECLARES it (e.g. Singleton<MoneyManager>, not
+    // MoneyManager itself) — mono_class_vtable(classHandle_) would be the
+    // wrong vtable for exactly that case, since C# static-field storage is
+    // never duplicated per subclass. ResolveStaticFieldAddressSingleThread
+    // resolves the field, then asks mono_field_get_parent for its ACTUAL
+    // owning class before composing the vtable/static-data address off of
+    // that, not classHandle_.
+    uintptr_t address = ResolveStaticFieldAddressSingleThread(
+        handle_, monoDllBase_, classHandle_, fieldName_);
+    if (!address) return;
     ok_ = true;
-    fieldAddress_ = staticBase + static_cast<int32_t>(item);
+    fieldAddress_ = address;
   }
 
   void OnOK() override {
@@ -451,12 +461,13 @@ class MonoCompileMethodWorker : public Napi::AsyncWorker {
   }
 
   void Run() {
-    // Attach, iterate methods, and call mono_compile_method on the match —
-    // all on one continuous injected thread. See
-    // ResolveClassSingleThread's comment for why.
-    uintptr_t entry = ResolveMemberSingleThread(
-        handle_, monoDllBase_, classHandle_, "mono_class_get_methods", "mono_method_get_name",
-        "mono_compile_method", methodName_);
+    // Attach, resolve via mono_class_get_method_from_name (walks to a
+    // parent class, same reasoning as the field lookup above), and call
+    // mono_compile_method on the match — all on one continuous injected
+    // thread. See ResolveClassSingleThread's comment for why.
+    uintptr_t entry = ResolveMemberByNameSingleThread(
+        handle_, monoDllBase_, classHandle_, "mono_class_get_method_from_name",
+        "mono_compile_method", methodName_, /*isMethod=*/true);
     if (entry) { entryAddress_ = entry; ok_ = true; }
   }
 
@@ -1024,93 +1035,57 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   return static_cast<uintptr_t>(result);
 }
 
-// mono_get_root_domain, mono_thread_attach, then a bounded (256-iteration)
-// walk of a class's fields or methods — via mono_class_get_fields/methods'
-// same caller-owned-iterator pattern the old per-call-thread version used
-// — comparing each item's name (read via mono_field_get_name /
-// mono_method_get_name) against `targetNameAddr` with a hand-encoded
-// byte-by-byte strcmp, stopping at the first match; then, if `finishFn` is
-// nonzero, calling it on the match (mono_field_get_offset or
-// mono_compile_method) and using ITS result, or the match's own address
-// unchanged if `finishFn` is 0; then mono_thread_detach. All of it on one
-// continuous injected thread. Same motivation as BuildResolveClassStub
-// above — see its comment.
+
+// mono_get_root_domain, mono_thread_attach, mono_class_init(classHandle)
+// (same "force metadata setup first" reasoning as BuildMemberListStub —
+// harmless/idempotent if the class is already set up), then ONE call to
+// mono_class_get_field_from_name(classHandle, nameAddr) or
+// mono_class_get_method_from_name(classHandle, nameAddr, -1) — no
+// iteration, no hand-rolled strcmp, because Mono's own implementation of
+// these "_from_name" lookups already walks the class hierarchy (including
+// to a generic base like Singleton<T>) in native code. `finishFn` (still
+// mono_field_get_offset / mono_compile_method / 0-to-skip) is called on
+// the match, or skipped if it's 0. Falls straight to mono_thread_detach
+// with a 0 result if the lookup itself returns NULL.
 //
-// Unlike BuildResolveClassStub, this stub's length isn't a fixed constant:
-// whether the finish-call block is emitted depends on `finishFn`, a
-// runtime argument. Every jump here is therefore built as a near
-// (rel32) Jcc/JMP with a placeholder displacement, recorded in `fixups`
-// alongside the label it targets, and patched to the real displacement
-// only after the whole stub (and therefore every label's final offset) has
-// been emitted — rel32 rather than rel8 specifically because the
-// jae-to-not_found jump alone spans over 150 bytes in the worst case
-// (finish call present), well past rel8's ±127 range.
-//
-// Register usage, relying on the same Win64 ABI callee-preserves-RBX/R12-
-// R15 guarantee BuildResolveClassStub's comment explains:
+// Register usage — same callee-preserves-RBX/R12-R15 guarantee as every
+// other stub in this file:
 //   r15 — attached MonoThread*, needed again at the end for detach
-//   r14 — iteration guard counter (0..256)
-//   r12 — the current field/method pointer being tested
+//   r12 — the resolved MonoClassField*/MonoMethod*, or 0
 //   r13 — the final result value, stashed before the detach call (which
 //         clobbers rax) so it survives to the very end
-//   rsi/rdi — strcmp cursors (item's name pointer / targetNameAddr)
 //
 //   mov rax, getRootDomainFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
 //   mov rcx, rax                                             -- rootDomain
 //   mov rax, threadAttachFn  ; sub rsp,0x28 ; call rax ; add rsp,0x28
 //   mov r15, rax                                              -- attached thread
-//   xor r14, r14                                              -- guard = 0
-// loop_a:
-//   cmp r14, 256
-//   jae not_found                        (near)
-//   inc r14
+//   [if classInitFn: mov rcx, classHandle ; mov rax, classInitFn ;
+//    sub rsp,0x28 ; call rax ; add rsp,0x28]
 //   mov rcx, classHandle
-//   mov rdx, iterSlotAddr
-//   mov rax, getItemsFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
-//   test rax, rax
-//   jz not_found                          (near)               -- iteration exhausted
-//   mov r12, rax                                                -- item
-//   mov rcx, r12
-//   mov rax, getNameFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
-//   mov rsi, rax                                                 -- namePtr
-//   mov rdi, targetNameAddr
-// strcmp_b:
-//   mov al, [rsi]
-//   mov bl, [rdi]
-//   cmp al, bl
-//   jne loop_a                             (near)                 -- mismatch: next item
-//   test al, al
-//   jz found                                (near)                 -- equal AND both NUL: match
-//   inc rsi
-//   inc rdi
-//   jmp strcmp_b                             (near)
-// found:
+//   mov rdx, nameAddr
+//   [if isMethod: mov r8, -1]                                  -- param_count: any overload
+//   mov rax, fromNameFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov r12, rax                                                -- matched item or 0
+//   test r12, r12
+//   jz notfound                           (near)
 //   [if finishFn: mov rcx, r12 ; mov rax, finishFn ; sub rsp,0x28 ;
 //    call rax ; add rsp,0x28 ; mov r13, rax]
 //   [else:        mov r13, r12]
+//   jmp done                              (near)
+// notfound:
+//   xor r13, r13
+// done:
 //   mov rcx, r15
 //   mov rax, threadDetachFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
 //   mov rcx, resultAddress
 //   mov [rcx], r13
 //   xor eax, eax
 //   ret
-// not_found:
-//   mov rcx, r15
-//   mov rax, threadDetachFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
-//   mov rcx, resultAddress
-//   mov qword [rcx], 0
-//   xor eax, eax
-//   ret
-//
-// Verified functionally against the fake host (both the finish-call and
-// no-finish-call shapes, and both the match and no-match paths) before
-// ever running against a real game.
-std::vector<uint8_t> BuildMemberSearchStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                            uintptr_t threadDetachFn, uintptr_t getItemsFn,
-                                            uintptr_t getNameFn, uintptr_t finishFn,
-                                            uintptr_t classHandle, uintptr_t iterSlotAddr,
-                                            uintptr_t targetNameAddr, uintptr_t resultAddress,
-                                            uint32_t guardLimit) {
+std::vector<uint8_t> BuildMemberByNameStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
+                                            uintptr_t threadDetachFn, uintptr_t classInitFn,
+                                            uintptr_t fromNameFn, uintptr_t finishFn,
+                                            uintptr_t classHandle, uintptr_t nameAddr,
+                                            uintptr_t resultAddress, bool isMethod) {
   std::vector<uint8_t> out;
   auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
     out.push_back(rex);
@@ -1124,21 +1099,16 @@ std::vector<uint8_t> BuildMemberSearchStub(uintptr_t getRootDomainFn, uintptr_t 
     out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});   // add rsp, 0x28
   };
 
-  enum Label { kLoopA, kNotFound, kStrcmpB, kFound };
+  enum Label { kNotFound, kDone };
   std::unordered_map<int, size_t> labelOffset;
-  std::vector<std::pair<size_t, int>> fixups; // (offset of rel32 field, target label)
-
+  std::vector<std::pair<size_t, int>> fixups;
   auto mark = [&](int label) { labelOffset[label] = out.size(); };
-  // Always a near (0F 8x / E9) jump with a 4-byte rel32 placeholder: this
-  // stub's length depends on a runtime argument (finishFn), so a jump's
-  // span cannot be hand-verified to fit rel8's short range the way the
-  // other, fixed-shape stubs in this file do.
   auto emitJump = [&](uint8_t shortOpcode, int label) {
     if (shortOpcode == 0xEB) {
       out.push_back(0xE9);
     } else {
       out.push_back(0x0F);
-      out.push_back(static_cast<uint8_t>(shortOpcode + 0x10)); // 0x73->0x83 etc: short Jcc -> near Jcc
+      out.push_back(static_cast<uint8_t>(shortOpcode + 0x10));
     }
     fixups.push_back({out.size(), label});
     out.insert(out.end(), {0x00, 0x00, 0x00, 0x00});
@@ -1148,39 +1118,25 @@ std::vector<uint8_t> BuildMemberSearchStub(uintptr_t getRootDomainFn, uintptr_t 
   out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
   emitCall(threadAttachFn);
   out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
-  out.insert(out.end(), {0x4D, 0x31, 0xF6});           // xor r14, r14
 
-  mark(kLoopA);
-  out.insert(out.end(), {0x49, 0x81, 0xFE,             // cmp r14, guardLimit
-                          static_cast<uint8_t>(guardLimit & 0xFF),
-                          static_cast<uint8_t>((guardLimit >> 8) & 0xFF),
-                          static_cast<uint8_t>((guardLimit >> 16) & 0xFF),
-                          static_cast<uint8_t>((guardLimit >> 24) & 0xFF)});
-  emitJump(0x73, kNotFound);                           // jae not_found
-  out.insert(out.end(), {0x49, 0xFF, 0xC6});           // inc r14
+  if (classInitFn) {
+    emitMovImm64(0x48, 0xB9, classHandle);             // mov rcx, classHandle
+    emitCall(classInitFn);
+  }
+
   emitMovImm64(0x48, 0xB9, classHandle);               // mov rcx, classHandle
-  emitMovImm64(0x48, 0xBA, iterSlotAddr);              // mov rdx, iterSlotAddr
-  emitCall(getItemsFn);
-  out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
-  emitJump(0x74, kNotFound);                           // jz not_found (exhausted)
+  emitMovImm64(0x48, 0xBA, nameAddr);                  // mov rdx, nameAddr
+  if (isMethod) {
+    // mov r8, -1 (REX.WB + C7 /0 id, sign-extended — the callee reads only
+    // the low 32 bits as `int param_count`, so the sign-extended upper
+    // bits are never observed).
+    out.insert(out.end(), {0x49, 0xC7, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF});
+  }
+  emitCall(fromNameFn);
   out.insert(out.end(), {0x49, 0x89, 0xC4});           // mov r12, rax
-  out.insert(out.end(), {0x4C, 0x89, 0xE1});           // mov rcx, r12
-  emitCall(getNameFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC6});           // mov rsi, rax
-  emitMovImm64(0x48, 0xBF, targetNameAddr);            // mov rdi, targetNameAddr
+  out.insert(out.end(), {0x4D, 0x85, 0xE4});           // test r12, r12
+  emitJump(0x74, kNotFound);                           // jz notfound
 
-  mark(kStrcmpB);
-  out.insert(out.end(), {0x8A, 0x06});                 // mov al, [rsi]
-  out.insert(out.end(), {0x8A, 0x1F});                 // mov bl, [rdi]
-  out.insert(out.end(), {0x38, 0xD8});                 // cmp al, bl
-  emitJump(0x75, kLoopA);                              // jne loop_a (mismatch, next item)
-  out.insert(out.end(), {0x84, 0xC0});                 // test al, al
-  emitJump(0x74, kFound);                              // jz found (equal AND both NUL)
-  out.insert(out.end(), {0x48, 0xFF, 0xC6});           // inc rsi
-  out.insert(out.end(), {0x48, 0xFF, 0xC7});           // inc rdi
-  emitJump(0xEB, kStrcmpB);                            // jmp strcmp_b
-
-  mark(kFound);
   if (finishFn) {
     out.insert(out.end(), {0x4C, 0x89, 0xE1});         // mov rcx, r12
     emitCall(finishFn);
@@ -1188,18 +1144,16 @@ std::vector<uint8_t> BuildMemberSearchStub(uintptr_t getRootDomainFn, uintptr_t 
   } else {
     out.insert(out.end(), {0x4D, 0x89, 0xE5});         // mov r13, r12
   }
+  emitJump(0xEB, kDone);                                // jmp done
+
+  mark(kNotFound);
+  out.insert(out.end(), {0x4D, 0x31, 0xED});           // xor r13, r13
+
+  mark(kDone);
   out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
   emitCall(threadDetachFn);
   emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
   out.insert(out.end(), {0x4C, 0x89, 0x29});           // mov [rcx], r13
-  out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
-  out.push_back(0xC3);                                 // ret
-
-  mark(kNotFound);
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
-  emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
-  out.insert(out.end(), {0x48, 0xC7, 0x01, 0x00, 0x00, 0x00, 0x00}); // mov qword [rcx], 0
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
 
@@ -1215,46 +1169,46 @@ std::vector<uint8_t> BuildMemberSearchStub(uintptr_t getRootDomainFn, uintptr_t 
   return out;
 }
 
-uintptr_t ResolveMemberSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
-                                    uintptr_t classHandle, const std::string& getItemsExport,
-                                    const std::string& getNameExport, const std::string& finishExport,
-                                    const std::string& targetName) {
+uintptr_t ResolveMemberByNameSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
+                                          uintptr_t classHandle, const std::string& fromNameExport,
+                                          const std::string& finishExport, const std::string& targetName,
+                                          bool isMethod) {
   uintptr_t getRootDomain = platform::ResolveExport(handle, monoDllBase, "mono_get_root_domain");
   uintptr_t threadAttach = platform::ResolveExport(handle, monoDllBase, "mono_thread_attach");
   uintptr_t threadDetach = platform::ResolveExport(handle, monoDllBase, "mono_thread_detach");
-  uintptr_t getItems = platform::ResolveExport(handle, monoDllBase, getItemsExport);
-  uintptr_t getName = platform::ResolveExport(handle, monoDllBase, getNameExport);
+  uintptr_t fromNameFn = platform::ResolveExport(handle, monoDllBase, fromNameExport);
+  // Optional, same as BuildMemberListStub's classInitFn: absent on an older
+  // Mono build just skips the call.
+  uintptr_t classInitFn = platform::ResolveExport(handle, monoDllBase, "mono_class_init");
   uintptr_t finishFn = 0;
   if (!finishExport.empty()) {
     finishFn = platform::ResolveExport(handle, monoDllBase, finishExport);
     if (!finishFn) return 0;
   }
-  if (!getRootDomain || !threadAttach || !threadDetach || !getItems || !getName) return 0;
+  if (!getRootDomain || !threadAttach || !threadDetach || !fromNameFn) return 0;
 
   uintptr_t nameAddr = WriteString(handle, monoDllBase, targetName);
   if (!nameAddr) return 0;
 
-  uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + 8 + 512);
+  uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + 256);
   if (!cave) {
     platform::FreeMemory(handle, nameAddr);
     return 0;
   }
   uintptr_t resultAddr = cave;
-  uintptr_t iterSlotAddr = cave + 8;
-  uintptr_t stubAddr = cave + 16;
+  uintptr_t stubAddr = cave + 8;
 
   uint64_t zero = 0;
-  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero)) ||
-      !platform::WriteMemory(handle, iterSlotAddr, &zero, sizeof(zero))) {
+  if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero))) {
     // No thread has been created yet — safe to free both immediately.
     platform::FreeMemory(handle, cave);
     platform::FreeMemory(handle, nameAddr);
     return 0;
   }
 
-  std::vector<uint8_t> stub = BuildMemberSearchStub(getRootDomain, threadAttach, threadDetach,
-                                                     getItems, getName, finishFn, classHandle,
-                                                     iterSlotAddr, nameAddr, resultAddr, 256);
+  std::vector<uint8_t> stub = BuildMemberByNameStub(getRootDomain, threadAttach, threadDetach,
+                                                     classInitFn, fromNameFn, finishFn, classHandle,
+                                                     nameAddr, resultAddr, isMethod);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
     platform::FreeMemory(handle, cave);
     platform::FreeMemory(handle, nameAddr);
@@ -1263,8 +1217,8 @@ uintptr_t ResolveMemberSingleThread(platform::ProcessHandle handle, uintptr_t mo
 
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
-  // `cave`, or still reading `nameAddr` via its strcmp against the target
-  // name — see the never-free-a-live-cave rule. Leak both, same as above.
+  // `cave`, or still reading `nameAddr` — see the never-free-a-live-cave
+  // rule. Leak both.
   if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
@@ -1274,44 +1228,84 @@ uintptr_t ResolveMemberSingleThread(platform::ProcessHandle handle, uintptr_t mo
   return static_cast<uintptr_t>(result);
 }
 
-// mono_get_root_domain, mono_thread_attach, mono_class_vtable(domain,
-// classHandle) -> vtable, mono_vtable_get_static_field_data(vtable) -> the
-// class's static-data BLOB base for the current domain, mono_thread_detach.
-// One continuous injected thread, same motivation as every other
-// SingleThread function in this file.
+// mono_get_root_domain, mono_thread_attach, mono_class_init(classHandle)
+// (optional, same reasoning as BuildMemberByNameStub), then the full chain
+// a static field's actual runtime address needs:
+//   mono_class_get_field_from_name(classHandle, nameAddr)  -> fieldPtr
+//   mono_field_get_offset(fieldPtr)                        -> offset
+//   mono_field_get_parent(fieldPtr)                        -> owningClass
+//   mono_class_vtable(domain, owningClass)                 -> vtable
+//   mono_vtable_get_static_field_data(vtable)               -> blobBase
+//   result = blobBase + offset
+// then mono_thread_detach.
 //
-// This is NOT the same address as a MonoClassField*'s own pointer (what a
-// plain field lookup returns) — a MonoClassField describes the field
-// (name, type, offset into this blob), it is not where the field's VALUE
-// lives at runtime. Reading a static field's actual current value needs
-// this blob's base PLUS the field's own offset (mono_field_get_offset,
-// already resolved correctly elsewhere in this file) — the two-step
-// vtable/static-data-blob indirection real Mono embedding requires for any
-// static field, not just this codebase's own invention. Returning the
-// field's own metadata address instead of this (an earlier version of
-// MonoStaticFieldAddress did exactly that) reads back as a real, stable,
-// plausible-looking pointer every time — Mono's own internal MonoType*
-// describing the field's declared type, most likely — while being
-// numerically nothing to do with any actual game object. It never fails
-// or looks wrong on inspection; it is simply answering a different
-// question than the one being asked.
+// The mono_field_get_parent step is the fix BuildStaticDataBaseStub above
+// got wrong for an INHERITED field: C# static-field storage is never
+// duplicated per subclass, so it belongs to whichever class actually
+// DECLARES the field (e.g. Unity's `Singleton<MoneyManager>`, not
+// `MoneyManager` itself) — composing the vtable off classHandle instead of
+// the field's own owning class silently answers a different question
+// (MoneyManager's own, empty-of-this-field static blob) whenever the
+// target field is inherited, which is exactly the Singleton<T> pattern
+// this whole lookup exists to reach.
 //
-//   [attach]
-//   mov rcx, domain              -- from mono_get_root_domain, saved earlier
-//   mov rdx, classHandle
+// Register usage — same callee-preserves-RBX/R12-R15 guarantee as every
+// other stub in this file:
+//   r15 — root domain, needed again later for mono_class_vtable
+//   r14 — attached MonoThread*, needed again at the end for detach
+//   r13 — the resolved MonoClassField*, then reused for the final result
+//   r12 — the field's owning MonoClass* (from mono_field_get_parent)
+//   rbx — the field's offset, held across two more calls until composed
+//         into the final address
+//
+//   mov rax, getRootDomainFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov r15, rax                                              -- domain
+//   mov rcx, r15
+//   mov rax, threadAttachFn  ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov r14, rax                                              -- attached thread
+//   [if classInitFn: mov rcx, classHandle ; mov rax, classInitFn ;
+//    sub rsp,0x28 ; call rax ; add rsp,0x28]
+//   mov rcx, classHandle
+//   mov rdx, nameAddr
+//   mov rax, fromNameFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov r13, rax                                               -- fieldPtr or 0
+//   test r13, r13
+//   jz notfound                            (near)
+//   mov rcx, r13
+//   mov rax, getOffsetFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov rbx, rax                                                -- offset
+//   mov rcx, r13
+//   mov rax, getParentFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
+//   mov r12, rax                                                -- owning class or 0
+//   test r12, r12
+//   jz notfound                            (near)
+//   mov rcx, r15
+//   mov rdx, r12
 //   mov rax, classVtableFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
-//   mov rcx, rax                                        -- vtable
+//   test rax, rax
+//   jz notfound                            (near)
+//   mov rcx, rax
 //   mov rax, staticDataFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
-//   mov r14, rax                                         -- static data base
-//   [detach]
+//   test rax, rax
+//   jz notfound                            (near)
+//   add rax, rbx
+//   mov r13, rax                                                 -- final result
+//   jmp done                                (near)
+// notfound:
+//   xor r13, r13
+// done:
+//   mov rcx, r14
+//   mov rax, threadDetachFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
 //   mov rcx, resultAddress
-//   mov [rcx], r14
+//   mov [rcx], r13
 //   xor eax, eax
 //   ret
-std::vector<uint8_t> BuildStaticDataBaseStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                              uintptr_t threadDetachFn, uintptr_t classVtableFn,
-                                              uintptr_t staticDataFn, uintptr_t classHandle,
-                                              uintptr_t resultAddress) {
+std::vector<uint8_t> BuildStaticFieldAddressStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
+                                                  uintptr_t threadDetachFn, uintptr_t classInitFn,
+                                                  uintptr_t fromNameFn, uintptr_t getOffsetFn,
+                                                  uintptr_t getParentFn, uintptr_t classVtableFn,
+                                                  uintptr_t staticDataFn, uintptr_t classHandle,
+                                                  uintptr_t nameAddr, uintptr_t resultAddress) {
   std::vector<uint8_t> out;
   auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
     out.push_back(rex);
@@ -1325,64 +1319,142 @@ std::vector<uint8_t> BuildStaticDataBaseStub(uintptr_t getRootDomainFn, uintptr_
     out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});   // add rsp, 0x28
   };
 
+  enum Label { kNotFound, kDone };
+  std::unordered_map<int, size_t> labelOffset;
+  std::vector<std::pair<size_t, int>> fixups;
+  auto mark = [&](int label) { labelOffset[label] = out.size(); };
+  auto emitJump = [&](uint8_t shortOpcode, int label) {
+    if (shortOpcode == 0xEB) {
+      out.push_back(0xE9);
+    } else {
+      out.push_back(0x0F);
+      out.push_back(static_cast<uint8_t>(shortOpcode + 0x10));
+    }
+    fixups.push_back({out.size(), label});
+    out.insert(out.end(), {0x00, 0x00, 0x00, 0x00});
+  };
+
   emitCall(getRootDomainFn);
-  out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax  -- domain, survives the next call
+  out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax  -- domain
   out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
   emitCall(threadAttachFn);
-  out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax  -- attached MonoThread*, survives too
+  out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax  -- attached thread
+
+  if (classInitFn) {
+    emitMovImm64(0x48, 0xB9, classHandle);             // mov rcx, classHandle
+    emitCall(classInitFn);
+  }
+
+  emitMovImm64(0x48, 0xB9, classHandle);               // mov rcx, classHandle
+  emitMovImm64(0x48, 0xBA, nameAddr);                  // mov rdx, nameAddr
+  emitCall(fromNameFn);
+  out.insert(out.end(), {0x49, 0x89, 0xC5});           // mov r13, rax  -- fieldPtr
+  out.insert(out.end(), {0x4D, 0x85, 0xED});           // test r13, r13
+  emitJump(0x74, kNotFound);                           // jz notfound
+
+  out.insert(out.end(), {0x4C, 0x89, 0xE9});           // mov rcx, r13
+  emitCall(getOffsetFn);
+  out.insert(out.end(), {0x48, 0x89, 0xC3});           // mov rbx, rax  -- offset
+
+  out.insert(out.end(), {0x4C, 0x89, 0xE9});           // mov rcx, r13
+  emitCall(getParentFn);
+  out.insert(out.end(), {0x49, 0x89, 0xC4});           // mov r12, rax  -- owning class
+  out.insert(out.end(), {0x4D, 0x85, 0xE4});           // test r12, r12
+  emitJump(0x74, kNotFound);                           // jz notfound
 
   out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15  -- domain
-  emitMovImm64(0x48, 0xBA, classHandle);               // mov rdx, classHandle
+  out.insert(out.end(), {0x4C, 0x89, 0xE2});           // mov rdx, r12  -- owning class
   emitCall(classVtableFn);
+  out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
+  emitJump(0x74, kNotFound);                           // jz notfound
+
   out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax  -- vtable
   emitCall(staticDataFn);
-  out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax  -- static data base, survives detach
+  out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
+  emitJump(0x74, kNotFound);                           // jz notfound
 
-  out.insert(out.end(), {0x4C, 0x89, 0xF1});           // mov rcx, r14  -- attached MonoThread*
+  out.insert(out.end(), {0x48, 0x01, 0xD8});           // add rax, rbx  -- blobBase + offset
+  out.insert(out.end(), {0x49, 0x89, 0xC5});           // mov r13, rax  -- final result
+  emitJump(0xEB, kDone);                                // jmp done
+
+  mark(kNotFound);
+  out.insert(out.end(), {0x4D, 0x31, 0xED});           // xor r13, r13
+
+  mark(kDone);
+  out.insert(out.end(), {0x4C, 0x89, 0xF1});           // mov rcx, r14
   emitCall(threadDetachFn);
   emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
-  out.insert(out.end(), {0x4C, 0x89, 0x39});           // mov [rcx], r15
+  out.insert(out.end(), {0x4C, 0x89, 0x29});           // mov [rcx], r13
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
+
+  for (auto& fx : fixups) {
+    size_t pos = fx.first;
+    int32_t rel = static_cast<int32_t>(labelOffset[fx.second]) - static_cast<int32_t>(pos + 4);
+    out[pos + 0] = static_cast<uint8_t>(rel & 0xFF);
+    out[pos + 1] = static_cast<uint8_t>((rel >> 8) & 0xFF);
+    out[pos + 2] = static_cast<uint8_t>((rel >> 16) & 0xFF);
+    out[pos + 3] = static_cast<uint8_t>((rel >> 24) & 0xFF);
+  }
 
   return out;
 }
 
-uintptr_t StaticDataBaseSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
-                                      uintptr_t classHandle) {
+uintptr_t ResolveStaticFieldAddressSingleThread(platform::ProcessHandle handle, uintptr_t monoDllBase,
+                                                uintptr_t classHandle, const std::string& targetName) {
   uintptr_t getRootDomain = platform::ResolveExport(handle, monoDllBase, "mono_get_root_domain");
   uintptr_t threadAttach = platform::ResolveExport(handle, monoDllBase, "mono_thread_attach");
   uintptr_t threadDetach = platform::ResolveExport(handle, monoDllBase, "mono_thread_detach");
-  uintptr_t classVtable = platform::ResolveExport(handle, monoDllBase, "mono_class_vtable");
-  uintptr_t staticData = platform::ResolveExport(handle, monoDllBase, "mono_vtable_get_static_field_data");
-  if (!getRootDomain || !threadAttach || !threadDetach || !classVtable || !staticData) return 0;
+  uintptr_t fromNameFn = platform::ResolveExport(handle, monoDllBase, "mono_class_get_field_from_name");
+  uintptr_t getOffsetFn = platform::ResolveExport(handle, monoDllBase, "mono_field_get_offset");
+  uintptr_t getParentFn = platform::ResolveExport(handle, monoDllBase, "mono_field_get_parent");
+  uintptr_t classVtableFn = platform::ResolveExport(handle, monoDllBase, "mono_class_vtable");
+  uintptr_t staticDataFn = platform::ResolveExport(handle, monoDllBase, "mono_vtable_get_static_field_data");
+  // Optional, same as every other classInitFn in this file: absent on an
+  // older Mono build just skips the call.
+  uintptr_t classInitFn = platform::ResolveExport(handle, monoDllBase, "mono_class_init");
+  if (!getRootDomain || !threadAttach || !threadDetach || !fromNameFn || !getOffsetFn ||
+      !getParentFn || !classVtableFn || !staticDataFn) {
+    return 0;
+  }
 
-  uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + 256);
-  if (!cave) return 0;
+  uintptr_t nameAddr = WriteString(handle, monoDllBase, targetName);
+  if (!nameAddr) return 0;
+
+  uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + 384);
+  if (!cave) {
+    platform::FreeMemory(handle, nameAddr);
+    return 0;
+  }
   uintptr_t resultAddr = cave;
   uintptr_t stubAddr = cave + 8;
 
   uint64_t zero = 0;
   if (!platform::WriteMemory(handle, resultAddr, &zero, sizeof(zero))) {
     platform::FreeMemory(handle, cave);
+    platform::FreeMemory(handle, nameAddr);
     return 0;
   }
 
-  std::vector<uint8_t> stub = BuildStaticDataBaseStub(getRootDomain, threadAttach, threadDetach,
-                                                        classVtable, staticData, classHandle, resultAddr);
+  std::vector<uint8_t> stub = BuildStaticFieldAddressStub(
+      getRootDomain, threadAttach, threadDetach, classInitFn, fromNameFn, getOffsetFn, getParentFn,
+      classVtableFn, staticDataFn, classHandle, nameAddr, resultAddr);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
     platform::FreeMemory(handle, cave);
+    platform::FreeMemory(handle, nameAddr);
     return 0;
   }
 
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
-  // `cave` — see the never-free-a-live-cave rule.
+  // `cave`, or still reading `nameAddr` — see the never-free-a-live-cave
+  // rule. Leak both.
   if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
   platform::FreeMemory(handle, cave);
+  platform::FreeMemory(handle, nameAddr);
   return static_cast<uintptr_t>(result);
 }
 
@@ -1390,7 +1462,7 @@ uintptr_t StaticDataBaseSingleThread(platform::ProcessHandle handle, uintptr_t m
 // every field/method on a class — no search, no early exit — collecting
 // each item's name pointer (via mono_field_get_name / mono_method_get_name)
 // into a buffer, then mono_thread_detach. One continuous injected thread,
-// same motivation as BuildResolveClassStub/BuildMemberSearchStub above.
+// same motivation as BuildResolveClassStub/BuildMemberByNameStub above.
 //
 // Deliberately does NOT read the name strings themselves inside the stub:
 // a namePtr is just a plain memory address once the stub is done, and
@@ -1402,7 +1474,7 @@ uintptr_t StaticDataBaseSingleThread(platform::ProcessHandle handle, uintptr_t m
 // afterward, from the host side, the same way the original (crashing)
 // version already safely read each name buffer outside of any RunRemoteCall.
 //
-// Same near-jump-with-patch technique as BuildMemberSearchStub, though
+// Same near-jump-with-patch technique as BuildMemberByNameStub, though
 // this stub's shape is actually fixed (no runtime branch on whether a
 // finish call exists) — reused anyway for consistency and because hand-
 // verifying short-jump range by eye is exactly the kind of step that has
@@ -1447,7 +1519,8 @@ std::vector<uint8_t> BuildMemberListStub(uintptr_t getRootDomainFn, uintptr_t th
                                           uintptr_t threadDetachFn, uintptr_t getItemsFn,
                                           uintptr_t getNameFn, uintptr_t classHandle,
                                           uintptr_t iterSlotAddr, uintptr_t bufferAddr,
-                                          uintptr_t countAddress, uint32_t guardLimit) {
+                                          uintptr_t countAddress, uint32_t guardLimit,
+                                          uintptr_t classInitFn) {
   std::vector<uint8_t> out;
   auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
     out.push_back(rex);
@@ -1480,6 +1553,17 @@ std::vector<uint8_t> BuildMemberListStub(uintptr_t getRootDomainFn, uintptr_t th
   out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
   emitCall(threadAttachFn);
   out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
+  // mono_class_get_methods (unlike mono_class_get_fields) returns nothing
+  // on a class Mono hasn't finished setting up yet — mono_class_init forces
+  // that setup. Harmless/idempotent to call unconditionally (also covers
+  // mono_class_get_fields, which happens to work without it, but costs
+  // nothing extra here); classInitFn == 0 skips it (export not found on an
+  // older Mono build, matching every other "optional export" fallback in
+  // this file).
+  if (classInitFn) {
+    emitMovImm64(0x48, 0xB9, classHandle);             // mov rcx, classHandle
+    emitCall(classInitFn);
+  }
   emitMovImm64(0x48, 0xBB, bufferAddr);                // mov rbx, bufferAddr
   out.insert(out.end(), {0x4D, 0x31, 0xF6});           // xor r14, r14
 
@@ -1532,6 +1616,9 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
   uintptr_t threadDetach = platform::ResolveExport(handle, monoDllBase, "mono_thread_detach");
   uintptr_t getItems = platform::ResolveExport(handle, monoDllBase, getItemsExport);
   uintptr_t getName = platform::ResolveExport(handle, monoDllBase, getNameExport);
+  // Optional: absent on an older Mono build just means BuildMemberListStub
+  // skips the mono_class_init call, matching the pre-existing behaviour.
+  uintptr_t classInit = platform::ResolveExport(handle, monoDllBase, "mono_class_init");
   if (!getRootDomain || !threadAttach || !threadDetach || !getItems || !getName) return {};
 
   uintptr_t cave = platform::AllocateNear(handle, monoDllBase, 8 + 8 + kMaxMembers * 8 + 320);
@@ -1550,7 +1637,7 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
 
   std::vector<uint8_t> stub = BuildMemberListStub(getRootDomain, threadAttach, threadDetach, getItems,
                                                    getName, classHandle, iterSlotAddr, bufferAddr,
-                                                   countAddr, kMaxMembers);
+                                                   countAddr, kMaxMembers, classInit);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
     platform::FreeMemory(handle, cave);
     return {};

@@ -12,9 +12,21 @@
 typedef struct { int dummy; } FakeDomain;
 typedef struct { int dummy; } FakeThread;
 
+typedef struct FakeClass FakeClass;
+
 typedef struct {
   const char* name;
   int offset; // field offset within an instance, as mono_field_get_offset returns
+  // The class this field is actually declared on, as mono_field_get_parent
+  // returns — stamped lazily by whichever getter (mono_class_get_fields /
+  // mono_class_get_field_from_name) hands the field out, rather than at
+  // static-init time, since FakeField is a by-value member of FakeClass
+  // itself (a field can't point at its own not-yet-fully-initialized
+  // containing struct in a static initializer). None of this fixture's
+  // classes model real inheritance, so "the class it was fetched from" and
+  // "the class that declares it" are always the same thing here — a safe
+  // subset of the real relationship mono_field_get_parent describes.
+  FakeClass* owner;
 } FakeField;
 
 typedef struct {
@@ -32,7 +44,7 @@ typedef struct {
   unsigned char staticData[2048];
 } FakeVTable;
 
-typedef struct {
+struct FakeClass {
   const char* namespaceName;
   const char* className;
   FakeField fields[2];
@@ -40,7 +52,7 @@ typedef struct {
   FakeMethod methods[2];
   int methodCount;
   FakeVTable vtable; // one per class, matching real Mono's per-domain vtable
-} FakeClass;
+};
 
 // An image owns its own class list — mono_class_from_name searches only
 // within it, not a single global table. This is load-bearing for testing
@@ -119,6 +131,7 @@ __declspec(dllexport) FakeField* __stdcall mono_class_get_fields(FakeClass* klas
   intptr_t index = (intptr_t)*iter;
   if (index >= klass->fieldCount) return NULL;
   *iter = (void*)(index + 1);
+  klass->fields[index].owner = klass; // see FakeField.owner's comment
   return &klass->fields[index];
 }
 
@@ -166,6 +179,54 @@ __declspec(dllexport) const char* __stdcall mono_method_get_name(FakeMethod* met
 // points at real machine code.
 __declspec(dllexport) void* __stdcall mono_compile_method(FakeMethod* method) {
   return (void*)method;
+}
+
+// Real signature: mono_class_get_field_from_name(MonoClass*, const char*)
+// -> MonoClassField*. Unlike mono_class_get_fields (an iterator over a
+// class's OWN declared fields only), the real function also walks to a
+// parent class — this fixture has no parent-class concept to walk, so it's
+// a direct name search over `klass`'s own fields, a safe subset of real
+// Mono's behavior for every fixture class (none of which model
+// inheritance).
+__declspec(dllexport) FakeField* __stdcall mono_class_get_field_from_name(
+    FakeClass* klass, const char* name) {
+  for (int i = 0; i < klass->fieldCount; i++) {
+    if (strcmp(klass->fields[i].name, name) == 0) {
+      klass->fields[i].owner = klass; // see FakeField.owner's comment
+      return &klass->fields[i];
+    }
+  }
+  return NULL;
+}
+
+// Real signature: mono_field_get_parent(MonoClassField*) -> MonoClass*, the
+// class that actually declares the field (see FakeField.owner's comment).
+__declspec(dllexport) FakeClass* __stdcall mono_field_get_parent(FakeField* field) {
+  return field->owner;
+}
+
+// Real signature: mono_class_get_method_from_name(MonoClass*, const char*,
+// int param_count) -> MonoMethod*. Same fixture-vs-real relationship as
+// mono_class_get_field_from_name above; param_count is ignored here since
+// no fixture method is overloaded.
+__declspec(dllexport) FakeMethod* __stdcall mono_class_get_method_from_name(
+    FakeClass* klass, const char* name, int param_count) {
+  (void)param_count;
+  for (int i = 0; i < klass->methodCount; i++) {
+    if (strcmp(klass->methods[i].name, name) == 0) return &klass->methods[i];
+  }
+  return NULL;
+}
+
+// Real mono_class_init forces a class's metadata (fields, methods, vtable)
+// to be fully set up before introspecting it. This fixture's classes are
+// always fully populated up front, so there is nothing to do — present
+// only so mono_bridge.cc's optional mono_class_init call resolves and
+// exercises the same code path it does against a real mono.dll, rather
+// than silently taking the "older Mono build without this export" branch
+// in every test.
+__declspec(dllexport) void __stdcall mono_class_init(FakeClass* klass) {
+  (void)klass;
 }
 
 typedef void (__stdcall *ForeachCallback)(void* data, void* userData);
