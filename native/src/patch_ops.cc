@@ -1,5 +1,6 @@
 #include "patch_ops.h"
 #include "protected_write.h"
+#include "process_utils.h"
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -278,6 +279,14 @@ Napi::Value ScanAob(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  // Same reasoning as scanFirst/scanNext in scanner.cc: a dead handle would
+  // otherwise just walk to zero hits, indistinguishable from a real "not
+  // found in this process".
+  if (!IsProcessAlive(reinterpret_cast<uintptr_t>(h))) {
+    Napi::Error::New(env, "process is no longer running (it may have crashed or exited) — re-attach")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
   std::string signature = info[1].As<Napi::String>().Utf8Value();
 
   std::vector<PatternByte> pattern;

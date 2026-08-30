@@ -15,11 +15,32 @@ export function registerScanTools(server: McpServer): void {
   server.registerTool(
     'scan_first',
     {
-      description: 'First-pass memory scan for a value of the given data type. Returns matching addresses.',
-      inputSchema: { handle: z.number().int(), dataType: dataTypeSchema, value: z.number() }
+      description:
+        'First-pass memory scan for a value of the given data type. Returns matching addresses. ' +
+        'Optionally bounded to an address range (rangeStart/rangeEnd, same convention as scan_aob) — ' +
+        'narrowing to a known module or heap segment avoids sweeping a whole process, which matters most ' +
+        'on a GC-heavy Mono/Unity target where an unbounded sweep can return thousands of noise hits.',
+      inputSchema: {
+        handle: z.number().int(),
+        dataType: dataTypeSchema,
+        value: z.number(),
+        rangeStart: z.string().optional(),
+        rangeEnd: z.string().optional()
+      }
     },
-    async ({ handle, dataType, value }: { handle: number; dataType: DataType; value: number }) =>
-      ok(await addon.scanFirst(handle, dataType, value))
+    async ({
+      handle,
+      dataType,
+      value,
+      rangeStart,
+      rangeEnd
+    }: {
+      handle: number
+      dataType: DataType
+      value: number
+      rangeStart?: string
+      rangeEnd?: string
+    }) => ok(await addon.scanFirst(handle, dataType, value, rangeStart, rangeEnd))
   )
 
   server.registerTool(

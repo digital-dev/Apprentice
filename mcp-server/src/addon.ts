@@ -45,8 +45,13 @@ export interface CaughtInstruction {
 export const listProcesses = (): ProcessInfo[] => addon.listProcesses()
 export const attach = (pid: number): AttachResult => addon.attach(pid)
 export const listModules = (handle: number): ModuleInfo[] => addon.listModules(handle)
-export const scanFirst = (handle: number, dataType: DataType, value: number): Promise<Candidate[]> =>
-  addon.scanFirst(handle, dataType, value)
+export const scanFirst = (
+  handle: number,
+  dataType: DataType,
+  value: number,
+  rangeStart?: string,
+  rangeEnd?: string
+): Promise<Candidate[]> => addon.scanFirst(handle, dataType, value, rangeStart, rangeEnd)
 export const scanNext = (
   handle: number,
   candidates: Candidate[],

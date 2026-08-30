@@ -66,6 +66,15 @@ Napi::Value Attach(const Napi::CallbackInfo& info) {
   return result;
 }
 
+bool IsProcessAlive(uintptr_t handle) {
+  DWORD exitCode = 0;
+  // GetExitCodeProcess succeeds even on a dead process (that's the whole
+  // point of the call) — it's the exitCode value, not the return value,
+  // that says whether the process is still running.
+  if (!GetExitCodeProcess(reinterpret_cast<HANDLE>(handle), &exitCode)) return false;
+  return exitCode == STILL_ACTIVE;
+}
+
 Napi::Value Detach(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 1 || !info[0].IsNumber()) {

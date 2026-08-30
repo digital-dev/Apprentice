@@ -1,5 +1,6 @@
 #include "scanner.h"
 #include "value_type.h"
+#include "process_utils.h"
 #include <windows.h>
 #include <vector>
 #include <string>
@@ -79,7 +80,15 @@ struct AddressValue {
 // The actual memory walk, kept free of any Napi:: types so it's safe to run
 // on a background thread (see ScanFirstWorker below) — Napi::Env/Value are
 // not thread-safe and must only be touched on the JS thread.
-std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double target) {
+// `rangeStart`/`rangeEnd` are inclusive-exclusive bounds, same convention as
+// RunScanAob in patch_ops.cc. rangeEnd == 0 means "no upper bound" — the
+// existing unbounded behaviour, byte for byte, when both are left at 0.
+// Bounding lets a caller who already knows roughly where the live state
+// lives (a module's range, a heap segment from an earlier scan) skip
+// sweeping the rest of a large/GC-heavy process, which is both faster and
+// leaves less total surface for a fragile target to fault on mid-scan.
+std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double target,
+                                        uintptr_t rangeStart, uintptr_t rangeEnd) {
   std::vector<AddressValue> out;
   bool isFloat = IsFloatKind(spec.kind);
   // Cheat Engine convention: scan on 4-byte alignment regardless of value
@@ -89,16 +98,17 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
   size_t stride = spec.size <= 4 ? spec.size : 4;
 
   MEMORY_BASIC_INFORMATION mbi;
-  uintptr_t addr = 0;
+  uintptr_t addr = rangeStart;
   while (out.size() < kMaxScanResults &&
          VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+    const uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+    if (rangeEnd != 0 && regionBase >= rangeEnd) break;
     bool readable = (mbi.State == MEM_COMMIT) &&
         (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
         !(mbi.Protect & PAGE_GUARD);
 
     if (readable && mbi.RegionSize >= spec.size) {
       const size_t regionSize = (size_t)mbi.RegionSize;
-      const uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
       // A value starting at the last offset this chunk owns runs
       // (spec.size - 1) bytes past the chunk — read that tail too, so a
       // boundary-straddling value is complete in the buffer instead of
@@ -124,8 +134,15 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
              offset += stride) {
           double value = InterpretAsDouble(buffer.data() + offset, spec);
           if (ValuesEqual(value, target, isFloat)) {
-            out.push_back({regionBase + chunkOffset + offset, value});
-            if (out.size() >= kMaxScanResults) break;
+            uintptr_t hit = regionBase + chunkOffset + offset;
+            // VirtualQueryEx(addr) returns the region CONTAINING addr, so the
+            // very first region walked can start before rangeStart, and the
+            // last one can run past rangeEnd — filter at the hit itself the
+            // same way RunScanAob does, not just at the region level above.
+            if (hit >= rangeStart && (rangeEnd == 0 || hit < rangeEnd)) {
+              out.push_back({hit, value});
+              if (out.size() >= kMaxScanResults) break;
+            }
           }
         }
         if (out.size() >= kMaxScanResults) break;
@@ -148,11 +165,14 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
 // which is indistinguishable from a hang to the user.
 class ScanFirstWorker : public Napi::AsyncWorker {
  public:
-  ScanFirstWorker(Napi::Env env, HANDLE handle, ValueSpec spec, double target)
+  ScanFirstWorker(Napi::Env env, HANDLE handle, ValueSpec spec, double target,
+                  uintptr_t rangeStart, uintptr_t rangeEnd)
       : Napi::AsyncWorker(env),
         handle_(handle),
         spec_(spec),
         target_(target),
+        rangeStart_(rangeStart),
+        rangeEnd_(rangeEnd),
         deferred_(Napi::Promise::Deferred::New(env)) {}
 
   Napi::Promise GetPromise() { return deferred_.Promise(); }
@@ -165,7 +185,7 @@ class ScanFirstWorker : public Napi::AsyncWorker {
   // promise. Pure safety net: the success path is unchanged.
   void Execute() override {
     try {
-      results_ = RunScanFirst(handle_, spec_, target_);
+      results_ = RunScanFirst(handle_, spec_, target_, rangeStart_, rangeEnd_);
     } catch (const std::exception& e) {
       SetError(e.what());
     } catch (...) {
@@ -191,6 +211,8 @@ class ScanFirstWorker : public Napi::AsyncWorker {
   HANDLE handle_;
   ValueSpec spec_;
   double target_;
+  uintptr_t rangeStart_;
+  uintptr_t rangeEnd_;
   std::vector<AddressValue> results_;
   Napi::Promise::Deferred deferred_;
 };
@@ -283,6 +305,15 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  // A stale handle (process crashed/exited since attach) would otherwise
+  // walk to an empty result — indistinguishable from "scanned everything,
+  // found no matches" — which is how a dead-process handle burned an entire
+  // scan/narrow cycle silently. Fail fast with an unambiguous error instead.
+  if (!IsProcessAlive(reinterpret_cast<uintptr_t>(h))) {
+    Napi::Error::New(env, "process is no longer running (it may have crashed or exited) — re-attach")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
   std::string dataType = info[1].As<Napi::String>().Utf8Value();
   auto specOpt = SpecForDataType(dataType);
   if (!specOpt) {
@@ -291,8 +322,14 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
     return env.Null();
   }
   double target = info[2].As<Napi::Number>().DoubleValue();
+  // Optional, same convention as scanAob: (rangeStart, rangeEnd) as hex
+  // strings, inclusive-exclusive, defaulting to 0/0 ("no bound") so an
+  // unbounded call scans exactly as before.
+  uintptr_t rangeStart = 0, rangeEnd = 0;
+  if (info.Length() >= 4 && info[3].IsString()) rangeStart = ParseHex(info[3].As<Napi::String>().Utf8Value());
+  if (info.Length() >= 5 && info[4].IsString()) rangeEnd = ParseHex(info[4].As<Napi::String>().Utf8Value());
 
-  auto* worker = new ScanFirstWorker(env, h, *specOpt, target);
+  auto* worker = new ScanFirstWorker(env, h, *specOpt, target, rangeStart, rangeEnd);
   Napi::Promise promise = worker->GetPromise();
   worker->Queue();
   return promise;
@@ -302,6 +339,13 @@ Napi::Value ScanNext(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   HANDLE h = reinterpret_cast<HANDLE>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  // Same reasoning as ScanFirst: without this, a dead handle just reads
+  // "0 of N candidates survived" — indistinguishable from a real narrow.
+  if (!IsProcessAlive(reinterpret_cast<uintptr_t>(h))) {
+    Napi::Error::New(env, "process is no longer running (it may have crashed or exited) — re-attach")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
   Napi::Array jsCandidates = info[1].As<Napi::Array>();
   std::string dataType = info[2].As<Napi::String>().Utf8Value();
   auto specOpt = SpecForDataType(dataType);
