@@ -39,6 +39,29 @@ describe('FreezeLoop', () => {
     loop.stop()
   })
 
+  // Regression coverage for activeCheats(): the quit/switch-away path in
+  // ipc.ts (restoreActiveFreezeCheats) needs a snapshot of every active
+  // cheat to write its offValue back through the still-live process handle
+  // before detaching — this is the only way it can find them, since
+  // FreezeLoop's `active` map is private.
+  it('activeCheats returns every currently-enabled cheat', () => {
+    const other: CheatDefinition = { ...cheat, id: 'godmode', value: 1 }
+    const loop = new FreezeLoop(vi.fn(), 100, DEGRADE_AFTER)
+    loop.enable(cheat)
+    loop.enable(other)
+
+    expect(loop.activeCheats()).toEqual(expect.arrayContaining([cheat, other]))
+    expect(loop.activeCheats()).toHaveLength(2)
+  })
+
+  it('activeCheats is empty once a cheat is disabled', () => {
+    const loop = new FreezeLoop(vi.fn(), 100, DEGRADE_AFTER)
+    loop.enable(cheat)
+    loop.disable(cheat.id)
+
+    expect(loop.activeCheats()).toEqual([])
+  })
+
   it('stops calling writeFn after disable', async () => {
     const writeFn = vi.fn().mockResolvedValue(true)
     const loop = new FreezeLoop(writeFn, 100, DEGRADE_AFTER)

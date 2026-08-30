@@ -24,6 +24,7 @@ import { importCheatTableWithBudget } from './ctImportSafe'
 import { buildCheatTable } from './ctExport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
 import { FreezeLoop } from './freezeLoop'
+import { CaptureStore } from './captureStore'
 import { monoResolver } from './monoResolver'
 import {
   resolveMonoTargetAddress,
@@ -254,15 +255,27 @@ function writeBit(
   return nativeAddon.writeValue(handle, baseAddress, offsets, dataType, next)
 }
 
-async function writeCheat(handle: number, cheat: CheatDefinition): Promise<boolean> {
+// valuesOverride, when given, supplies the value to write for EACH target
+// by index — a captureOriginal restore's per-target captured readings
+// (CaptureStore's own shape), parallel to cheat.targets. Absent means the
+// original, unconditional behavior: every target driven by its own
+// value/cheat.value as before. A `null` at some index means that target
+// was unreadable at capture time (see CaptureStore's doc) — skipped here
+// rather than writing a bogus value over it.
+async function writeCheat(
+  handle: number,
+  cheat: CheatDefinition,
+  valuesOverride?: (number | null)[]
+): Promise<boolean> {
   let anySucceeded = false
-  for (const target of cheat.targets) {
+  for (const [i, target] of cheat.targets.entries()) {
+    if (valuesOverride && valuesOverride[i] === null) continue
     // Per-target value/dataType override (see MonoTarget.value's doc in
     // store.ts) — lets one cheat drive multiple, differently-typed fields
     // in lockstep. Absent on every target means this behaves exactly as
-    // before: the cheat's own value/dataType, for all targets.
+    // before: the cheat's own value/cheat.value, for all targets.
     const dataType = target.dataType ?? cheat.dataType
-    const value = target.value ?? cheat.value
+    const value = valuesOverride ? (valuesOverride[i] as number) : (target.value ?? cheat.value)
     if (isAnchorTarget(target)) {
       const resolved = resolveAnchor(handle, target)
       if (resolved === null) continue
@@ -368,6 +381,25 @@ const freezeLoop = new FreezeLoop(async (cheat) => {
   return writeCheat(attachedHandle, cheat)
 })
 freezeLoop.start()
+
+// Holds each captureOriginal cheat's pre-freeze readings between its enable
+// and its disable — see captureStore.ts and CheatDefinition.captureOriginal
+// (store.ts) for what this is for.
+const captureStore = new CaptureStore()
+
+// Writes a captureOriginal cheat's restore, if there is one to write: a
+// captured reading exists AND we have a live handle to write it through.
+// Shared by every disable path (toggleFreeze off, delete, and
+// restoreActiveFreezeCheats' quit/switch sweep) so they don't each
+// reimplement "take the capture, write it back, tolerate no handle."
+// Consumes the capture (via take()) unconditionally once read, even when
+// there's no handle to write through — a stale capture from a process
+// that's already gone is never correct to apply to whatever attaches next.
+async function restoreCapturedCheat(handle: number | null, cheat: CheatDefinition): Promise<void> {
+  const captured = captureStore.take(cheat.id)
+  if (captured === undefined) return
+  if (handle !== null) await writeCheat(handle, cheat, captured)
+}
 
 // The engine's view of the target process. Each call reads the CURRENT
 // attachedHandle rather than capturing one, so the engine keeps working
@@ -504,8 +536,18 @@ function refreshModuleContext(exeName: string): void {
 // previously-attached process's code back while its handle is still valid)
 // and the same module-context refresh, rather than one of the two paths
 // quietly skipping it.
-function attachTo(pid: number, exeName: string): { handle: number; baseAddress: string } {
+async function attachTo(
+  pid: number,
+  exeName: string
+): Promise<{ handle: number; baseAddress: string }> {
   if (attachedHandle !== null && attachedPid !== pid) {
+    // Freeze cheats for the process we're leaving must get their offValue
+    // written back through ITS still-valid handle, same as patchEngine
+    // below does for code patches — see restoreActiveFreezeCheats' comment.
+    // Must run before patchEngine.restoreAll() touches nothing that
+    // matters here, but definitely before attachedHandle is reassigned
+    // further down, which would point writeCheat at the NEW process.
+    await restoreActiveFreezeCheats(attachedHandle)
     patchEngine.restoreAll()
     // patchEngine's bookkeeping just got cleared for the process we're
     // leaving; cheatRuntime's must reset with it. Without this, a manual
@@ -753,6 +795,31 @@ export function startWatching(getWindow: () => BrowserWindow): void {
   watcher.start()
 }
 
+// Writes every active freeze cheat's restore value through the given
+// handle, best-effort, then clears them from the freeze loop — the value-
+// cheat counterpart to patchEngine.restoreAll(), which only ever covered
+// code patches. Shared by releaseTarget() (quit) and attachTo()'s
+// switch-away branch, both of which need to stop and restore a process's
+// cheats through its still-valid handle before moving on. A captureOriginal
+// cheat restores its pre-freeze reading (restoreCapturedCheat); a plain
+// offValue cheat restores that fixed number; a cheat with neither is left
+// untouched (see CheatDefinition.offValue's doc in store.ts — that's its
+// documented "just stop writing" behavior).
+async function restoreActiveFreezeCheats(handle: number | null): Promise<void> {
+  const cheats = freezeLoop.activeCheats()
+  await Promise.all(
+    cheats.map((c) => (c.captureOriginal ? restoreCapturedCheat(handle, c) : Promise.resolve()))
+  )
+  if (handle !== null) {
+    await Promise.all(
+      cheats
+        .filter((c) => !c.captureOriginal && c.offValue !== undefined)
+        .map((c) => writeCheat(handle, { ...c, value: c.offValue as number }))
+    )
+  }
+  for (const cheat of cheats) freezeLoop.disable(cheat.id)
+}
+
 // Called on app quit (from index.ts) so Tamper never leaves a game's code
 // modified after it closes.
 export function restoreAllPatches(): void {
@@ -770,7 +837,7 @@ export function restoreAllPatches(): void {
 // capture, which is exactly how closing Tamper took Valheim down with it.
 //
 // Patches are restored second, while the process handle is still valid.
-export function releaseTarget(): void {
+export async function releaseTarget(): Promise<void> {
   try {
     nativeAddon.stopWriteWatch() // clears the breakpoints, then detaches
   } catch {
@@ -785,6 +852,12 @@ export function releaseTarget(): void {
   // states to idle without writing anything, which is fine here since
   // restoreAll() is the thing that actually puts bytes back.
   cheatRuntime.processExited()
+  // Freeze/value cheats' offValue must go back too, through the still-valid
+  // handle, before it's detached below — patchEngine.restoreAll() only ever
+  // covered code patches, leaving an active value cheat (e.g. a debug flag
+  // byte the game never touches back) permanently stuck at its cheat value
+  // after quitting. See restoreActiveFreezeCheats' own comment.
+  await restoreActiveFreezeCheats(attachedHandle)
   patchEngine.restoreAll()
   hotkeyManager.unregisterAll()
   for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
@@ -870,18 +943,27 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   })
 
   ipcMain.handle('cheats:delete', async (_e, exeName: string, cheatId: string) => {
-    // A deleted value cheat with an offValue is the same "still armed,
-    // about to lose its record" situation toggleFreeze's disable handles —
-    // see CheatDefinition.offValue's doc in store.ts. Must run before
+    // A deleted value cheat with a captureOriginal or offValue restore is
+    // the same "still armed, about to lose its record" situation
+    // toggleFreeze's disable handles — see CheatDefinition.offValue's and
+    // .captureOriginal's docs in store.ts. Must run before
     // freezeLoop.disable/deleteCheat below, while the stored definition
     // (and freezeLoop's own copy, if this cheat happens to be a still-
     // active flag) is still around to write from.
-    if (freezeLoop.isEnabled(cheatId) && attachedHandle !== null) {
+    if (freezeLoop.isEnabled(cheatId)) {
       const stored = loadCheats(exeName).find((c) => c.id === cheatId)
-      if (stored && !isPatchCheat(stored) && !isScriptCheat(stored) && stored.offValue !== undefined) {
-        await writeCheat(attachedHandle, { ...stored, value: stored.offValue })
+      if (stored && !isPatchCheat(stored) && !isScriptCheat(stored)) {
+        if (stored.captureOriginal) {
+          await restoreCapturedCheat(attachedHandle, stored)
+        } else if (stored.offValue !== undefined && attachedHandle !== null) {
+          await writeCheat(attachedHandle, { ...stored, value: stored.offValue })
+        }
       }
     }
+    // A capture left behind for a cheat deleted while disabled (never
+    // reached the branch above) must not survive to be inherited by a
+    // future cheat created with the same reused id.
+    captureStore.clear(cheatId)
     freezeLoop.disable(cheatId)
     // A deleted script must not leave its enabled flag and captured `state`
     // behind: ids are reused (a new cheat can be created with the same id
@@ -908,17 +990,35 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle('cheats:toggleFreeze', async (_e, cheat: CheatDefinition, enabled: boolean) => {
     if (enabled) {
+      // Capture each target's LIVE reading before the freeze loop starts
+      // overwriting it — see CheatDefinition.captureOriginal's doc in
+      // store.ts. Must happen before freezeLoop.enable() below, or the
+      // first tick could already have written the cheat's value by the time
+      // this reads "current".
+      if (cheat.captureOriginal && attachedHandle !== null) {
+        const statuses = await verifyCheat(attachedHandle, cheat, null)
+        captureStore.capture(
+          cheat.id,
+          statuses.map((s) => s.value)
+        )
+      }
       freezeLoop.enable(cheat)
       return
     }
-    // See CheatDefinition.offValue's doc in store.ts: a plain freeze
-    // disable never restores anything, which is silently wrong for a field
-    // (e.g. a debug/cheat flag byte) the game itself never touches back to
-    // some other value. Written once, best-effort, before the loop stops
-    // tracking this cheat — a failed write here (target unreachable, no
-    // attached process) is the same "nothing to restore right now" outcome
-    // a stale target has everywhere else, not an error to surface.
-    if (cheat.offValue !== undefined && attachedHandle !== null) {
+    // captureOriginal takes priority over offValue — see
+    // CheatDefinition.captureOriginal's doc in store.ts for why a missing
+    // capture must not fall back to offValue. A plain offValue cheat writes
+    // its fixed number once, best-effort, before the loop stops tracking
+    // this cheat — a failed write here (target unreachable, no attached
+    // process) is the same "nothing to restore right now" outcome a stale
+    // target has everywhere else, not an error to surface. Absent both:
+    // See CheatDefinition.offValue's doc — a plain freeze disable never
+    // restores anything, which is silently wrong for a field (e.g. a
+    // debug/cheat flag byte) the game itself never touches back to some
+    // other value.
+    if (cheat.captureOriginal) {
+      await restoreCapturedCheat(attachedHandle, cheat)
+    } else if (cheat.offValue !== undefined && attachedHandle !== null) {
       await writeCheat(attachedHandle, { ...cheat, value: cheat.offValue })
     }
     freezeLoop.disable(cheat.id)

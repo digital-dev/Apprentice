@@ -62,6 +62,16 @@ export class FreezeLoop {
     return this.active.has(cheatId)
   }
 
+  // Every cheat currently active, so a caller tearing down a process (quit,
+  // switching to a different attach) can write each one's offValue before
+  // dropping it — same restore-on-the-way-out obligation patchEngine.
+  // restoreAll() already fulfills for code patches, just for value cheats.
+  // Snapshot, not a live view: the caller iterates this while also calling
+  // disable() per cheat, which would otherwise mutate `active` mid-iteration.
+  activeCheats(): CheatDefinition[] {
+    return Array.from(this.active.values())
+  }
+
   // Fired once when a cheat crosses from healthy to degraded (all targets
   // have failed for degradeAfterTicks consecutive ticks).
   onDegraded(cb: (cheatId: string) => void): void {

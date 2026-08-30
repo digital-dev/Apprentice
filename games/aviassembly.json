@@ -103,7 +103,7 @@
           "instanceFieldName": "fuelCapacity"
         }
       ],
-      "value": 999999,
+      "value": 5,
       "hotkey": "num6"
     },
     {
@@ -142,6 +142,7 @@
         }
       ],
       "value": 0.01,
+      "captureOriginal": true,
       "hotkey": "num8"
     }
   ]

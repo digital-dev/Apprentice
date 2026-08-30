@@ -173,6 +173,18 @@ export interface CheatDefinition {
   // right offValue for those; a plain value target's off state depends on
   // the field (its normal in-game default, if there is one).
   offValue?: number
+  // Instead of a fixed offValue, capture each target's LIVE value the
+  // instant this cheat is enabled — before the freeze loop writes over it —
+  // and restore those exact captured values on disable. For a field with no
+  // fixed "off" number (e.g. a plane's mass, which varies by build), this is
+  // the only correct restore; a static offValue would be right for one
+  // specific plane and wrong for every other one. Takes priority over
+  // offValue when both are set — offValue is ignored, not used as a
+  // fallback if the capture is somehow missing, since writing a plausible
+  // but wrong static number is worse than writing nothing. See
+  // captureStore.ts for where the captured values actually live between
+  // enable and disable.
+  captureOriginal?: boolean
 }
 
 // A code patch: NOP out the instruction the game uses to write a value,
