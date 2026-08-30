@@ -1,92 +1,116 @@
 # Aviassembly — investigation notes
 
-No `aviassembly.json` profile exists yet — this records what a follow-up
-session needs to pick up cold, and why there's no working cheat despite a
-real investigation.
+**Update:** the `Singleton<T>` blocker below is fixed. `games/aviassembly.json`
+now has working cheats. This file is kept as a record of what was broken, what
+fixed it, and what's still open — read it before touching the mono tooling or
+this profile again.
 
 **Game**: Unity 6000.0.69 (Mono, not IL2CPP), Steam, Facepunch.Steamworks.
 Build/model your own airplane, fly cargo contracts. `mono-2.0-bdwgc.dll` is
 the runtime.
 
-## The blocker: Singleton<T>
+## The two tooling bugs that blocked everything (both fixed)
 
-Every economy/state manager (`MoneyManager`, `ResearchManager`, `GameManager`,
-`ContractManager`, ...) is a MonoBehaviour that inherits Unity's generic
-`Singleton<T>` for its static instance pointer — the class itself declares no
-static field of its own (`mono_list_field_names` on e.g. `MoneyManager`
-returns only `["money"]`). The actual static storage lives on the *inflated*
-`Singleton<MoneyManager>` type, which is a runtime-only MonoClass, not a
-TypeDef in the assembly's metadata table — so it's unreachable by the game-memory
-MCP's `mono_resolve_class`/`mono_static_field_address` (which only walk
-TypeDefs). Confirmed dead end, not a matter of retrying: same result for
-`MoneyManager`, `ResearchManager`, `GameManager`, `InputManager`,
-`AudioManager`, `GraphicsSettings`, `SteamworksManager` (also `mono_list_method_names`
-returned `[]` for every one of these — Assembly-CSharp classes' methods aren't
-enumerable through this MCP either, so a code-patch cheat has no method
-address to anchor to).
+Every economy/state manager (`MoneyManager`, `ResearchManager`,
+`PlaneContainer`, `GameManager`, ...) is a MonoBehaviour that inherits Unity's
+generic `Singleton<T>` for its static instance pointer — the class itself
+declares no static field of its own. Two separate native-tooling bugs made
+this and method listing look unreachable:
 
-This is the same reason Valheim's cheats work and Aviassembly's can't yet:
-Valheim's `Player.m_localPlayer` is a genuine plain static field declared
-directly on `Player`. Aviassembly has nothing structurally equivalent that
-this tooling can reach.
+1. **`mono_list_method_names` returned `[]` for every class, always.** Root
+   cause: `mono_class_get_methods` needs the class's metadata fully set up
+   first (`mono_class_setup_methods`, triggered by `mono_class_init`) —
+   `mono_class_get_fields` happens not to need this, which is why field
+   listing looked fine while method listing looked universally broken. Fix:
+   `native/src/mono_bridge.cc`'s `BuildMemberListStub` now calls
+   `mono_class_init(classHandle)` once, right after attach, before the
+   iteration loop (optional — skipped if the export is absent, matching
+   every other "older Mono build" fallback in that file).
 
-## What field types actually are (confirmed, don't re-guess)
+2. **`mono_static_field_address` couldn't resolve an inherited static field**
+   (`Singleton<T>`'s `m_Instance`). Two compounding causes:
+   - The old resolver (`ResolveMemberSingleThread`/`BuildMemberSearchStub`)
+     manually iterated `mono_class_get_fields` and string-compared names —
+     that iterator only ever sees a class's OWN declared fields, never a
+     parent's. Fixed by replacing it with `ResolveMemberByNameSingleThread`,
+     which calls Mono's own `mono_class_get_field_from_name` /
+     `mono_class_get_method_from_name` directly — those walk the class
+     hierarchy in Mono's native code, including to an inflated generic
+     parent like `Singleton<MoneyManager>`.
+   - Even with the field found, using the ORIGINAL class's vtable
+     (`mono_class_vtable(classHandle)`) to locate the static-data blob was
+     wrong for an inherited field: C# static-field storage is never
+     duplicated per subclass, so it belongs to whichever class actually
+     DECLARES the field. Fixed with a new dedicated resolver
+     (`ResolveStaticFieldAddressSingleThread` / `BuildStaticFieldAddressStub`)
+     that calls `mono_field_get_parent(fieldPtr)` to get the field's real
+     owning class, and composes the vtable/static-data address off of
+     *that*, not the originally-passed classHandle.
 
-Cross-referenced against a real reverse-engineered save-file parser
-([L-at-nnes/aviassembly-tools](https://github.com/L-at-nnes/aviassembly-tools),
-a `.plane` save editor — legitimate, no live-memory cheat, no scam links) and
-verified live in-process:
+Both fixes are native-only (`native/src/mono_bridge.cc`), covered by
+`tests/native/mono_bridge.test.ts` (the fake host, `test-harness/probe_mono.c`,
+needed `mono_class_get_field_from_name`, `mono_class_get_method_from_name`,
+`mono_class_init`, and `mono_field_get_parent` added to it — none existed
+before), and verified live against the real game: `MoneyManager.money`,
+`ResearchManager.researchPoints`/`advancedResearchPoints`, and
+`PlaneContainer`'s fields all resolve and read back values matching the
+in-game HUD in real time.
 
-| Field | Type | Notes |
-|---|---|---|
-| `MoneyManager.money` | **`float`** | Not int32 — this was the actual reason 6 straight int32 value-scans failed to converge across three separate crash/relaunch cycles. Live value reads as `224.99990844726562` for a displayed "225", i.e. genuinely float-backed, not tweened (confirmed: the HUD number jumps, doesn't animate). |
-| `ResearchManager.researchPoints` | `int32` ("scrap" in the save format) | |
-| `ResearchManager.advancedResearchPoints` | `int32` ("advancedScrap") | |
-| `FuelTank.capacity` | not yet verified live | |
-| `Battery.volume` | not yet verified live | |
-| `CargoInventory(UI).cargoSpace` | not yet verified live | |
+## Field map (confirmed live, current as of this write-up)
 
-Once scanning as `float` and bounding the sweep (see below), money converged
-in one narrow: two addresses tracked the exact same value in lockstep across
-three independent changes (225→300→225) — that's the real field (likely one
-copy plus a UI-bound mirror). Addresses are **not reusable** — pure GC-heap,
-no module anchor, different every launch.
+| Class | Field | Type | Notes |
+|---|---|---|---|
+| `MoneyManager` | `money` | `float` | Not int32 — this was *also* why 6 straight int32 value-scans failed before the Singleton<T> fix existed. Save-format cross-reference: [L-at-nnes/aviassembly-tools](https://github.com/L-at-nnes/aviassembly-tools) (legit save-file editor, no scam links). |
+| `ResearchManager` | `researchPoints` | `int32` | "scrap" in the save format |
+| `ResearchManager` | `advancedResearchPoints` | `int32` | "advancedScrap" |
+| `PlaneContainer` | `fuel` / `fuelCapacity` | `float` | current / max |
+| `PlaneContainer` | `electricity` / `electricityStorageCapacity` | `float` | current / max |
+| `PlaneContainer` | `mass` | `float` | |
+| `PlaneContainer` | `<cargoVolume>k__BackingField` | `float` | property-backed field — needs the literal `<Name>k__BackingField` form |
+| `PlaneContainer` | `controller` | object ref | → `PlaneController` instance |
+| `PlaneController` | `<Exploded>k__BackingField` | `int8`/bool | reached via `PlaneContainer.controller` (two-hop) |
 
-## Why this can't become a `games/aviassembly.json` entry yet
+`PlaneContainer` is also `Singleton<T>`-based and holds the currently
+active/built plane — this is the root the whole Vehicles cheat category
+needed and didn't have before.
 
-The schema (see `src/main/profile.ts`) needs either a module+RVA offset chain
-(stable across restarts because a module's base is fixed) or a mono
-`className`/`staticFieldName` root (re-resolved fresh on every attach). A bare
-heap address has neither — Apprentice has no way to relocate it on the next
-launch. Getting a real cheat here needs one of:
+## What's in `games/aviassembly.json` now
 
-1. A fix to the mono MCP tooling to resolve inflated-generic (`Singleton<T>`)
-   static fields — this is the one that unblocks everything else too.
-2. An actual pointer chain to the `MoneyManager` instance found some other
-   way (e.g. static analysis of decompiled IL, outside this toolset).
-3. Accept a manual per-session re-scan workflow using Apprentice's own
-   Scanner screen (same mechanism used here) — works today, just not
-   persistent.
+Unlimited Money, Set Research Points, Set Advanced Research Points,
+Unbreakable Plane (two-hop via `PlaneContainer.controller` +
+`pointerFieldOffset`), Unlimited Cargo Space, Unlimited Fuel (freezes both
+`fuel` and `fuelCapacity` together so the UI bar doesn't look broken),
+Unlimited Electricity (same pattern), Low Plane Mass.
 
-## Process stability (separate issue, not caused by scanning)
+## Still open — needs patch-mode (`scale`/`guard`), not a field freeze
 
-Aviassembly crashed repeatedly across this investigation — faults inside
+`mono_list_method_names` now works, which is the one thing this whole list
+was blocked on — none of these are structurally hard anymore, just
+unstarted:
+
+- **Money Spent % / Money Gain Multiplier**: `MoneyManager.ChangeMoneyAmount`
+  is the method (confirmed to exist: `["Start","ChangeMoneyAmount",
+  "HasEnoughMoney","Save","Load",".ctor"]`). Needs `mono_compile_method` to
+  get its JIT'd entry address, then disassemble to find the actual
+  add/subtract instruction to scale — same technique as Valheim's
+  `mono-damage-multiplier` patch.
+- **Fuel/Electricity Consumption %**: same idea, on whatever method decrements
+  `fuel`/`electricity` per tick (not yet identified — check `PlaneContainer`'s
+  `FixedUpdate`/`ApplyLiniarDrag` or similar).
+- **No Wing Stress / Wing Stress Resistance**: needs the `Wing` class's own
+  stress field/method — not yet inspected. `PlaneContainer.planeParts` holds
+  the part list; reaching a *specific* part instance (not just the container)
+  isn't expressible in the current `MonoTarget` schema (no array-index hop),
+  so this may need a different approach (an AOB-anchored patch inside `Wing`
+  itself, keyed off `this`, rather than a value-freeze target).
+- **Plane Mass %**: `Low Plane Mass` (a freeze) is in the profile now as a
+  practical stand-in; a true scale-mode version would patch `ChangeMass`.
+
+## Process stability (unrelated to any of the above)
+
+Aviassembly crashed repeatedly early in this investigation — faults inside
 `mono-2.0-bdwgc.dll` (`0xc0000005`) and once in `KERNELBASE.dll`
-(`0xe0000001`), per Windows Event Log. Initially suspected as caused by the
-scanning tool; on rereading `native/src/scanner.cc` this doesn't hold up
-mechanically (scan is read-only `ReadProcessMemory`, skips `PAGE_GUARD`
-regions, never writes) — more likely this build is just unstable on its own.
-Not confirmed either way; worth checking Steam file integrity / GPU driver /
-`Player-prev.log` if it keeps happening.
-
-## Apprentice changes made as a result of this session
-
-`scan_first`/`scan_next`/`scan_aob` now check the process handle is still
-alive before walking memory (clear "process exited/crashed" error instead of
-a misleading empty result on a stale handle — this cost most of the wasted
-turns in this session, independent of the money-scan problem above).
-`scan_first` also gained optional `rangeStart`/`rangeEnd` bounds, matching
-`scan_aob`'s existing convention — cuts sweep time and noise on a large
-GC-heavy Mono heap like this one. Both are additive; neither touches the scan
-algorithm Valheim/Elden Ring profiles depend on (550/551 tests pass, 1
-pre-existing unrelated skip).
+(`0xe0000001`), per Windows Event Log. Ruled out the scanning tool as cause
+(read-only, skips `PAGE_GUARD`, no writes) — more likely this build is just
+unstable on its own. Didn't recur once the session moved off blind scanning
+onto direct mono resolution.

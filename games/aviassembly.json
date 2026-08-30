@@ -1,0 +1,148 @@
+{
+  "schema": 2,
+  "exe": "Aviassembly",
+  "modules": {},
+  "cheats": [
+    {
+      "id": "mono-unlimited-money",
+      "name": "Unlimited Money",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "MoneyManager",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "money"
+        }
+      ],
+      "value": 999999,
+      "hotkey": "num1"
+    },
+    {
+      "id": "mono-set-research-points",
+      "name": "Set Research Points",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "ResearchManager",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "researchPoints"
+        }
+      ],
+      "value": 999999,
+      "hotkey": "num2"
+    },
+    {
+      "id": "mono-set-advanced-research-points",
+      "name": "Set Advanced Research Points",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "ResearchManager",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "advancedResearchPoints"
+        }
+      ],
+      "value": 999999,
+      "hotkey": "num3"
+    },
+    {
+      "id": "mono-unbreakable-plane",
+      "name": "Unbreakable Plane",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "controller",
+          "pointerFieldOffset": "0xb8"
+        }
+      ],
+      "value": 0,
+      "hotkey": "num4"
+    },
+    {
+      "id": "mono-unlimited-cargo-space",
+      "name": "Unlimited Cargo Space",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "<cargoVolume>k__BackingField"
+        }
+      ],
+      "value": 999999,
+      "hotkey": "num5"
+    },
+    {
+      "id": "mono-unlimited-fuel",
+      "name": "Unlimited Fuel",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "fuel"
+        },
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "fuelCapacity"
+        }
+      ],
+      "value": 999999,
+      "hotkey": "num6"
+    },
+    {
+      "id": "mono-unlimited-electricity",
+      "name": "Unlimited Electricity",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "electricity"
+        },
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "electricityStorageCapacity"
+        }
+      ],
+      "value": 999999,
+      "hotkey": "num7"
+    },
+    {
+      "id": "mono-low-plane-mass",
+      "name": "Low Plane Mass",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "mass"
+        }
+      ],
+      "value": 0.01,
+      "hotkey": "num8"
+    }
+  ]
+}
