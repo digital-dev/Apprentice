@@ -235,9 +235,40 @@ valuable without a fixed base address).
 +180  MaxFullStomach float        = 100.0
 ```
 
-MaxHP not yet found — not in the ±72-byte window read around HP. Either
-further out, or genuinely not cached in this struct (computed on read from
-level/stats elsewhere, only ever *written* here by the cheat).
+MaxHP not found anywhere in a 2KB window around the struct base — resolved
+why: the trainer's *own* script hooks it with a separate signature
+(`aobeditmaxhealth`) patching a **computed** max-health formula's result
+(`cvtdq2ps`, int-to-float convert), not a stored field read. It isn't
+cached in `SaveParameter` at all. Not a blocker for "unlimited health" —
+freezing current HP high is sufficient for invincibility; MaxHP only
+matters for the UI cap and overheal clamp, both irrelevant once HP is
+force-frozen.
+
+Struct offsets confirmed this round (cross-checked live against on-screen
+values — HP 9660, Shield 1520, hunger 95 → read back 94.7, all exact):
+
+```
++0x448  SParam_HP           int64, ×1000
++0x454  SParam_FullStomach  float
++0x4D0  SParam_ShieldHP        int64, ×1000  (was misidentified as
++0x4D8  SParam_ShieldMaxHP     int64, ×1000   Stamina earlier this session
+                                               — corrected once the user
+                                               clarified the on-screen
+                                               number was Shield, not STAM)
++0x4FC  SParam_MaxFullStomach  float
+```
+
+Two more candidates seen but **not shipped** — no on-screen value to
+cross-check them against, and this project's rule is never install
+without verification: `+0x4E8` (100000, plausible `SParam_CraftSpeed`
+default) and `+0x4F0` (600000, unidentified — possibly a base
+Attack/Defense/Support stat).
+
+**Current Stamina/MaxSP is NOT in this struct** — confirmed from the
+trainer's own script: it writes current stamina through `Param_SP` on
+`PC_CharacterParameterComponent`, a *different* object than
+`SaveParameter`. Needs its own capture (same method, different anchor)
+— not done yet.
 
 ## SOLVED for HP — real durable anchor found
 

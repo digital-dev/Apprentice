@@ -32,6 +32,38 @@
       ],
       "value": 99999000,
       "hotkey": "num1"
+    },
+    {
+      "id": "palworld-unlimited-shield",
+      "name": "Unlimited Shield",
+      "dataType": "int64",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "palworld-capture-save-parameter",
+          "offset": "0x4d0",
+          "dataType": "int64"
+        }
+      ],
+      "value": 99999000,
+      "hotkey": "num2"
+    },
+    {
+      "id": "palworld-never-hungry",
+      "name": "Never Hungry",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "palworld-capture-save-parameter",
+          "offset": "0x454",
+          "dataType": "float"
+        }
+      ],
+      "value": 100,
+      "hotkey": "num3"
     }
   ]
 }
