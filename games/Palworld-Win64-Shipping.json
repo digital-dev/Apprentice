@@ -1,0 +1,37 @@
+{
+  "schema": 2,
+  "exe": "Palworld-Win64-Shipping",
+  "modules": {},
+  "cheats": [
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "palworld-capture-save-parameter",
+      "name": "Capture: Player SaveParameter",
+      "originalBytes": "488d8b48040000",
+      "length": 7,
+      "signature": "e8 7f 5f c2 fd 48 8d 8b e8 01 00 00 c7 83 0c 06 00 00 00 00 00 00 48 8d 54 24 60 c7 44 24 60 00 00 00 00 c7 44 24 64 00 00 80 3f e8 54 5f c2 fd 48 8b 7c 24 38 48 8d 8b 48 04 00 00",
+      "signatureOffset": 53,
+      "moduleName": "Palworld-Win64-Shipping.exe",
+      "moduleOffset": "0x2f7ff91",
+      "baseRegister": "rbx",
+      "internal": true
+    },
+    {
+      "id": "palworld-unlimited-health",
+      "name": "Unlimited Health",
+      "dataType": "int64",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "palworld-capture-save-parameter",
+          "offset": "0x448",
+          "dataType": "int64"
+        }
+      ],
+      "value": 99999000,
+      "hotkey": "num1"
+    }
+  ]
+}

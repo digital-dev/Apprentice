@@ -239,6 +239,46 @@ MaxHP not yet found — not in the ±72-byte window read around HP. Either
 further out, or genuinely not cached in this struct (computed on read from
 level/stats elsewhere, only ever *written* here by the cheat).
 
+## SOLVED for HP — real durable anchor found
+
+The new `registers`/`stackTop` capture (this session, `write_watch.cc`)
+found it directly: watching the HP address again, `stackTop[0]` landed at
+`Palworld-Win64-Shipping.exe+0x2F7FFA2` — inside the module, a genuine
+return address (this call site has no prologue push before the setter
+call, so slot 0 was exactly right). Disassembling the caller confirmed
+everything:
+
+```asm
+Palworld-Win64-Shipping.exe+0x2F7FF91: lea rcx, [rbx+0x448]   ; rcx = &SaveParameter.HP
+Palworld-Win64-Shipping.exe+0x2F7FF98: lea rdx, [rsp+0x58]    ; source value
+Palworld-Win64-Shipping.exe+0x2F7FF9D: call Palworld-Win64-Shipping.exe+0x33604a0  ; FixedPoint64::operator=
+```
+
+**`SParam_HP = +0x448`** into `PalIndividualCharacterSaveParameter`, and
+`rbx` at that call site is the struct base — confirmed against the
+struct-layout table above (`0x27250862528` [HP's live address this
+session] − `0x272508620e0` [rbx, the struct base] = `0x448`, exact match).
+This is a real, module-relative, restart-durable anchor — a Tamper
+`capture`-mode patch at `+0x2F7FF91` (capture `rbx`) chained to a freeze
+value cheat at `captured + 0x448` gives a genuine, durable "Unlimited
+Health" cheat, no reflection needed for this field at all.
+
+Method now proven end to end: watch → find the shared setter → watch again
+and read `stackTop[0]` → disassemble the caller → real field offset +
+real durable anchor. Repeat per field (MaxHP, Stamina, Shield, ...) — same
+cost each time, but now every step of it is a known, working recipe.
+
+**Shipped as a real cheat**: `games/Palworld-Win64-Shipping.json` — an
+internal `capture`-mode patch at `Palworld-Win64-Shipping.exe+0x2F7FF91`
+(captures `rbx`, the `PalIndividualCharacterSaveParameter` base) chained to
+an `Unlimited Health` freeze cheat at `captured + 0x448`. Signature
+verified live (`scan_aob`, exactly 1 match in the module) before writing
+it. Not yet verified by an actual install through the app (that needs a
+live Tamper session — deliberately didn't bypass the app's own safety
+layers, suspend-threads/protect-write-restore/byte-verify-before-install,
+with a raw script) — next person to touch this: launch Tamper, attach to
+Palworld, toggle it, confirm HP goes to 99999 and stays there.
+
 ## Durable anchor — the open problem this table doesn't solve
 
 The struct base above is a heap address, gone next launch. What's actually
