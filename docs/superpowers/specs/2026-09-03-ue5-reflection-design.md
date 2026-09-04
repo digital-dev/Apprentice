@@ -299,6 +299,33 @@ and read `stackTop[0]` → disassemble the caller → real field offset +
 real durable anchor. Repeat per field (MaxHP, Stamina, Shield, ...) — same
 cost each time, but now every step of it is a known, working recipe.
 
+**Correction, live-tested**: shipped a `Never Hungry` cheat (freeze
+`FullStomach` at `+0x454` to 100.0) alongside HP/Shield, off the same
+anchor. HP and Shield both confirmed genuinely working live (froze at
+99999000, held). Never Hungry did not — the app's own Verify panel showed
+"alive" (reads fine) but a permanent mismatch, and independent MCP reads
+showed a smooth, uninterrupted decline with no write-induced spikes at
+all. Root cause: `FullStomach` decays continuously via game logic every
+tick — a 100ms freeze loop repeatedly setting it structurally cannot win
+that race regardless of which offset it targets (confirmed the offset
+itself was correct: cross-checked live against on-screen hunger multiple
+times, including through a value change). The trainer's own script never
+freezes `FullStomach` for this — it writes `SParam_HungerType` to `0`
+**once**, a flag that disables the decay system itself:
+```asm
+mov eax,[SParam_HungerType]
+mov byte ptr [rcx+rax],0
+```
+Looked for `HungerType`'s offset the same way as everything else (a byte
+dump around the confirmed `MaxFullStomach` field at `+0x4FC`, since the
+trainer's code touches it right after) — found nothing distinctively
+enum-like, all zero through `+0x500`–`+0x530`. Pinning this down needs a
+live differential write-test (try a candidate offset, observe whether
+decay actually stops), which only the real app can do — MCP is read-only,
+can't test writes itself. **Pulled `Never Hungry` from the shipped
+profile** rather than leave a cheat that silently does nothing; HP and
+Shield stay.
+
 **Shipped as a real cheat**: `games/Palworld-Win64-Shipping.json` — an
 internal `capture`-mode patch at `Palworld-Win64-Shipping.exe+0x2F7FF91`
 (captures `rbx`, the `PalIndividualCharacterSaveParameter` base) chained to
