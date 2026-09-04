@@ -27,6 +27,24 @@ export interface DisasmRow {
   text: string
   length: number
 }
+export interface CaughtRegisters {
+  rax: string
+  rbx: string
+  rcx: string
+  rdx: string
+  rsi: string
+  rdi: string
+  rbp: string
+  rsp: string
+  r8: string
+  r9: string
+  r10: string
+  r11: string
+  r12: string
+  r13: string
+  r14: string
+  r15: string
+}
 export interface CaughtInstruction {
   instructionAddress: string
   bytes: string
@@ -40,6 +58,13 @@ export interface CaughtInstruction {
   indexed: boolean
   moduleName: string | null
   moduleOffset: string | null
+  // Full GPR snapshot and the top of the stack at trap time, best-effort —
+  // null only if the thread's context couldn't be read. stackTop[0] is a
+  // genuine return address only when the watched write sits in a leaf
+  // function with no prologue push before it (the common case for a small
+  // setter); otherwise it's just whatever the stack top currently holds.
+  registers: CaughtRegisters | null
+  stackTop: string[] | null
 }
 
 export const listProcesses = (): ProcessInfo[] => addon.listProcesses()

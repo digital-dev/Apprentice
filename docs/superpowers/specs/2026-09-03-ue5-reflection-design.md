@@ -210,6 +210,70 @@ real, running game, the same caveat this file gives Mono signature work.
   process or a bad scan** — the naive value was never in game memory to
   begin with.
 
+## Live-verified struct layout — `PalIndividualCharacterSaveParameter`, this build
+
+Derived empirically (read a 1.5KB window around the confirmed HP address,
+matched known values from what was on-screen in-game at the time — HP
+9660/9660, hunger 97/100, stamina 1520/1520 — against the raw bytes). No
+reflection needed for this: same technique as the `FixedPoint64` find
+above, just widened to a memory dump instead of one write-watch. Offsets
+are relative to the struct instance base captured this session
+(`0x27250862528` for HP specifically — **not stable across a restart**,
+heap allocation; see "durable anchor" below for why this table is still
+valuable without a fixed base address).
+
+```
++0    HP            int64, ×1000  = 9660000   (displayed 9660)
++12   FullStomach   float         = 97.8      (displayed hunger 97/100)
++136  (SP field A)  int64, ×1000  = 1520000   (displayed STAM 1520)
++144  (SP field B)  int64, ×1000  = 1520000   (likely MaxSP — equal because
+                                                full stamina at capture time)
++160  (stat)        int64, ×1000  = 100000    (100 — CraftSpeed candidate)
++168  (stat)        int64, ×1000  = 600000    (unidentified — not yet
+                                                correlated to an on-screen
+                                                value)
++180  MaxFullStomach float        = 100.0
+```
+
+MaxHP not yet found — not in the ±72-byte window read around HP. Either
+further out, or genuinely not cached in this struct (computed on read from
+level/stats elsewhere, only ever *written* here by the cheat).
+
+## Durable anchor — the open problem this table doesn't solve
+
+The struct base above is a heap address, gone next launch. What's actually
+launch-stable is code: `Palworld-Win64-Shipping.exe+0x33604a0` (the tiny
+`FixedPoint64::operator=` leaf — `mov rax,[rdx]; mov [rcx],rax; mov
+rax,rcx; ret`, confirmed live via write-watch, see above). Problem: it's
+shared by every FixedPoint64 field (HP, MaxHP, Stamina, ShieldHP, ...), so
+a `capture`-mode patch installed there catches whichever field wrote most
+recently, not reliably HP. What's actually needed is the **caller's**
+address — the specific call site that's setting HP and only HP — and nothing
+available through this MCP surface exposes a return address
+(`poll_write_watch` gives the writing instruction, not its caller; no
+execution-breakpoint / call-stack primitive is exposed, only the
+data-write kind). Concretely still open:
+
+- Find HP's specific caller (one `call` site in `Palworld-Win64-
+  Shipping.exe`, out of however many call this setter) — needs either an
+  execution breakpoint at the setter's entry with stack-read-back (not
+  currently exposed by the MCP tool, though the underlying native
+  `write_watch.cc` debugger loop may already be capable of it — worth
+  checking before building something new), or brute-force disassembly of
+  the whole module hunting `E8` opcodes whose relative target lands on
+  `0x33604a0` (expensive, `scan_aob` can't compute relative targets on its
+  own).
+- Once found: a `capture`-mode `PatchCheat` (`moduleName:
+  "Palworld-Win64-Shipping.exe"`, `moduleOffset` = that call site) anchors
+  HP the same way Mono targets already do — durable across restarts, no
+  reflection needed for this one field.
+- Repeat per field (Stamina, Shield, FullStomach, ...) — same method, same
+  cost each time. This is the "targeted" scope that was passed over in
+  favor of full UE Explorer; it's turned out to be the faster path to a
+  *working Palworld cheat specifically*, while GObjects/GNames reflection
+  remains the right investment for *general* UE support (any class, any
+  future UE game, not just these known fields).
+
 ## Open items for whoever picks up Phase 1
 
 - Port UE4SS `SigScanner` GObjects/GNames heuristics (`Okaetsu/RE-UE4SS`,

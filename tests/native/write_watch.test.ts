@@ -105,6 +105,21 @@ describe('write watch — capture', () => {
       expect(tok === '??' || /^[0-9a-f]{2}$/.test(tok)).toBe(true)
     }
 
+    // Full GPR snapshot and stack-top read at trap time (added for caller
+    // recovery — see write_watch.cc's Caught struct comment: stackTop[0] is
+    // a real return address only for a leaf function with no prologue push
+    // before the watched write, which this harness command doesn't promise,
+    // so this only checks shape, not that stackTop[0] resolves to anything).
+    expect(insn.registers).not.toBeNull()
+    for (const reg of ['rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rbp', 'rsp',
+                        'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']) {
+      expect(typeof insn.registers[reg]).toBe('string')
+      expect(insn.registers[reg].startsWith('0x')).toBe(true)
+    }
+    expect(Array.isArray(insn.stackTop)).toBe(true)
+    expect(insn.stackTop.length).toBeGreaterThan(0)
+    for (const s of insn.stackTop) expect(s.startsWith('0x')).toBe(true)
+
     const reply = await send('get')
     expect(reply.startsWith('OK')).toBe(true)
   }, 15000)

@@ -65,6 +65,14 @@ struct Caught {
   std::string moduleName;
   uintptr_t moduleOffset = 0;
   bool hasModule = false;
+  // Full GPR snapshot and the top of the stack at trap time, best-effort —
+  // see the comment at the capture site in DecodeCaught for what this can
+  // and can't be trusted to mean (a return address at stackTop[0] only for
+  // a leaf function with no prologue push before the watched write).
+  bool hasRegisters = false;
+  uintptr_t rax = 0, rbx = 0, rcx = 0, rdx = 0, rsi = 0, rdi = 0, rbp = 0, rsp = 0;
+  uintptr_t r8 = 0, r9 = 0, r10 = 0, r11 = 0, r12 = 0, r13 = 0, r14 = 0, r15 = 0;
+  std::vector<uintptr_t> stackTop;
 };
 
 struct Session {
@@ -449,6 +457,32 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
   out.instructionAddress = insnAddr;
   out.length = insn.length;
   out.bytes.assign(bytes, bytes + insn.length);
+
+  // Snapshot the full GPR set and the top of the stack at trap time. For a
+  // leaf function with no prologue push before the watched write — a small
+  // setter being the common case, and exactly the shape that let a captured
+  // FixedPoint64::operator= write reveal its caller's return address — the
+  // stack's top qword at this point IS the return address, since nothing
+  // has pushed since the `call` that entered the function. For anything
+  // deeper (a prologue already ran) this is just whatever sits at the
+  // current stack top: still often useful a slot or two down, but not a
+  // promise that stackTop[0] is a return address in general — best-effort,
+  // for the caller to judge against the disassembled context.
+  if (haveCtx) {
+    out.rax = ctx.Rax; out.rbx = ctx.Rbx; out.rcx = ctx.Rcx; out.rdx = ctx.Rdx;
+    out.rsi = ctx.Rsi; out.rdi = ctx.Rdi; out.rbp = ctx.Rbp; out.rsp = ctx.Rsp;
+    out.r8 = ctx.R8; out.r9 = ctx.R9; out.r10 = ctx.R10; out.r11 = ctx.R11;
+    out.r12 = ctx.R12; out.r13 = ctx.R13; out.r14 = ctx.R14; out.r15 = ctx.R15;
+    out.hasRegisters = true;
+
+    constexpr int kStackQwords = 8;
+    uintptr_t stackBuf[kStackQwords] = {0};
+    SIZE_T stackBytesRead = 0;
+    if (ReadProcessMemory(proc, (LPCVOID)ctx.Rsp, stackBuf, sizeof(stackBuf), &stackBytesRead)) {
+      size_t count = stackBytesRead / sizeof(uintptr_t);
+      out.stackTop.assign(stackBuf, stackBuf + count);
+    }
+  }
 
   for (int i = 0; i < insn.operand_count; i++) {
     const ZydisDecodedOperand& op = operands[i];
@@ -962,6 +996,34 @@ static Napi::Array SnapshotToArray(Napi::Env env) {
     } else {
       o.Set("moduleName", env.Null());
       o.Set("moduleOffset", env.Null());
+    }
+    if (c.hasRegisters) {
+      Napi::Object regs = Napi::Object::New(env);
+      regs.Set("rax", Napi::String::New(env, ToHex(c.rax)));
+      regs.Set("rbx", Napi::String::New(env, ToHex(c.rbx)));
+      regs.Set("rcx", Napi::String::New(env, ToHex(c.rcx)));
+      regs.Set("rdx", Napi::String::New(env, ToHex(c.rdx)));
+      regs.Set("rsi", Napi::String::New(env, ToHex(c.rsi)));
+      regs.Set("rdi", Napi::String::New(env, ToHex(c.rdi)));
+      regs.Set("rbp", Napi::String::New(env, ToHex(c.rbp)));
+      regs.Set("rsp", Napi::String::New(env, ToHex(c.rsp)));
+      regs.Set("r8", Napi::String::New(env, ToHex(c.r8)));
+      regs.Set("r9", Napi::String::New(env, ToHex(c.r9)));
+      regs.Set("r10", Napi::String::New(env, ToHex(c.r10)));
+      regs.Set("r11", Napi::String::New(env, ToHex(c.r11)));
+      regs.Set("r12", Napi::String::New(env, ToHex(c.r12)));
+      regs.Set("r13", Napi::String::New(env, ToHex(c.r13)));
+      regs.Set("r14", Napi::String::New(env, ToHex(c.r14)));
+      regs.Set("r15", Napi::String::New(env, ToHex(c.r15)));
+      o.Set("registers", regs);
+      Napi::Array stack = Napi::Array::New(env);
+      for (size_t si = 0; si < c.stackTop.size(); si++) {
+        stack.Set((uint32_t)si, Napi::String::New(env, ToHex(c.stackTop[si])));
+      }
+      o.Set("stackTop", stack);
+    } else {
+      o.Set("registers", env.Null());
+      o.Set("stackTop", env.Null());
     }
     arr.Set(i++, o);
   }
