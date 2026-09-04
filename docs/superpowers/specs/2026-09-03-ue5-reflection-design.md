@@ -180,6 +180,36 @@ above, enough to unit-test the walking logic in isolation. It cannot
 validate GObjects/GNames discovery — that only ever gets proven against the
 real, running game, the same caveat this file gives Mono signature work.
 
+## Live findings, this session (verified against the running process)
+
+- **HP is not a float.** It's a `FixedPoint64` (the trainer's own comment:
+  `//Pal.FixedPoint64=FP64`) — an int64 storing the displayed value × 1000.
+  Confirmed live: scanning for plain `9660` (float/int32) only ever matched
+  GPU-driver-owned memory (`nvwgf2umx.dll`'s generic buffer-copy routine —
+  confirmed via `start_write_watch`/`poll_write_watch`, same
+  `instructionAddress` fired for two different candidate addresses, meaning
+  it's a generic copy loop, not gameplay code). Scanning for int64
+  `9660000` instead found 4 candidates process-wide, one of which write-
+  watched straight into `Palworld-Win64-Shipping.exe+0x33604a3` on taking
+  damage — real anchor, not driver noise.
+- That address is a **shared leaf setter**: `48 8B 02 48 89 01 48 8B C1 C3`
+  = `mov rax,[rdx]; mov [rcx],rax; mov rax,rcx; ret` — almost certainly
+  `FixedPoint64::operator=`, called from every site that writes *any*
+  FixedPoint64 field (HP, MaxHP, Stamina, ShieldHP, ...), so hitting it
+  once doesn't by itself say which field. Distinguishing HP from MaxHP
+  from Stamina this way needs the **caller's** address (this tool has no
+  call-stack — `poll_write_watch` gives the writing instruction, not its
+  return address), so isolating each field is one write-watch round-trip
+  per field plus manual caller correlation. Real method, proven working,
+  just not fast — budget several more sessions to run it across every
+  needed field, or finish the GObjects/GNames port instead and get all of
+  them at once generically.
+- Lesson for whoever continues: **when a scan for a game's displayed stat
+  value comes up as GPU-driver-owned memory instead of the game's own
+  module, suspect a fixed-point/scaled encoding before suspecting a wrong
+  process or a bad scan** — the naive value was never in game memory to
+  begin with.
+
 ## Open items for whoever picks up Phase 1
 
 - Port UE4SS `SigScanner` GObjects/GNames heuristics (`Okaetsu/RE-UE4SS`,
