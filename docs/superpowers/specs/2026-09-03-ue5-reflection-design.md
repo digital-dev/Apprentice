@@ -372,6 +372,94 @@ data-write kind). Concretely still open:
   remains the right investment for *general* UE support (any class, any
   future UE game, not just these known fields).
 
+## The framework — five recipes, not one
+
+Cataloged every cave block in the trainer's script (`label(...)` groups —
+each maps to one or more of its 48 UI toggles). Every one of them fits
+exactly one of five recipes; there is no sixth kind. This is the actual
+answer to "how do we get the rest of these into Tamper" — pick a cheat,
+find which recipe it is, follow that recipe's known steps.
+
+**Recipe A — struct-field freeze off a captured anchor.** What HP/Shield
+are. Cost: one memory-dump + cross-check against an on-screen value (no
+new live-RE once an anchor for that struct already exists). Cheapest
+recipe there is, once its anchor is captured.
+- Done: `SParam_HP`, `SParam_ShieldHP`/`ShieldMaxHP` (off
+  `palworld-capture-save-parameter`).
+- Same anchor, offset not yet confirmed against an on-screen value:
+  `+0x4E8` (CraftSpeed candidate), `+0x4F0` (unidentified stat).
+- Same anchor, offset known, mechanism WRONG for this field — see
+  Recipe B: `SParam_FullStomach` (don't freeze it — see below).
+- **Different anchor needed** (one hop further — `SaveParameter →
+  Individual_IndividualActor → PC_CharacterParameterComponent →
+  Param_SP`): current Stamina. Same method as HP, extra hop.
+- **Different anchor entirely** (`PalPlayerState`, not `SaveParameter` —
+  `PPS_InventoryData`/`PPS_TechnologyData`): Weight, Tech Points, Boss
+  Tech Points.
+- Pal (non-player creature) stats — `SParam_IsPlayer` check inverted
+  (`je code` skips *players*) in the trainer's `aobpalstats` block. Same
+  struct type, different instances (one per owned Pal, not the fixed
+  player singleton) — needs iterating a roster, not just one capture.
+  Lower priority; distinct sub-problem from everything else here.
+
+**Recipe B — one-time flag/mode write, not a freeze.** A field the game
+itself continuously drains/recomputes; the fix disables the *system*, not
+the symptom. Diagnosed live this session (`Never Hungry`) — don't repeat
+that mistake on anything that looks like a rate/decay field.
+- `SParam_HungerType = 0` (Never Hungry) — offset not yet found (see
+  "Correction, live-tested" above).
+- Anything else phrased as "no X" rather than "unlimited X" in the
+  original wishlist is a candidate for this recipe, not Recipe A — worth
+  checking the trainer's own cave shape (freeze vs. one-time write) before
+  assuming.
+
+**Recipe C — compiler-offset AOB capture, no reflection at all.** The `sN`
+CE wildcard captures the offset straight out of the compiled instruction.
+Portable to Tamper's `nop`/`replace` patch modes directly — no capture
+patch, no anchor, just a verified signature. **Caveat found earlier**:
+some of these need genuinely NEW instruction logic inserted (e.g.
+temperature-immunity's `xor eax,eax` ahead of a compare), which none of
+Tamper's fixed cave encoders express — those need a Lua script cheat
+instead (poke the field directly on a tick, once its address is knowable
+some other way) rather than a code patch.
+- Durability, Temperature, Stealth mode, Item spoilage, Craft/Build
+  material requirement removal, Rare-pal spawn odds, Inventory max stack
+  size — signatures already extracted from the trainer's script earlier
+  this session (see conversation, not yet re-copied into this file).
+  Every one needs a fresh `scan_aob` live-uniqueness check before
+  shipping (stealth mode's 3 signature variants all missed on this build
+  last time this was tried — confirms verify-before-ship isn't optional).
+
+**Recipe D — a captured "player" pointer, not a per-field anchor.** GodMode,
+Movement Speed, Infinite Jumps, EXP multiplier all gate on comparing some
+register against a resolved `player` object pointer (the trainer's own
+`label(player)`), then read/write a field directly on it
+(`PC_CustomTimeDilation`, `PC_JumpMaxCount`, `PC_JumpCurrentCount`). This
+is its own capture target — same method as HP (write-watch a known player
+field's write, e.g. jump count changing, disassemble the caller) — not
+yet attempted. Once captured once, every Recipe D cheat is cheap (Recipe A
+math against that one pointer).
+
+**Recipe E — a world/global options object, not per-player.** Capture
+rate, damage dealt/taken multiplier, drop rate, work speed, freeze/scale
+time — all one shared cave (`aobgameoptions`) writing `OS_*` fields.
+Likely the SIMPLEST anchor to capture of all of them: a world-settings
+singleton is far more likely to be a stable global (module-static or
+one-per-session) than a per-player heap struct, meaning it may not even
+need a capture patch at all — worth checking with a plain value scan
+first (Scanner screen, or `scan_first`/`scan_next` via MCP) before
+reaching for the capture-patch machinery Recipes A/D need.
+
+**Priority order for picking the next one up**: Recipe E first (cheapest
+to even ATTEMPT — try the plain-scan shortcut before assuming a capture
+patch is needed), then finish Recipe A's already-half-open anchor
+(Stamina, Weight/Tech Points — new anchors but same proven method), then
+Recipe D (GodMode — highest wishlist value), then Recipe B
+(`HungerType` — needs the live differential-write session flagged
+above), then Recipe C (mechanical but many small verify-and-ship cheats,
+plus the Lua-script fallback design for the ones that don't fit a patch
+mode).
+
 ## Open items for whoever picks up Phase 1
 
 - Port UE4SS `SigScanner` GObjects/GNames heuristics (`Okaetsu/RE-UE4SS`,
