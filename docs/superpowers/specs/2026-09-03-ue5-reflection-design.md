@@ -549,6 +549,51 @@ stat was actively *decreasing* rather than recovering — timing matters more
 than technique here. Async chat is a bad substitute for the app's own pause,
 but a real second try with fresh values found it before regen finished.
 
+## Tech Points anchor found — a genuinely different object from HP/Shield/Stamina
+
+Same value-scan-then-write-watch method, but the scan itself needed more
+rounds this time: Tech Points started at 20 (a small, extremely common
+int32/int64 — an unrestricted `scan_first` for it alone returns 50-70k
+candidates process-wide, too large to even return through the MCP tool, let
+alone narrow by hand). Fix: request a change from the user, `scan_first` the
+new value fresh each time, save both (huge) result sets to disk, and
+intersect them **locally via a python script reading the saved files**
+rather than pulling either list into context — the MCP tool auto-saves
+oversized results to a local file for exactly this reason. Four narrowing
+rounds (20→19→18→17→16, replaying the same local-intersect step each time)
+went 59055 → 9 → 5 → 2 real candidates. Lesson for next time: don't guess a
+heap-address range to pre-filter (an earlier attempt guessed a range based on
+addresses seen in an unrelated Stamina scan and got zero hits — wasted a
+round for nothing); unrestricted + local-file-intersect is more reliable
+than a guessed range restriction.
+
+The 2 survivors moved together on every subsequent change — turned out to be
+the real field plus a UE replication shadow copy of it, not a coincidence:
+write-watching one (`0x1b4d6fb85b8`) caught the write going through a
+**generic virtual-dispatch property-copy** (`call [rax+0x108]` off an
+FProperty-shaped object, landing in a `VCRUNTIME140.dll` memcpy stub) — the
+same kind of engine-generic setter problem as `FixedPoint64::operator=`, but
+worse: this one is shared by potentially every replicated int property in
+the game, not just Tech Points, so it's useless as an anchor. The other
+survivor (`0x1b5b4e3bd10`) wrote through actual specific Palworld code
+(`Palworld-Win64-Shipping.exe+0x3268bf8`) doing the literal subtract inline:
+`mov eax,[rdi+0x150]; cmp ecx,eax; jg skip; sub eax,ecx; mov [rdi+0x150],eax`
+— a real "spend N tech points, don't go negative" check, not a shared
+helper. This is the best kind of anchor: the capture point *is* the field
+write itself, no caller-chasing needed (unlike HP/Stamina, where the actual
+write happened in a shared leaf and the anchor had to be the *caller*
+instead).
+
+**Shipped**: `palworld-capture-tech-points-anchor` (captures `rdi` at
+`+0x3268bf8`, signature verified unique — 1 match, `int32`-not-`int64` this
+time) chained to `Unlimited Tech Points` (freeze at `captured+0x150`,
+`num4`). Caveat: this capture point only executes on the *spend* path
+(buying/unlocking a technology) — untested whether the *gain* path (leveling
+up) uses the same object without also hitting this instruction, but freeze
+mode doesn't need it to: one genuine spend, ever, captures the anchor for
+the rest of the session. Same standing caveat as every other patch here —
+not yet installed through the actual app.
+
 ## Open items for whoever picks up Phase 1
 
 - Port UE4SS `SigScanner` GObjects/GNames heuristics (`Okaetsu/RE-UE4SS`,

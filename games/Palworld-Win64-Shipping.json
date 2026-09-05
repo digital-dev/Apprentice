@@ -78,6 +78,36 @@
       ],
       "value": 99999000,
       "hotkey": "num3"
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "palworld-capture-tech-points-anchor",
+      "name": "Capture: Tech Points anchor",
+      "originalBytes": "898750010000",
+      "length": 6,
+      "signature": "48 8b 16 48 8b cb e8 ?? ?? ?? ?? 48 8b d8 48 8b 8c 24 30 01 00 00 48 85 c9 74 06 e8 ?? ?? ?? ?? 90 8b 4b 40 80 7b 34 00 75 22 85 c9 78 12 8b 87 50 01 00 00 3b c8 7f 08 2b c1 89 87 50 01 00 00",
+      "signatureOffset": 58,
+      "moduleName": "Palworld-Win64-Shipping.exe",
+      "moduleOffset": "0x3268bf8",
+      "baseRegister": "rdi",
+      "internal": true
+    },
+    {
+      "id": "palworld-unlimited-tech-points",
+      "name": "Unlimited Tech Points",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "palworld-capture-tech-points-anchor",
+          "offset": "0x150",
+          "dataType": "int32"
+        }
+      ],
+      "value": 99999,
+      "hotkey": "num4"
     }
   ]
 }
