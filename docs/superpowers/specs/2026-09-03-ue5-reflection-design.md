@@ -594,6 +594,52 @@ mode doesn't need it to: one genuine spend, ever, captures the anchor for
 the rest of the session. Same standing caveat as every other patch here —
 not yet installed through the actual app.
 
+## Easy Craft / Easy Building shipped — using the new `strip` patch mode
+
+With `strip` built (see
+`docs/superpowers/specs/2026-09-04-strip-patch-mode-design.md`), both
+requirement-removal cheats shipped live this session:
+
+**Easy Craft** — `Palworld-Win64-Shipping.exe+0x30a52be`, `baseRegister: rdi`.
+This is the exact site identified earlier in this doc's craft-requirement
+investigation. Live disassembly this round confirmed all 5 material offsets
+directly (`mov eax,[rdi+0x2C]` / `+0x38` / `+0x44` / `+0x50` / `+0x5C`,
+each copied into a stack buffer for what looks like a UI display routine) —
+matching the trainer's own `Material1_Count`..`Material5_Count` naming
+exactly. The bare 5-byte opener (`88 0B 48 85 C0`) matches 12 places in this
+build (confirmed live), so the shipped signature extends through the full
+copy sequence plus a RIP-relative `lea` whose absolute target is unique to
+this call site — verified unique (1 match) via `scan_aob` before shipping.
+
+**Easy Building** — `Palworld-Win64-Shipping.exe+0x2887330`, `baseRegister:
+rcx`. This is a genuinely different code shape than craft: not the
+"requirement check" itself but a field-by-field struct copy (`rdx` = source
+template, `rcx` = destination instance) that runs when a building object is
+constructed/placed — `mov eax,[rdx+0x3C]; mov [rcx+0x3C],eax` and so on for
+`+0x48/+0x54/+0x60`, matching the trainer's own `PalBuildObjectData.
+Material1_Count`..`Material4_Count` offsets exactly. Zeroing the
+*destination* copy's fields here means whatever later code reads the
+placed instance's own stored requirement sees 0, same end effect as
+zeroing at a check site.
+
+**Known caveat, not yet resolved**: this exact copy-body (down to the
+byte) occurs at least twice more in the module (confirmed via a
+scan_aob hit count while narrowing the signature — see the "signature not
+unique" dead-ends worked through live). Each occurrence is the start of
+its own compiler-generated function, presumably one per placeable-object
+subclass that shares this base layout. The shipped patch hooks only ONE of
+these (the first found). If the game routes different building types
+through different sibling functions, this cheat may only remove
+requirements for some buildings, not all — **needs live testing**: place
+several different building types with the cheat on and confirm all of
+them show 0 requirement, not just some. If only some are covered, the
+other occurrences need their own `strip` patches (same technique: read
+enough context around each to build a unique signature, same fields/
+baseRegister).
+
+Neither cheat has been installed through the actual app yet — same
+standing caveat as every other patch in this profile.
+
 ## Open items for whoever picks up Phase 1
 
 - Port UE4SS `SigScanner` GObjects/GNames heuristics (`Okaetsu/RE-UE4SS`,
