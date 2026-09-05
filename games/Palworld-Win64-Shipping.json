@@ -133,27 +133,7 @@
       "kind": "patch",
       "mode": "strip",
       "id": "palworld-easy-building",
-      "name": "Easy Building (No Material Cost) 1/2",
-      "originalBytes": "0fb64274",
-      "length": 4,
-      "signature": "0f b6 42 74 88 41 74 8b 42 78 89 41 78 0f b6 42 7c 88 41 7c 0f b6 42 7d 88 41 7d 0f b6 42 7e 88 41 7e 8b 82 80 00 00 00 89 81 80 00 00 00 0f b6 82 84 00 00 00 88 81 84 00 00 00 8b 82 88 00 00 00 89 81 88 00 00 00 0f b6 82 8c 00 00 00 88 81 8c 00 00 00 8b 82 90 00 00 00 89 81 90 00 00 00 0f b6 82 94 00 00 00 88 81 94 00 00 00 48 8b c1 c3 cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc 48 89 5c 24 08",
-      "signatureOffset": 0,
-      "moduleName": "Palworld-Win64-Shipping.exe",
-      "moduleOffset": "0x2887330",
-      "baseRegister": "rcx",
-      "fields": [
-        { "fieldOffset": "0x3c", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x48", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x54", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x60", "value": 0, "dataType": "int32" }
-      ],
-      "hotkey": "num5"
-    },
-    {
-      "kind": "patch",
-      "mode": "strip",
-      "id": "palworld-easy-building-2",
-      "name": "Easy Building (No Material Cost) 2/2",
+      "name": "Easy Building (No Material Cost)",
       "originalBytes": "0fb64274",
       "length": 4,
       "signature": "48 8d 05 59 6f 56 04 48 89 01 48 8b 42 08 48 89 41 08 0f b6 42 10 88 41 10 8b 42 14 89 41 14 0f b6 42 18 88 41 18 0f b6 42 19 88 41 19 8b 42 1c 89 41 1c 8b 42 20 89 41 20 8b 42 24 89 41 24 8b 42 28 89 41 28 0f b6 42 2c 88 41 2c 8b 42 30 89 41 30 48 8b 42 34 48 89 41 34 8b 42 3c 89 41 3c 48 8b 42 40 48 89 41 40 8b 42 48 89 41 48 48 8b 42 4c 48 89 41 4c 8b 42 54 89 41 54 48 8b 42 58 48 89 41 58 8b 42 60 89 41 60 48 8b 42 64 48 89 41 64 48 8b 42 6c 48 89 41 6c 0f b6 42 74",
@@ -167,7 +147,7 @@
         { "fieldOffset": "0x54", "value": 0, "dataType": "int32" },
         { "fieldOffset": "0x60", "value": 0, "dataType": "int32" }
       ],
-      "hotkey": "num6"
+      "hotkey": "num5"
     }
   ]
 }

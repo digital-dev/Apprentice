@@ -651,13 +651,21 @@ narrowing the signature (`+0x454273`-ish) turned out to be an unrelated
 function that happened to share the same *epilogue* bytes, not another
 copy of the material struct — false lead, not a third site to patch.
 
-Both Easy Building patches need to be enabled together — the game isn't
-known to consistently prefer one path over the other across building
-types, so partial coverage (only one enabled) may again look like "some
-buildings work, some don't." Not yet confirmed whether these two sites
-together cover every placeable-object type or whether a third,
-undiscovered site exists — if a specific building still shows a cost with
-both enabled, that's the next thing to chase.
+**Update, both live-tested**: `palworld-easy-building-2`
+(`+0x2dcd50a`) alone was sufficient — every building type tried showed 0
+cost. `palworld-easy-building` (`+0x2887330`, the first site found) installed
+fine (app showed active/resolved) but had no observable effect on anything
+tested — the same "silently does nothing" shape this project already
+pulled a cheat for once (`Never Hungry`). **Removed it from the profile**
+rather than ship a cheat that does nothing; `palworld-easy-building-2`'s id
+was renamed to `palworld-easy-building` (the plain, single shipped
+building cheat) since it's now the only one. Whatever the dead site
+actually was — a different, rarely-instantiated subclass sharing the same
+base-struct layout, most likely — it isn't the path the game uses for
+normal building placement. Not yet confirmed there is no third,
+undiscovered site for some other building type Apprentice hasn't been
+tested against — if a specific building still shows a cost, that's the
+next thing to chase, same live signature-narrowing technique as before.
 
 Root-cause note for whoever debugs a "cheat toggles fine but does nothing"
 report on this profile in the future: check whether Apprentice was
