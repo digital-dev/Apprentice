@@ -667,6 +667,26 @@ undiscovered site for some other building type Apprentice hasn't been
 tested against — if a specific building still shows a cost, that's the
 next thing to chase, same live signature-narrowing technique as before.
 
+## Instant Craft folded into Easy Craft — same hook, one more field
+
+"Instant crafting" (zero craft time, not materials) turned out to need no
+new site at all: the Easy Craft hook already reads a float at `rdi+0x14`
+into the same UI-display copy the material fields go through, positioned
+right before them (`+0x08` recipe id ptr, `+0x10` int — likely produced
+amount, `+0x14` this float, then materials starting at `+0x2C`) —
+plausibly `CraftTime`, based on position and type alone; not yet
+value-correlated against an on-screen craft-time number the way HP/
+Stamina/Tech Points were, so **needs live confirmation** the same way
+those did (note the displayed craft time for a specific recipe, verify
+`rdi+0x14` reads that value before trusting the zero-write actually does
+what it's named for).
+
+Tamper can only route one cave through a given instruction address, so
+this couldn't be a second independent toggle at the same site — folded
+into `palworld-easy-craft` itself (now zeroing `+0x14` alongside the five
+material offsets, renamed "Easy + Instant Craft") rather than left as a
+separate cheat that would conflict with it.
+
 Root-cause note for whoever debugs a "cheat toggles fine but does nothing"
 report on this profile in the future: check whether Apprentice was
 actually **rebuilt** (`npm run build`), not just restarted — `Apprentice.cmd`
