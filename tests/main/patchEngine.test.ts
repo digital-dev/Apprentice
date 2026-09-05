@@ -96,8 +96,13 @@ class FakeOps implements PatchOps {
       clobbers: this.runClobbers
     }
   }
-  encodeStore(): string {
-    return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f
+  encodeStoreCalls: { baseRegister: string; offset: number; imm32: number }[] = []
+  encodeStore(baseRegister: string, offset: number, imm32: number): string {
+    this.encodeStoreCalls.push({ baseRegister, offset, imm32 })
+    return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f — same fixed
+    // output regardless of args, mirroring encodeStoreRegister/encodeScale's
+    // existing fake style; a strip test with 2 fields asserts the effect is
+    // this string repeated twice, in call order.
   }
   encodeStoreRegisterCalls: { destRegister: string; offset: number; sourceRegister: string }[] = []
   encodeStoreRegister(destRegister: string, offset: number, sourceRegister: string): string {
@@ -1700,5 +1705,107 @@ describe('PatchEngine — conditional scale injection', () => {
     expect(result.ok).toBe(true)
     const codeAddress = '0x' + (BigInt(ops.caves[0]) + 16n).toString(16)
     expect(ops.memory.get(codeAddress)).toBe('ddeeff' + ORIGINAL + 'e900000000')
+  })
+})
+
+describe('PatchEngine — strip injection', () => {
+  const stripPatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'strip',
+    id: 'patch-easy-craft',
+    name: 'Easy Craft',
+    originalBytes: ORIGINAL,
+    length: 5,
+    signature: 'f3 0f 11 41 10',
+    moduleName: 'game.exe',
+    moduleOffset: '0x100',
+    baseRegister: 'rdi',
+    fields: [
+      { fieldOffset: '0x2c', value: 0, dataType: 'int32' },
+      { fieldOffset: '0x38', value: 0, dataType: 'int32' }
+    ]
+  }
+
+  it('writes one encodeStore per field, off the same base register, then replays the original instruction', async () => {
+    const result = await engine.apply(stripPatch)
+    expect(result.ok).toBe(true)
+
+    expect(ops.encodeStoreCalls).toEqual([
+      { baseRegister: 'rdi', offset: 0x2c, imm32: 0 },
+      { baseRegister: 'rdi', offset: 0x38, imm32: 0 }
+    ])
+
+    // Two fields means two calls to FakeOps.encodeStore, each returning its
+    // fixed output — concatenated in declared order, then the FULL
+    // displaced run (strip never replaces, unlike force/copy), then the
+    // jump back.
+    const codeAddress = '0x' + (BigInt(ops.caves[0]) + 8n).toString(16)
+    const oneStore = 'c78718080000' + '0000af43'
+    const effect = oneStore + oneStore
+    const backJump = 'e900000000'
+    expect(ops.memory.get(codeAddress)).toBe(effect + ORIGINAL + backJump)
+  })
+
+  it('refuses, before allocating a cave, when fields is missing', async () => {
+    const incomplete = { ...stripPatch, id: 'patch-strip-missing', fields: undefined } as PatchCheat
+    const result = await engine.apply(incomplete)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses, before allocating a cave, when fields is empty', async () => {
+    const empty = { ...stripPatch, id: 'patch-strip-empty', fields: [] }
+    const result = await engine.apply(empty)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it("refuses, before allocating a cave, when a field's dataType is a width strip mode cannot encode", async () => {
+    const wideType = {
+      ...stripPatch,
+      id: 'patch-strip-wide',
+      fields: [{ fieldOffset: '0x2c', value: 0, dataType: 'int64' }]
+    } as PatchCheat
+    const result = await engine.apply(wideType)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it("refuses, before allocating a cave, when a field's fieldOffset isn't valid hex", async () => {
+    const junk = {
+      ...stripPatch,
+      id: 'patch-strip-junk',
+      fields: [{ fieldOffset: 'not-hex', value: 0, dataType: 'int32' }]
+    } as PatchCheat
+    const result = await engine.apply(junk)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('refuses, before allocating a cave, when baseRegister is missing', async () => {
+    const incomplete = { ...stripPatch, id: 'patch-strip-no-register', baseRegister: undefined } as PatchCheat
+    const result = await engine.apply(incomplete)
+    expect(result.ok).toBe(false)
+    expect(ops.caves).toHaveLength(0)
+    expect(ops.writes).toHaveLength(0)
+  })
+
+  it('does NOT require patch.length to match the first decoded instruction (unlike force/copy)', async () => {
+    // strip replays the whole displaced run rather than replacing one
+    // instruction, so it must not be subject to force/copy's exact-boundary
+    // guard — a mismatched firstInsnLength must not refuse installation.
+    ops.firstInsnLength = 3
+    const result = await engine.apply(stripPatch)
+    expect(result.ok).toBe(true)
+  })
+
+  it('restores the original bytes on disable', async () => {
+    await engine.apply(stripPatch)
+    expect(engine.restore(stripPatch)).toBe(true)
+    expect(ops.memory.get('0x400100')).toBe(ORIGINAL)
   })
 })

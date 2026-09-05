@@ -193,7 +193,7 @@ interface AppliedPatch {
   caveAddress: string | null
   // Only a capture patch has a readable slot; recorded so slotAddress can
   // tell a capture cave from a force cave without re-deriving the mode.
-  mode: 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
+  mode: 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale' | 'strip'
 }
 
 // A 5-byte `jmp rel32` is the smallest redirect that reaches anywhere in
@@ -775,6 +775,27 @@ export class PatchEngine {
         }
         BigInt(patch.fieldOffset as string) // throws on unparsable hex
       }
+      if (mode === 'strip') {
+        // strip writes several fields off the same baseRegister (already
+        // required above), re-read live on every invocation — no
+        // fieldOffset/value/dataType of its own to validate, only the
+        // fields array. Each entry gets the exact same width check force's
+        // single field already gets, for the exact same reason: EncodeStore
+        // only ever writes a dword, so any other dataType would be silently
+        // mis-encoded rather than refused.
+        if (!Array.isArray(patch.fields) || patch.fields.length === 0) {
+          throw new Error('missing or unencodable strip-mode fields')
+        }
+        for (const field of patch.fields) {
+          if (
+            typeof field.value !== 'number' ||
+            (field.dataType !== 'int32' && field.dataType !== 'float')
+          ) {
+            throw new Error('missing or unencodable strip-mode fields')
+          }
+          BigInt(field.fieldOffset) // throws on unparsable hex
+        }
+      }
       if (mode === 'scale') {
         // scale never uses fieldOffset/baseRegister — only a recognized
         // xmm source register and a float multiplier.
@@ -820,7 +841,9 @@ export class PatchEngine {
                 ? conditionalScale
                   ? "This conditional scale is missing its base register, source xmm register, multiplier, resolved compare-method address, or armed comparison pointer — can't compute what to write."
                   : "This patch is missing its source xmm register or its multiplier, or the source register isn't recognized — can't compute what to write."
-                : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
+                : mode === 'strip'
+                  ? "This patch has no fields to write, or one of them has an unencodable data type or an offset that isn't valid hex — can't compute what to write."
+                  : "This patch is missing the register, offset, value, or data type a force injection needs, its data type isn't int32/float (the only widths force mode can write), or its offset isn't valid hex — can't compute what to write.",
         caveAddress: null,
         displaced: null
       }
@@ -980,7 +1003,9 @@ export class PatchEngine {
       body = guardBytes + displaced + this.ops.encodeJump(jumpBackFrom, returnTo)
     } else {
       const replay =
-        mode === 'capture' || mode === 'guard' || mode === 'scale' ? displaced : displaced.slice(patch.length * 2)
+        mode === 'capture' || mode === 'guard' || mode === 'scale' || mode === 'strip'
+          ? displaced
+          : displaced.slice(patch.length * 2)
 
       // The capture store is RIP-relative, so it must be encoded for the
       // address it actually executes at — codeAddress, now that it runs
@@ -1033,11 +1058,25 @@ export class PatchEngine {
                     Number(BigInt(patch.fieldOffset as string)),
                     GPR64_ALIASES[(patch.sourceRegister as string).toLowerCase()]
                   )
-                : this.ops.encodeStore(
-                    patch.baseRegister as string,
-                    Number(BigInt(patch.fieldOffset as string)),
-                    valueBits(patch.value as number, patch.dataType as DataType)
-                  )
+                : mode === 'strip'
+                  ? // One encodeStore per field, off the same baseRegister,
+                    // concatenated in declared order — jumpBackFrom below
+                    // is already generic over effect.length, so a
+                    // multi-instruction effect needs no further change.
+                    (patch.fields as NonNullable<PatchCheat['fields']>)
+                      .map((field) =>
+                        this.ops.encodeStore(
+                          patch.baseRegister as string,
+                          Number(BigInt(field.fieldOffset)),
+                          valueBits(field.value, field.dataType)
+                        )
+                      )
+                      .join('')
+                  : this.ops.encodeStore(
+                      patch.baseRegister as string,
+                      Number(BigInt(patch.fieldOffset as string)),
+                      valueBits(patch.value as number, patch.dataType as DataType)
+                    )
       const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
       body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)
     }

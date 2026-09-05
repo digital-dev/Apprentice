@@ -196,7 +196,7 @@ export interface PatchCheat {
   kind: 'patch'
   // How this patch changes the game. Absent means 'nop': every patch saved
   // before injection existed keeps working through the same code path.
-  mode?: 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale'
+  mode?: 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale' | 'strip'
   id: string
   name: string
   originalBytes: string // captured instruction bytes, unspaced lowercase hex
@@ -307,6 +307,16 @@ export interface PatchCheat {
   armPointerOffsets?: string[]
   // force only: where the field sits relative to that register, what to
   // write, and how to turn `value` into the 32 bits that get written.
+  //
+  // strip: none of fieldOffset/value/dataType — it writes several fields at
+  // once, off the SAME baseRegister, re-read fresh on every invocation
+  // rather than a captured/anchored one (right for a shared data-table row
+  // that's a different object on every call — e.g. Palworld's crafting
+  // requirement check — where a capture-mode anchor would freeze on
+  // whichever row happened to be current the moment it was captured).
+  // Unlike force, strip replays the original instruction(s) afterward
+  // instead of replacing them — the site strip hooks is typically a READ,
+  // with no existing write to piggyback on. See `fields` below.
   fieldOffset?: string
   // copy: which GPR's live value to store — the "set this field to
   // whatever that register currently holds" shape force mode cannot
@@ -336,6 +346,15 @@ export interface PatchCheat {
   dataType?: DataType
   // Same meaning as CheatDefinition.hotkey above.
   hotkey?: string
+  // strip only: the fields to write, each off the SAME baseRegister,
+  // re-read live on every invocation — e.g. zeroing Material1_Count through
+  // Material5_Count on whichever recipe row is current. Every entry needs
+  // its own fieldOffset/value/dataType (EncodeStore only ever writes a
+  // dword, so dataType is restricted to 'int32'/'float' the same way
+  // force's single fieldOffset/value/dataType triple already is). Absent
+  // or empty refuses to install — a strip patch with nothing to write isn't
+  // meaningful.
+  fields?: { fieldOffset: string; value: number; dataType: DataType }[]
 }
 
 // A cheat whose enable/disable are one-shot Lua scripts, instead of a
@@ -364,7 +383,7 @@ export function isScriptCheat(cheat: StoredCheat): cheat is ScriptCheat {
 
 export function patchMode(
   patch: PatchCheat
-): 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale' {
+): 'nop' | 'replace' | 'force' | 'capture' | 'guard' | 'immune' | 'copy' | 'scale' | 'strip' {
   return patch.mode ?? 'nop'
 }
 
