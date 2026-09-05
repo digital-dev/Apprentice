@@ -17,7 +17,19 @@ namespace {
 // hundreds of millions of matches otherwise). The UI's job is to tell the
 // user to narrow further; this cap is what keeps that possible instead of
 // OOMing before the user ever sees a result.
-constexpr size_t kMaxScanResults = 1'000'000;
+//
+// Lowered from 1,000,000 (was: live-RE session, 2026-09-04) — a scan for a
+// very common value (e.g. int64 0/1/2 against a real multi-GB game process)
+// reliably hit that cap and produced tens of megabytes of JSON in one
+// message, which crashed the MCP server's stdio transport outright
+// ("Connection closed", not a graceful oversized-result response) every
+// time it was tried. The renderer UI already only ever displays the first
+// 500 candidates (Scanner.tsx's MAX_RENDERED_CANDIDATES) regardless of how
+// many this returns, and the working narrow-by-value-change technique used
+// successfully this same session topped out around 85,000 raw candidates —
+// comfortably under the new cap — so nothing that already works needs more
+// headroom than this leaves.
+constexpr size_t kMaxScanResults = 200'000;
 
 // Never allocate a whole region in one shot: a single multi-GB committed
 // region (routine in a real game) would otherwise allocate multi-GB inside
