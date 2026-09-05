@@ -112,7 +112,7 @@
       "kind": "patch",
       "mode": "strip",
       "id": "palworld-easy-craft",
-      "name": "Easy + Instant Craft (No Material Cost, No Time)",
+      "name": "Easy Craft (No Material Cost)",
       "originalBytes": "880b",
       "length": 2,
       "signature": "88 0b 48 85 c0 0f 84 f8 00 00 00 48 8d 05 18 86 45 04 48 89 44 24 28 48 8b 4f 08 48 89 4c 24 30 8b 47 10 89 44 24 38 f3 0f 10 47 14 f3 0f 11 44 24 3c 8b 47 18 89 44 24 40 48 8b 47 1c 48 89 44 24 44 48 8b 47 24 48 89 44 24 4c 8b 47 2c 89 44 24 54 48 8b 47 30 48 89 44 24 58 8b 47 38 89 44 24 60 48 8b 47 3c 48 89 44 24 64 8b 47 44",
@@ -121,7 +121,6 @@
       "moduleOffset": "0x30a52be",
       "baseRegister": "rdi",
       "fields": [
-        { "fieldOffset": "0x14", "value": 0, "dataType": "float" },
         { "fieldOffset": "0x2c", "value": 0, "dataType": "int32" },
         { "fieldOffset": "0x38", "value": 0, "dataType": "int32" },
         { "fieldOffset": "0x44", "value": 0, "dataType": "int32" },

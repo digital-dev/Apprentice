@@ -683,9 +683,31 @@ what it's named for).
 
 Tamper can only route one cave through a given instruction address, so
 this couldn't be a second independent toggle at the same site — folded
-into `palworld-easy-craft` itself (now zeroing `+0x14` alongside the five
-material offsets, renamed "Easy + Instant Craft") rather than left as a
-separate cheat that would conflict with it.
+into `palworld-easy-craft` itself (zeroing `+0x14` alongside the five
+material offsets) rather than left as a separate cheat that would
+conflict with it.
+
+**Reverted, live-tested.** Wrong guess, and wrong in the informative way:
+zeroing `+0x14` didn't make crafting instant, it made crafting **never
+progress at all** — the progress bar stopped advancing entirely. That's
+not "CraftTime" (a duration you'd want at 0), it's much more likely
+`CraftSpeed` or a per-tick progress-rate multiplier: zero rate means zero
+progress added per tick, forever, rather than an instant finish. Exactly
+the same class of mistake `Never Hungry` was earlier this project (froze/
+zeroed a rate instead of disabling the system that consumes it) — wrong
+mechanism, not just a wrong offset guess. **Pulled the `+0x14` field
+immediately** rather than leave a cheat that blocks the very thing it's
+supposed to speed up; `palworld-easy-craft` is back to materials-only,
+confirmed working.
+
+Real instant-crafting needs the field identified properly before another
+attempt: either find whatever value the progress-per-tick actually gets
+*multiplied toward* (a large fixed value would make one tick finish it,
+the way `force`-mode durability cheats push a stat to a huge number
+rather than zero) or find the completion check directly and short-circuit
+it. Needs the same live differential-write method that solved Stamina —
+watch the field while crafting normally, correlate its live value against
+the visible progress bar, before writing anything back to it.
 
 Root-cause note for whoever debugs a "cheat toggles fine but does nothing"
 report on this profile in the future: check whether Apprentice was
