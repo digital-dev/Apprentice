@@ -637,8 +637,35 @@ other occurrences need their own `strip` patches (same technique: read
 enough context around each to build a unique signature, same fields/
 baseRegister).
 
-Neither cheat has been installed through the actual app yet — same
-standing caveat as every other patch in this profile.
+**Update, live-tested through the actual app**: Easy Craft works exactly as
+intended, confirmed live. Easy Building did not — installed successfully
+(app showed it resolved/active) but the game still blocked placement,
+confirming the caveat above rather than a new bug: the game routes at
+least some building types through the *other* occurrence of this copy
+body. Found and verified that second site live
+(`Palworld-Win64-Shipping.exe+0x2dcd50a`, same `rcx`, same
+`+0x3C/+0x48/+0x54/+0x60` fields — genuinely the same struct-copy function
+compiled twice, byte-identical bodies, different call sites) and shipped
+it as `palworld-easy-building-2`. The third scan_aob hit seen while first
+narrowing the signature (`+0x454273`-ish) turned out to be an unrelated
+function that happened to share the same *epilogue* bytes, not another
+copy of the material struct — false lead, not a third site to patch.
+
+Both Easy Building patches need to be enabled together — the game isn't
+known to consistently prefer one path over the other across building
+types, so partial coverage (only one enabled) may again look like "some
+buildings work, some don't." Not yet confirmed whether these two sites
+together cover every placeable-object type or whether a third,
+undiscovered site exists — if a specific building still shows a cost with
+both enabled, that's the next thing to chase.
+
+Root-cause note for whoever debugs a "cheat toggles fine but does nothing"
+report on this profile in the future: check whether Apprentice was
+actually **rebuilt** (`npm run build`), not just restarted — `Apprentice.cmd`
+launches a pre-built `out/main/index.js` bundle, which does not pick up
+`src/` changes on its own. This cost real time this session: both cheats
+appeared broken for a reason that had nothing to do with the patches
+themselves.
 
 ## Open items for whoever picks up Phase 1
 
