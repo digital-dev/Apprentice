@@ -460,6 +460,49 @@ above), then Recipe C (mechanical but many small verify-and-ship cheats,
 plus the Lua-script fallback design for the ones that don't fit a patch
 mode).
 
+## Session finding — most Recipe C/E signatures are stale against the live build
+
+Attempted the priority-1 pickup (Recipe E, `aobgameoptions`) and several Recipe
+C candidates (`aobspoil`, `aobcraftreq`/`aobbuildingreq` short variant,
+`aobstealthmode`) against the currently-running process
+(`Palworld-Win64-Shipping.exe`, module version still reports UE `5.1.1.0` —
+that's the engine build tag, not the game's own patch level). Every one of
+those signatures, `scan_aob`'d live with the wildcard counts translated
+carefully (double-checked `sN.m`-style CE placeholders against actual
+instruction encoding, e.g. confirmed `s1.2 00 00` is a 4-byte disp32 with a
+zeroed high half, not 6 wildcard bytes), came back **zero matches** — not
+"shifted a little," gone entirely. The one exception: `aobdurability` (`F3 0F
+10 41 08 0F 2E C2 74 ?? F3 0F 11 ?? ?? F3 0F 11`) matched exactly once, live,
+unchanged.
+
+Conclusion: the trainer ("Palworld v1.0 Plus 48 Trainer.exe") was built
+against an earlier game patch. The engine build tag staying at 5.1.1.0 says
+nothing about the game's own code — Palworld ships frequent content/balance
+patches that recompile game code against the same engine version, which is
+exactly the kind of drift this doc's own Phase 0 instructions warned about
+("never trust the extracted string blindly"). Practical effect: **most of the
+trainer's 48 toggles cannot be ported by signature-copy alone anymore** — each
+one needs its AOB re-derived against the live process before it's usable,
+the same live-RE cost as an anchor discovered from scratch. This materially
+changes the "cheap, mechanical" framing Recipe C was given in the priority
+order below — it no longer skips live-RE, it just skips *reflection*.
+
+`aobdurability` surviving is also not a clean win: its cave inserts new
+register logic (`movss xmm2,[rcx+0C]` ahead of the original
+`movss xmm0,[rcx+08]`), not a constant value or a fixed-length byte swap —
+it doesn't fit either of Tamper's existing `force` (write a computed value)
+or `replace`/`nop` (fixed bytes) patch modes, matching the Lua-script-fallback
+caveat Recipe C already called out. Not shipped this round — needs that Lua
+path designed first, and the offset semantics (`+0x08`/`+0x0C` — which is
+current durability vs. an unidentified second field) aren't confirmed against
+an on-screen value yet either.
+
+Net effect on the priority order below: **re-derive before reuse** now
+applies across Recipe C too, not just E. Whoever continues should budget a
+live `scan_aob` sweep per cheat before assuming any extracted trainer
+signature is still valid, and treat every subsequent "recipe" pickup as a
+fresh anchor hunt unless proven otherwise on this exact running build.
+
 ## Open items for whoever picks up Phase 1
 
 - Port UE4SS `SigScanner` GObjects/GNames heuristics (`Okaetsu/RE-UE4SS`,
