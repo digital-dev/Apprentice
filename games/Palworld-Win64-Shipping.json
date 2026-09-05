@@ -48,6 +48,36 @@
       ],
       "value": 99999000,
       "hotkey": "num2"
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "palworld-capture-stamina-anchor",
+      "name": "Capture: Current Stamina anchor",
+      "originalBytes": "488d8fb0040000",
+      "length": 7,
+      "signature": "84 c0 74 07 c6 87 c9 00 00 00 00 48 8d 8f b0 04 00 00 48 8d 54 24 50 e8",
+      "signatureOffset": 11,
+      "moduleName": "Palworld-Win64-Shipping.exe",
+      "moduleOffset": "0x2c2965e",
+      "baseRegister": "rdi",
+      "internal": true
+    },
+    {
+      "id": "palworld-unlimited-stamina",
+      "name": "Unlimited Stamina",
+      "dataType": "int64",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "palworld-capture-stamina-anchor",
+          "offset": "0x4b0",
+          "dataType": "int64"
+        }
+      ],
+      "value": 99999000,
+      "hotkey": "num3"
     }
   ]
 }

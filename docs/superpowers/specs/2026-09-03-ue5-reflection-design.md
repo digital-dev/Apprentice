@@ -503,6 +503,52 @@ live `scan_aob` sweep per cheat before assuming any extracted trainer
 signature is still valid, and treat every subsequent "recipe" pickup as a
 fresh anchor hunt unless proven otherwise on this exact running build.
 
+## Stamina anchor found — corrects an earlier assumption in this doc
+
+Earlier in this doc: "Current Stamina/MaxSP is NOT in this struct" (i.e. not
+in `PalIndividualCharacterSaveParameter`, the HP/Shield struct) — reasoning
+was that the trainer's own script writes current stamina through a
+different-looking symbol (`Param_SP` on `PC_CharacterParameterComponent`).
+That symbol name is real, but this session found the actual live write site
+by value-scanning for the on-screen Stamina number directly (int64 ×1000,
+same `FixedPoint64` encoding as HP — confirmed exact: on-screen 110 read
+back as raw `110000`) and write-watching that address. The setter is the
+same shared `FixedPoint64::operator=` leaf as HP
+(`Palworld-Win64-Shipping.exe+0x33604a0`), called this time from
+`+0x2c2965e`:
+
+```asm
+Palworld-Win64-Shipping.exe+0x2c2965e: lea rcx, [rdi+0x4B0]   ; rcx = &Stamina
+Palworld-Win64-Shipping.exe+0x2c66665: lea rdx, [rsp+0x50]    ; source value
+Palworld-Win64-Shipping.exe+0x2c66... : call +0x33604a0        ; FixedPoint64::operator=
+```
+
+Checked whether `rdi` here is the *same* struct instance HP/Shield anchor to
+(offset `+0x4B0` sits suspiciously close to HP's `+0x448`) — it isn't:
+`rdi+0x448` and `rdi+0x4D0` both read `0`, not HP/Shield's live values, so
+this is a different object with its own layout (consistent with the
+`PC_CharacterParameterComponent`-not-`SaveParameter` claim after all — the
+numeric proximity of `0x4B0` to `0x448` was coincidence, not evidence of a
+shared struct). Whatever this object actually is, `+0x4B0` off of it is
+confirmed, live, exact, twice (100 and 110 on-screen both matched).
+
+**Shipped**: `palworld-capture-stamina-anchor` (internal capture patch,
+captures `rdi` at `+0x2c2965e`, signature verified unique — 1 match) chained
+to `Unlimited Stamina` (freeze at `captured+0x4B0`). Same caveat as every
+other patch in this file: signature-unique and value-confirmed via MCP, not
+yet installed through the actual app (needs a live Tamper session to confirm
+the freeze holds without silently doing nothing, same discipline that caught
+the `Never Hungry` mistake).
+
+Method note for whoever continues: the value-scan approach that failed for
+this same field earlier in the session (chat-latency race against a
+continuously-regenerating stat, two rounds of `scan_first`/`scan_next`
+returning no plausible survivor) worked on retry once the user could report
+a she-said-go-live number immediately before the narrowing scan and the
+stat was actively *decreasing* rather than recovering — timing matters more
+than technique here. Async chat is a bad substitute for the app's own pause,
+but a real second try with fresh values found it before regen finished.
+
 ## Open items for whoever picks up Phase 1
 
 - Port UE4SS `SigScanner` GObjects/GNames heuristics (`Okaetsu/RE-UE4SS`,
