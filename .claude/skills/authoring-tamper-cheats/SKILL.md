@@ -7,6 +7,14 @@ description: Use when investigating a live game process with the game-memory MCP
 
 ## Overview
 
+**Start every new game by calling `fingerprint_process(handle)`** (right
+after `attach`) — it identifies the engine/runtime from the module list
+and hands back whatever key addresses are cheaply resolvable up front
+(module bases, and for IL2CPP the five exports its resolution recipe
+needs), plus which playbook doc below applies. Skip straight to that
+playbook's recipe instead of manually checking `list_modules` for
+`mono.dll`/`GameAssembly.dll`/a `*-Win64-Shipping.exe` name.
+
 Live memory RE for this project (Tamper/Apprentice, `games/*.json`
 profiles) follows a small set of proven moves plus a few sharp edges in
 the `game-memory` MCP tools — most learned the hard way, including a
