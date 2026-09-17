@@ -131,6 +131,13 @@ it, then replays the original (read) instructions — contrast:
 
 ## Before shipping: verification discipline
 
+**For `mono`/plain-chain targets, call `verify_cheat(handle, profilePath,
+cheatId)` before eyeballing anything manually** — it resolves the shipped
+cheat's targets and reports live status (resolves? current value?
+matches?) read-only, no address re-derivation by hand. It cannot verify
+`anchor` targets (their address only exists in the running app's own
+capture-patch bookkeeping) — those still need a live Tamper session.
+
 **A confirmed-correct offset is not enough — verify the *mechanism* live.**
 Zeroing/freezing a **threshold or count** is usually safe (materials
 needed, hunger level). Zeroing/freezing a **rate or per-tick multiplier**
