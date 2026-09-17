@@ -7,6 +7,7 @@ import { registerReadTools } from '../src/tools/read'
 import { registerScanTools } from '../src/tools/scan'
 import { registerMonoTools } from '../src/tools/mono'
 import { registerDisasmTools } from '../src/tools/disasm'
+import { registerFingerprintTools } from '../src/tools/fingerprint'
 
 let harness: ChildProcessWithoutNullStreams
 
@@ -159,6 +160,25 @@ describe('mono discovery tools', () => {
     expect(classes[0].className).toBe('Player')
     expect(classes[0].namespaceName).toBe('')
     expect(classes[0].classHandle).toMatch(/^0x[0-9a-f]+$/)
+  })
+})
+
+describe('fingerprint tool', () => {
+  it('fingerprint_process falls back to native-unknown for the plain test harness', async () => {
+    const processServer = new FakeServer()
+    registerProcessTools(processServer as unknown as McpServer)
+    const attachResult = await processServer.call('attach', { pid: harness.pid })
+    const { handle } = JSON.parse(attachResult.content[0].text as string)
+
+    const server = new FakeServer()
+    registerFingerprintTools(server as unknown as McpServer)
+    const result = await server.call('fingerprint_process', { handle })
+    expect(result.isError).toBeUndefined()
+    const parsed = JSON.parse(result.content[0].text as string)
+    expect(parsed.engine).toBe('native-unknown')
+    expect(parsed.mainModuleBase).toMatch(/^0x[0-9a-f]+$/)
+    expect(parsed.moduleCount).toBeGreaterThan(0)
+    expect(parsed.playbook).toContain('authoring-tamper-cheats')
   })
 })
 
