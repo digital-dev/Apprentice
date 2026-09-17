@@ -11,6 +11,7 @@ import { registerDisasmTools } from './tools/disasm'
 import { registerWatchTools } from './tools/watch'
 import { registerRemoteTools } from './tools/remote'
 import { registerFingerprintTools } from './tools/fingerprint'
+import { registerVerifyTools } from './tools/verify'
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'game-memory', version: '0.1.0' })
@@ -22,5 +23,6 @@ export function createServer(): McpServer {
   registerWatchTools(server)
   registerRemoteTools(server)
   registerFingerprintTools(server)
+  registerVerifyTools(server)
   return server
 }

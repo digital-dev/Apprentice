@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "exe": "harness",
+  "modules": {},
+  "cheats": [
+    {
+      "id": "harness-fixture-cheat",
+      "name": "Harness Fixture Cheat",
+      "dataType": "float",
+      "targets": [
+        {
+          "moduleName": "harness.exe",
+          "baseOffset": "0x0",
+          "offsets": []
+        }
+      ],
+      "value": 10.0
+    }
+  ]
+}

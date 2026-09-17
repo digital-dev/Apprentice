@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "exe": "harness",
+  "modules": {},
+  "cheats": [
+    {
+      "id": "anchor-fixture-cheat",
+      "name": "Anchor Fixture Cheat",
+      "dataType": "int32",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "some-capture-patch",
+          "offset": "0x10"
+        }
+      ],
+      "value": 1
+    }
+  ]
+}

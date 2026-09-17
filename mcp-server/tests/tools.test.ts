@@ -8,6 +8,8 @@ import { registerScanTools } from '../src/tools/scan'
 import { registerMonoTools } from '../src/tools/mono'
 import { registerDisasmTools } from '../src/tools/disasm'
 import { registerFingerprintTools } from '../src/tools/fingerprint'
+import { registerVerifyTools } from '../src/tools/verify'
+import path from 'node:path'
 
 let harness: ChildProcessWithoutNullStreams
 
@@ -179,6 +181,66 @@ describe('fingerprint tool', () => {
     expect(parsed.mainModuleBase).toMatch(/^0x[0-9a-f]+$/)
     expect(parsed.moduleCount).toBeGreaterThan(0)
     expect(parsed.playbook).toContain('authoring-tamper-cheats')
+  })
+})
+
+describe('verify_cheat tool', () => {
+  it('resolves a chain target against the real harness process', async () => {
+    const processServer = new FakeServer()
+    registerProcessTools(processServer as unknown as McpServer)
+    const attachResult = await processServer.call('attach', { pid: harness.pid })
+    const { handle } = JSON.parse(attachResult.content[0].text as string)
+
+    const server = new FakeServer()
+    registerVerifyTools(server as unknown as McpServer)
+    const fixturePath = path.resolve(__dirname, 'fixtures/verify-chain.json')
+    const result = await server.call('verify_cheat', {
+      handle,
+      profilePath: fixturePath,
+      cheatId: 'harness-fixture-cheat'
+    })
+    expect(result.isError).toBeUndefined()
+    const parsed = JSON.parse(result.content[0].text as string)
+    expect(parsed.cheatId).toBe('harness-fixture-cheat')
+    expect(parsed.targets).toHaveLength(1)
+    expect(parsed.targets[0].kind).toBe('chain')
+    expect(parsed.targets[0].supported).toBe(true)
+    expect(parsed.targets[0].alive).toBe(true)
+    expect(typeof parsed.targets[0].value).toBe('number')
+  })
+
+  it('reports unsupported for an anchor target without attempting resolution', async () => {
+    const processServer = new FakeServer()
+    registerProcessTools(processServer as unknown as McpServer)
+    const attachResult = await processServer.call('attach', { pid: harness.pid })
+    const { handle } = JSON.parse(attachResult.content[0].text as string)
+
+    const fixturePath = path.resolve(__dirname, 'fixtures/verify-anchor.json')
+    const server = new FakeServer()
+    registerVerifyTools(server as unknown as McpServer)
+    const result = await server.call('verify_cheat', {
+      handle,
+      profilePath: fixturePath,
+      cheatId: 'anchor-fixture-cheat'
+    })
+    expect(result.isError).toBeUndefined()
+    const parsed = JSON.parse(result.content[0].text as string)
+    expect(parsed.targets[0].kind).toBe('anchor')
+    expect(parsed.targets[0].supported).toBe(false)
+    expect(parsed.targets[0].reason).toContain('capture patch')
+  })
+
+  it('errors when the cheat id is not found', async () => {
+    const processServer = new FakeServer()
+    registerProcessTools(processServer as unknown as McpServer)
+    const attachResult = await processServer.call('attach', { pid: harness.pid })
+    const { handle } = JSON.parse(attachResult.content[0].text as string)
+
+    const fixturePath = path.resolve(__dirname, 'fixtures/verify-chain.json')
+    const server = new FakeServer()
+    registerVerifyTools(server as unknown as McpServer)
+    const result = await server.call('verify_cheat', { handle, profilePath: fixturePath, cheatId: 'does-not-exist' })
+    expect(result.isError).toBe(true)
   })
 })
 
