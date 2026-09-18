@@ -8,7 +8,7 @@ import type {
   DataType
 } from '../../../main/store'
 import type { TargetStatus, PatchStatus, CheatStatus } from '../tamper.d'
-import type { PendingMonoSelection } from '../App'
+import type { PendingMonoSelection, PendingUeSelection } from '../App'
 import Toggle from '../components/Toggle'
 import AddressChip from '../components/AddressChip'
 import CheatRow, { type CheatRowVM, type RailState } from '../components/CheatRow'
@@ -141,6 +141,8 @@ export default function CheatList({
   exeName,
   pendingMonoSelection,
   onConsumePendingMonoSelection,
+  pendingUeSelection,
+  onConsumePendingUeSelection,
   onViewInMemory
 }: {
   exeName: string
@@ -151,6 +153,12 @@ export default function CheatList({
   // visit to this screen.
   pendingMonoSelection?: PendingMonoSelection | null
   onConsumePendingMonoSelection?: () => void
+  // Same hand-off from UE Explorer's "Use as UE target" button. Unlike a
+  // Mono value target, a UeTarget also needs an EXISTING capture-mode
+  // patch picked here (its instanceAnchorPatchId) -- reflection alone
+  // never reaches a live instance, see store.ts's UeTarget doc.
+  pendingUeSelection?: PendingUeSelection | null
+  onConsumePendingUeSelection?: () => void
   onViewInMemory: (address: string) => void
 }) {
   const [cheats, setCheats] = useState<CheatDefinition[]>([])
@@ -263,6 +271,16 @@ export default function CheatList({
   const [monoValueDataType, setMonoValueDataType] = useState<DataType>('float')
   const [monoValueMode, setMonoValueMode] = useState<CheatDefinition['mode']>('freeze')
   const [monoValueValue, setMonoValueValue] = useState('')
+  // UE Explorer's handoff form -- same plain-per-field style as the mono
+  // form above, plus instanceAnchorPatchId (an EXISTING capture-mode
+  // patch, since reflection alone can't reach a live instance on its own;
+  // see store.ts's UeTarget doc).
+  const [ueValueName, setUeValueName] = useState('')
+  const [ueValueDataType, setUeValueDataType] = useState<DataType>('float')
+  const [ueValueMode, setUeValueMode] = useState<CheatDefinition['mode']>('freeze')
+  const [ueValueValue, setUeValueValue] = useState('')
+  const [ueMaxObjectsToScan, setUeMaxObjectsToScan] = useState('100000')
+  const [ueInstancePatchId, setUeInstancePatchId] = useState('')
   // Whether the field Mono Explorer handed over belongs to an OBJECT
   // (m_godMode lives on a Player instance) rather than being itself a
   // static field. Defaults to true because that's the common, interesting
@@ -1087,6 +1105,38 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
     onConsumePendingMonoSelection?.()
   }
 
+  // Builds a UeTarget value cheat from UE Explorer's handoff plus an
+  // existing capture-mode patch picked here. maxObjectsToScan has no
+  // silent default (see store.ts's UeTarget doc) -- required and
+  // validated as a positive integer before saving.
+  async function saveUeValueCheat() {
+    if (!pendingUeSelection || !ueValueName || !ueInstancePatchId) return
+    const scanLimit = Number(ueMaxObjectsToScan)
+    if (!Number.isInteger(scanLimit) || scanLimit <= 0) return
+    const cheat: CheatDefinition = {
+      id: ueValueName.toLowerCase().replace(/\s+/g, '-'),
+      name: ueValueName,
+      dataType: ueValueDataType,
+      mode: ueValueMode,
+      targets: [
+        {
+          kind: 'ue',
+          className: pendingUeSelection.className,
+          fieldName: pendingUeSelection.fieldName,
+          maxObjectsToScan: scanLimit,
+          instanceAnchorPatchId: ueInstancePatchId
+        }
+      ],
+      value: Number(ueValueValue)
+    }
+    await window.tamper.saveCheat(exeName, cheat)
+    setCheats((prev) => [...prev.filter((c) => c.id !== cheat.id), cheat])
+    setUeValueName('')
+    setUeValueValue('')
+    setUeInstancePatchId('')
+    onConsumePendingUeSelection?.()
+  }
+
   // Saves a code patch anchored to a Mono class+method instead of a
   // module+RVA or an AOB signature (see anchor.ts's Path 0). Mono Explorer
   // resolves the method's compiled entry address by name, but never
@@ -1400,6 +1450,64 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
             Save
           </button>
           <button onClick={() => onConsumePendingMonoSelection?.()}>Dismiss</button>
+        </div>
+      )}
+
+      {pendingUeSelection && (
+        <div className="banner" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            From UE Explorer: {pendingUeSelection.className}.{pendingUeSelection.fieldName}
+          </p>
+          <input
+            placeholder="Cheat name"
+            value={ueValueName}
+            onChange={(e) => setUeValueName(e.target.value)}
+          />
+          <select value={ueValueDataType} onChange={(e) => setUeValueDataType(e.target.value as DataType)}>
+            <option value="float">Float</option>
+            <option value="double">Double</option>
+            <option value="int32">Whole number (4 bytes)</option>
+            <option value="int16">Whole number (2 bytes)</option>
+            <option value="int64">Whole number (8 bytes)</option>
+            <option value="int8">Byte (bool)</option>
+          </select>
+          <select value={ueValueMode} onChange={(e) => setUeValueMode(e.target.value as CheatDefinition['mode'])}>
+            <option value="freeze">Freeze (continuous)</option>
+            <option value="oneshot">One-shot</option>
+          </select>
+          <input placeholder="Value" value={ueValueValue} onChange={(e) => setUeValueValue(e.target.value)} />
+          <input
+            placeholder="Max objects to scan"
+            value={ueMaxObjectsToScan}
+            onChange={(e) => setUeMaxObjectsToScan(e.target.value)}
+          />
+          <select
+            value={ueInstancePatchId}
+            onChange={(e) => setUeInstancePatchId(e.target.value)}
+            style={{ flexBasis: '100%' }}
+          >
+            <option value="">Pick an existing capture patch for the instance pointer…</option>
+            {patches
+              .filter((p) => p.mode === 'capture')
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+          </select>
+          {patches.filter((p) => p.mode === 'capture').length === 0 && (
+            <p className="muted" style={{ flexBasis: '100%', fontSize: 12 }}>
+              No capture patches yet — find one via Scanner&apos;s &quot;find what writes this&quot;
+              first (same instance-pointer source AnchorTarget cheats use).
+            </p>
+          )}
+          <button
+            onClick={saveUeValueCheat}
+            disabled={!ueValueName || !ueInstancePatchId || !Number(ueMaxObjectsToScan)}
+          >
+            Save
+          </button>
+          <button onClick={() => onConsumePendingUeSelection?.()}>Dismiss</button>
         </div>
       )}
 

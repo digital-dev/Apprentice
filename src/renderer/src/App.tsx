@@ -5,10 +5,11 @@ import ProcessPicker from './screens/ProcessPicker'
 import CheatList from './screens/CheatList'
 import Scanner from './screens/Scanner'
 import MonoExplorer from './screens/MonoExplorer'
+import UEExplorer from './screens/UEExplorer'
 import MemoryViewer from './screens/MemoryViewer'
 import ErrorBoundary from './components/ErrorBoundary'
 
-export type Screen = 'picker' | 'cheats' | 'scanner' | 'mono' | 'memory'
+export type Screen = 'picker' | 'cheats' | 'scanner' | 'mono' | 'ue' | 'memory'
 
 // A resolved Mono Explorer selection, handed from that screen to the cheat
 // list's creation forms. There is no routing/context layer in this
@@ -21,12 +22,21 @@ export type PendingMonoSelection =
   | { kind: 'value'; className: string; fieldName: string }
   | { kind: 'anchor'; className: string; methodName: string }
 
+// Same lifted-state hand-off as PendingMonoSelection, for UE Explorer's
+// "Use as UE target" button. A separate type (not folded into
+// PendingMonoSelection) since a UeTarget additionally needs an existing
+// capture-mode patch picked in CheatList (its instanceAnchorPatchId) --
+// see docs/superpowers/specs/2026-09-17-ue-target-wiring-design.md for why
+// reflection alone can't reach a live instance without one.
+export type PendingUeSelection = { className: string; fieldName: string }
+
 export default function App() {
   const [exeName, setExeName] = useState<string | null>(null)
   const [screen, setScreen] = useState<Screen>('picker')
   const [pendingMonoSelection, setPendingMonoSelection] = useState<PendingMonoSelection | null>(
     null
   )
+  const [pendingUeSelection, setPendingUeSelection] = useState<PendingUeSelection | null>(null)
   const [jumpToAddress, setJumpToAddress] = useState<string | null>(null)
 
   function onViewInMemory(address: string) {
@@ -59,6 +69,8 @@ export default function App() {
               exeName={exeName}
               pendingMonoSelection={pendingMonoSelection}
               onConsumePendingMonoSelection={() => setPendingMonoSelection(null)}
+              pendingUeSelection={pendingUeSelection}
+              onConsumePendingUeSelection={() => setPendingUeSelection(null)}
               onViewInMemory={onViewInMemory}
             />
           )}
@@ -70,6 +82,15 @@ export default function App() {
               }}
               onUseAsPatchAnchor={(className, methodName) => {
                 setPendingMonoSelection({ kind: 'anchor', className, methodName })
+                setScreen('cheats')
+              }}
+              onDone={() => setScreen('cheats')}
+            />
+          )}
+          {screen === 'ue' && exeName && (
+            <UEExplorer
+              onUseAsUeTarget={(className, fieldName) => {
+                setPendingUeSelection({ className, fieldName })
                 setScreen('cheats')
               }}
               onDone={() => setScreen('cheats')}

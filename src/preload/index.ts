@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CheatDefinition, StoredCheat, PatchCheat, ScriptCheat, CheatTarget } from '../main/store'
+import type { UeConfig } from '../main/profile'
 
 contextBridge.exposeInMainWorld('tamper', {
   listProcesses: () => ipcRenderer.invoke('process:list'),
@@ -69,6 +70,11 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('mono:resolveMethodBytes', className, methodName, length),
   monoReadLiveValue: (className: string, staticFieldName: string, instanceFieldName?: string) =>
     ipcRenderer.invoke('mono:readLiveValue', className, staticFieldName, instanceFieldName),
+  ueGetConfig: () => ipcRenderer.invoke('ue:getConfig'),
+  ueSaveConfig: (config: UeConfig) => ipcRenderer.invoke('ue:saveConfig', config),
+  ueResolveClass: (className: string, maxObjectsToScan: number) =>
+    ipcRenderer.invoke('ue:resolveClass', className, maxObjectsToScan),
+  ueListFieldNames: (classAddress: string) => ipcRenderer.invoke('ue:listFieldNames', classAddress),
   importCheatTable: (exeName: string) => ipcRenderer.invoke('ct:import', exeName),
   exportCheatTable: (exeName: string) => ipcRenderer.invoke('ct:export', exeName),
   onHotkeyFired: (

@@ -5,6 +5,7 @@ const NAV_ITEMS: { screen: Screen; label: string }[] = [
   { screen: 'cheats', label: 'Cheats' },
   { screen: 'scanner', label: 'Scanner' },
   { screen: 'mono', label: 'Mono Explorer' },
+  { screen: 'ue', label: 'UE Explorer' },
   { screen: 'memory', label: 'Memory Viewer' }
 ]
 

@@ -36,9 +36,10 @@ import {
   MonoResolverOps
 } from './monoTargetResolve'
 import { findClassLocations } from './monoClassLocations'
-import { resolveUeTargetAddress } from './ueTargetResolve'
+import { resolveUeTargetAddress, resolveClassAddress, walkProperties, decodeFName } from './ueTargetResolve'
 import {
   loadProfile,
+  saveProfile,
   recordModuleFingerprint,
   verifiedModules,
   fingerprintOf,
@@ -1462,6 +1463,58 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       return resolveMonoLiveValue(target, attachedHandle, base, monoOps)
     }
   )
+
+  // UE Explorer's read side: resolve a class by exact name and list its
+  // field names, given the current profile's calibrated UeConfig (see
+  // docs/superpowers/specs/2026-09-17-ue-reflection-decode-design.md for
+  // why that config can't be auto-discovered). null covers "not attached",
+  // "no ueConfig calibrated for this game yet", and "not found" alike --
+  // all routine, matching every other resolver's "can't resolve right now"
+  // convention.
+  ipcMain.handle('ue:getConfig', (): import('./profile').UeConfig | null => {
+    if (attachedExe === null) return null
+    return loadProfile(attachedExe).ueConfig ?? null
+  })
+
+  ipcMain.handle(
+    'ue:saveConfig',
+    (_e, config: import('./profile').UeConfig): boolean => {
+      if (attachedExe === null) return false
+      const profile = loadProfile(attachedExe)
+      profile.ueConfig = config
+      saveProfile(attachedExe, profile)
+      return true
+    }
+  )
+
+  ipcMain.handle(
+    'ue:resolveClass',
+    (_e, className: string, maxObjectsToScan: number): string | null => {
+      if (attachedHandle === null || attachedExe === null) return null
+      const profile = loadProfile(attachedExe)
+      if (profile.ueConfig === undefined) return null
+      const handle = attachedHandle
+      return resolveClassAddress(
+        (address, length) => nativeAddon.tryReadBytes(handle, address, length),
+        profile.ueConfig.gObjectArray,
+        profile.ueConfig.gNames,
+        className,
+        maxObjectsToScan
+      )
+    }
+  )
+
+  ipcMain.handle('ue:listFieldNames', (_e, classAddress: string): string[] => {
+    if (attachedHandle === null || attachedExe === null) return []
+    const profile = loadProfile(attachedExe)
+    if (profile.ueConfig === undefined) return []
+    const handle = attachedHandle
+    const readBytes = (address: string, length: number): string | null =>
+      nativeAddon.tryReadBytes(handle, address, length)
+    return walkProperties(readBytes, classAddress)
+      .map((entry) => decodeFName(readBytes, profile.ueConfig!.gNames, entry.name.comparisonIndex))
+      .filter((name): name is string => name !== null)
+  })
 
   // Auto-fills a Mono-anchored patch's originalBytes/length from the
   // method's actual live entry bytes, instead of making the user guess

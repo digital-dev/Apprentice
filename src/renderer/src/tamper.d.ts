@@ -9,6 +9,7 @@ export {}
 export type { PatchState, PatchStatus } from '../../main/patchEngine'
 export type { CheatState, CheatStatus } from '../../main/cheatRuntime'
 export type { DisasmRow } from '../../main/nativeAddon'
+export type { UeConfig } from '../../main/profile'
 
 export interface Candidate {
   address: string
@@ -238,6 +239,16 @@ declare global {
         staticFieldName: string,
         instanceFieldName?: string
       ) => Promise<{ raw: string; int32: number; float: number } | null>
+      // UE Explorer's read/write side. saveConfig persists the current
+      // profile's UeConfig calibration (see profile.ts's own doc for why
+      // there's no way to auto-fill this). resolveClass/listFieldNames
+      // mirror monoResolveClass/monoListFields but for UE reflection --
+      // null/[] on "not attached", "no ueConfig calibrated yet", or "not
+      // found" alike, same "can't resolve right now" convention.
+      ueGetConfig: () => Promise<UeConfig | null>
+      ueSaveConfig: (config: UeConfig) => Promise<boolean>
+      ueResolveClass: (className: string, maxObjectsToScan: number) => Promise<string | null>
+      ueListFieldNames: (classAddress: string) => Promise<string[]>
       // Opens a native file picker for a .CT file and imports every
       // recognizable entry as a force-mode patch, saving them immediately.
       // Null if the user cancelled the file picker; otherwise a summary of
