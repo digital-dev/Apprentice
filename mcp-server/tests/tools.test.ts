@@ -9,7 +9,7 @@ import { registerMonoTools } from '../src/tools/mono'
 import { registerDisasmTools } from '../src/tools/disasm'
 import { registerFingerprintTools } from '../src/tools/fingerprint'
 import { registerVerifyTools } from '../src/tools/verify'
-import path from 'node:path'
+import { registerUeTools } from '../src/tools/ue'
 
 let harness: ChildProcessWithoutNullStreams
 
@@ -240,6 +240,31 @@ describe('verify_cheat tool', () => {
     const server = new FakeServer()
     registerVerifyTools(server as unknown as McpServer)
     const result = await server.call('verify_cheat', { handle, profilePath: fixturePath, cheatId: 'does-not-exist' })
+    expect(result.isError).toBe(true)
+  })
+})
+
+describe('ue reflection tools', () => {
+  it('ue_decode_name reports not-found rather than throwing against unconfigured memory', async () => {
+    const processServer = new FakeServer()
+    registerProcessTools(processServer as unknown as McpServer)
+    const attachResult = await processServer.call('attach', { pid: harness.pid })
+    const { handle } = JSON.parse(attachResult.content[0].text as string)
+
+    const server = new FakeServer()
+    registerUeTools(server as unknown as McpServer)
+    const result = await server.call('ue_decode_name', {
+      handle,
+      poolConfig: {
+        gNamesBase: '0x1',
+        blockOffsetBits: 16,
+        nameEntryStride: 2,
+        stringOffset: 2,
+        headerOffset: 0,
+        lengthShiftCount: 1
+      },
+      comparisonIndex: 0
+    })
     expect(result.isError).toBe(true)
   })
 })
