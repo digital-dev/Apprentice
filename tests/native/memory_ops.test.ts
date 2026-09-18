@@ -69,16 +69,29 @@ describe('readValue / writeValue', () => {
   })
 
   it('reads and writes an int16 value directly', async () => {
+    // Narrow to a single confirmed candidate first, same reasoning as the
+    // int32 test above: an unbounded scanFirst for 12345 across the WHOLE
+    // process can and does match unrelated memory elsewhere that happens to
+    // hold that same int16 value, not just g_int16 — trusting candidates[0]
+    // without narrowing intermittently wrote through a decoy address
+    // instead, leaving g_int16 unchanged (confirmed live: geti16 reported
+    // the original 12345, not the written value).
     let candidates: { address: string; value: number }[] = await (addon as any).scanFirst(
       handle,
       'int16',
       12345
     )
     expect(candidates.length).toBeGreaterThan(0)
+    await send('seti16 24601')
+    candidates = await (addon as any).scanNext(handle, candidates, 'int16', {
+      mode: 'exact',
+      value: 24601
+    })
+    expect(candidates.length).toBe(1)
     const target = candidates[0].address
 
     const before = (addon as any).readValue(handle, target, [], 'int16')
-    expect(before).toBe(12345)
+    expect(before).toBe(24601)
 
     const ok = (addon as any).writeValue(handle, target, [], 'int16', -1000)
     expect(ok).toBe(true)
