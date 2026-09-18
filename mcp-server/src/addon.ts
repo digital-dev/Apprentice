@@ -134,6 +134,31 @@ export const disassembleBuffer = (
   baseAddress: string,
   maxCount?: number
 ): DisasmRow[] => addon.disassembleBuffer(buffer, baseAddress, maxCount)
+// Generic remote-execution primitives — already compiled into the native
+// addon for the trainer app's own Mono bridge (mono_call.cc/cave_ops.cc),
+// just never wired up as MCP tools before now. Reused as-is for IL2CPP
+// resolution: IL2CPP has no live reflection API a debugger can call into
+// the way Mono's mono_* exports work, but its own il2cpp_* exports ARE
+// ordinary functions in GameAssembly.dll — resolvable and callable through
+// these exact same primitives. See docs/superpowers/specs for the
+// il2cpp-resolution recipe built from these.
+export const resolveExport = (handle: number, moduleBase: string, name: string): string | null =>
+  addon.resolveExport(handle, moduleBase, name)
+export const allocateCave = (handle: number, near: string): string | null => addon.allocateCave(handle, near)
+export const freeMemory = (handle: number, address: string): boolean => addon.freeMemory(handle, address)
+export const writeBytes = (handle: number, address: string, hex: string): boolean =>
+  addon.writeBytes(handle, address, hex)
+export const callRemoteFunction = (
+  handle: number,
+  functionAddress: string,
+  args: string[]
+): Promise<string | null> => addon.callRemoteFunction(handle, functionAddress, args)
+export const callRemoteFunctionFloat = (
+  handle: number,
+  functionAddress: string,
+  args: string[]
+): Promise<number | null> => addon.callRemoteFunctionFloat(handle, functionAddress, args)
+
 export const startWriteWatch = (pid: number, address: string): void => addon.startWriteWatch(pid, address)
 export const pollWriteWatch = (): CaughtInstruction[] => addon.pollWriteWatch()
 export const stopWriteWatch = (): CaughtInstruction[] => addon.stopWriteWatch()

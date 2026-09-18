@@ -1,7 +1,13 @@
 {
   "schema": 2,
   "exe": "Palworld-Win64-Shipping",
-  "modules": {},
+  "modules": {
+    "Palworld-Win64-Shipping.exe": {
+      "size": 167841792,
+      "timestamp": 1788339267,
+      "version": "5.1.1.0"
+    }
+  },
   "cheats": [
     {
       "kind": "patch",
@@ -10,10 +16,10 @@
       "name": "Capture: Player SaveParameter",
       "originalBytes": "488d8b48040000",
       "length": 7,
-      "signature": "e8 7f 5f c2 fd 48 8d 8b e8 01 00 00 c7 83 0c 06 00 00 00 00 00 00 48 8d 54 24 60 c7 44 24 60 00 00 00 00 c7 44 24 64 00 00 80 3f e8 54 5f c2 fd 48 8b 7c 24 38 48 8d 8b 48 04 00 00",
+      "signature": "e8 0f 9e c1 fd 48 8d 8b e8 01 00 00 c7 83 0c 06 00 00 00 00 00 00 48 8d 54 24 60 c7 44 24 60 00 00 00 00 c7 44 24 64 00 00 80 3f e8 e4 9d c1 fd 48 8b 7c 24 38 48 8d 8b 48 04 00 00",
       "signatureOffset": 53,
       "moduleName": "Palworld-Win64-Shipping.exe",
-      "moduleOffset": "0x2f7ff91",
+      "moduleOffset": "0x2f8c0a1",
       "baseRegister": "rbx",
       "internal": true
     },
@@ -50,6 +56,36 @@
       "hotkey": "num2"
     },
     {
+      "id": "palworld-super-work-speed",
+      "name": "Super Work Speed",
+      "dataType": "int16",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "palworld-capture-save-parameter",
+          "offset": "0x4bc",
+          "dataType": "int16"
+        }
+      ],
+      "value": 32767,
+      "hotkey": "num7"
+    },
+    {
+      "kind": "script",
+      "id": "palworld-add-exp",
+      "name": "Add 100000 Exp",
+      "anchors": [
+        {
+          "name": "saveParam",
+          "patchId": "palworld-capture-save-parameter"
+        }
+      ],
+      "enableScript": "local base = tonumber(state.saveParam)\nif base == nil then\n  error(\"player struct not resolved yet -- take a hit, heal, or gain a little XP first so the game touches it\")\nend\nlocal exp = readInt32(base + 0x3f8)\nwriteInt32(base + 0x3f8, exp + 100000)\nprint(\"exp \" .. exp .. \" -> \" .. (exp + 100000))",
+      "disableScript": "local base = tonumber(state.saveParam)\nif base == nil then\n  error(\"player struct not resolved yet -- take a hit, heal, or gain a little XP first so the game touches it\")\nend\nlocal exp = readInt32(base + 0x3f8)\nwriteInt32(base + 0x3f8, exp + 100000)\nprint(\"exp \" .. exp .. \" -> \" .. (exp + 100000))",
+      "hotkey": "num6"
+    },
+    {
       "kind": "patch",
       "mode": "capture",
       "id": "palworld-capture-stamina-anchor",
@@ -59,7 +95,7 @@
       "signature": "84 c0 74 07 c6 87 c9 00 00 00 00 48 8d 8f b0 04 00 00 48 8d 54 24 50 e8",
       "signatureOffset": 11,
       "moduleName": "Palworld-Win64-Shipping.exe",
-      "moduleOffset": "0x2c2965e",
+      "moduleOffset": "0x2c2c5ee",
       "baseRegister": "rdi",
       "internal": true
     },
@@ -89,7 +125,7 @@
       "signature": "48 8b 16 48 8b cb e8 ?? ?? ?? ?? 48 8b d8 48 8b 8c 24 30 01 00 00 48 85 c9 74 06 e8 ?? ?? ?? ?? 90 8b 4b 40 80 7b 34 00 75 22 85 c9 78 12 8b 87 50 01 00 00 3b c8 7f 08 2b c1 89 87 50 01 00 00",
       "signatureOffset": 58,
       "moduleName": "Palworld-Win64-Shipping.exe",
-      "moduleOffset": "0x3268bf8",
+      "moduleOffset": "0x3282fa8",
       "baseRegister": "rdi",
       "internal": true
     },
@@ -115,17 +151,37 @@
       "name": "Easy Craft (No Material Cost)",
       "originalBytes": "880b",
       "length": 2,
-      "signature": "88 0b 48 85 c0 0f 84 f8 00 00 00 48 8d 05 18 86 45 04 48 89 44 24 28 48 8b 4f 08 48 89 4c 24 30 8b 47 10 89 44 24 38 f3 0f 10 47 14 f3 0f 11 44 24 3c 8b 47 18 89 44 24 40 48 8b 47 1c 48 89 44 24 44 48 8b 47 24 48 89 44 24 4c 8b 47 2c 89 44 24 54 48 8b 47 30 48 89 44 24 58 8b 47 38 89 44 24 60 48 8b 47 3c 48 89 44 24 64 8b 47 44",
+      "signature": "88 0b 48 85 c0 0f 84 f8 00 00 00 48 8d 05 58 04 44 04 48 89 44 24 28 48 8b 4f 08 48 89 4c 24 30 8b 47 10 89 44 24 38 f3 0f 10 47 14 f3 0f 11 44 24 3c 8b 47 18 89 44 24 40 48 8b 47 1c 48 89 44 24 44 48 8b 47 24 48 89 44 24 4c 8b 47 2c 89 44 24 54 48 8b 47 30 48 89 44 24 58 8b 47 38 89 44 24 60 48 8b 47 3c 48 89 44 24 64 8b 47 44",
       "signatureOffset": 0,
       "moduleName": "Palworld-Win64-Shipping.exe",
-      "moduleOffset": "0x30a52be",
+      "moduleOffset": "0x30df34e",
       "baseRegister": "rdi",
       "fields": [
-        { "fieldOffset": "0x2c", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x38", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x44", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x50", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x5c", "value": 0, "dataType": "int32" }
+        {
+          "fieldOffset": "0x2c",
+          "value": 0,
+          "dataType": "int32"
+        },
+        {
+          "fieldOffset": "0x38",
+          "value": 0,
+          "dataType": "int32"
+        },
+        {
+          "fieldOffset": "0x44",
+          "value": 0,
+          "dataType": "int32"
+        },
+        {
+          "fieldOffset": "0x50",
+          "value": 0,
+          "dataType": "int32"
+        },
+        {
+          "fieldOffset": "0x5c",
+          "value": 0,
+          "dataType": "int32"
+        }
       ],
       "hotkey": "num4"
     },
@@ -136,16 +192,32 @@
       "name": "Easy Building (No Material Cost)",
       "originalBytes": "0fb64274",
       "length": 4,
-      "signature": "48 8d 05 59 6f 56 04 48 89 01 48 8b 42 08 48 89 41 08 0f b6 42 10 88 41 10 8b 42 14 89 41 14 0f b6 42 18 88 41 18 0f b6 42 19 88 41 19 8b 42 1c 89 41 1c 8b 42 20 89 41 20 8b 42 24 89 41 24 8b 42 28 89 41 28 0f b6 42 2c 88 41 2c 8b 42 30 89 41 30 48 8b 42 34 48 89 41 34 8b 42 3c 89 41 3c 48 8b 42 40 48 89 41 40 8b 42 48 89 41 48 48 8b 42 4c 48 89 41 4c 8b 42 54 89 41 54 48 8b 42 58 48 89 41 58 8b 42 60 89 41 60 48 8b 42 64 48 89 41 64 48 8b 42 6c 48 89 41 6c 0f b6 42 74",
+      "signature": "48 8d 05 a9 e2 57 04 48 89 01 48 8b 42 08 48 89 41 08 0f b6 42 10 88 41 10 8b 42 14 89 41 14 0f b6 42 18 88 41 18 0f b6 42 19 88 41 19 8b 42 1c 89 41 1c 8b 42 20 89 41 20 8b 42 24 89 41 24 8b 42 28 89 41 28 0f b6 42 2c 88 41 2c 8b 42 30 89 41 30 48 8b 42 34 48 89 41 34 8b 42 3c 89 41 3c 48 8b 42 40 48 89 41 40 8b 42 48 89 41 48 48 8b 42 4c 48 89 41 4c 8b 42 54 89 41 54 48 8b 42 58 48 89 41 58 8b 42 60 89 41 60 48 8b 42 64 48 89 41 64 48 8b 42 6c 48 89 41 6c 0f b6 42 74",
       "signatureOffset": 154,
       "moduleName": "Palworld-Win64-Shipping.exe",
-      "moduleOffset": "0x2dcd50a",
+      "moduleOffset": "0x2dd556a",
       "baseRegister": "rcx",
       "fields": [
-        { "fieldOffset": "0x3c", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x48", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x54", "value": 0, "dataType": "int32" },
-        { "fieldOffset": "0x60", "value": 0, "dataType": "int32" }
+        {
+          "fieldOffset": "0x3c",
+          "value": 0,
+          "dataType": "int32"
+        },
+        {
+          "fieldOffset": "0x48",
+          "value": 0,
+          "dataType": "int32"
+        },
+        {
+          "fieldOffset": "0x54",
+          "value": 0,
+          "dataType": "int32"
+        },
+        {
+          "fieldOffset": "0x60",
+          "value": 0,
+          "dataType": "int32"
+        }
       ],
       "hotkey": "num5"
     }

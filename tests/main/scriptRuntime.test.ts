@@ -170,6 +170,30 @@ describe('ScriptRuntime', () => {
     })
   })
 
+  // extraState is how ipc.ts hands a script the anchor pointers it declared
+  // (ScriptCheat.anchors) — fresh every run, never persisted itself.
+  it('merges extraState into stateIn alongside persisted state', async () => {
+    const runScript = vi.fn().mockResolvedValue({ success: true, output: [], error: null, stateOut: {} })
+    const runtime = new ScriptRuntime(runScript)
+
+    await runtime.enable(cheat, { saveParam: '0x175e6f9a060' })
+
+    expect(runScript).toHaveBeenCalledWith(cheat.enableScript, { saveParam: '0x175e6f9a060' })
+  })
+
+  it('extraState overrides a same-named key from persisted state — a stale anchor pointer must never outrank a fresh one', async () => {
+    const runScript = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, output: [], error: null, stateOut: { saveParam: '0xSTALE' } })
+      .mockResolvedValueOnce({ success: true, output: [], error: null, stateOut: {} })
+    const runtime = new ScriptRuntime(runScript)
+
+    await runtime.enable(cheat)
+    await runtime.disable(cheat, { saveParam: '0xFRESH' })
+
+    expect(runScript).toHaveBeenNthCalledWith(2, cheat.disableScript, { saveParam: '0xFRESH' })
+  })
+
   it('clear() also discards the cheat\'s stored state', async () => {
     const runScript = vi
       .fn()

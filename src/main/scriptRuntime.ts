@@ -82,12 +82,24 @@ export class ScriptRuntime {
     return this.enabled.has(cheatId)
   }
 
-  async enable(cheat: ScriptCheat): Promise<{ ok: boolean; error?: string }> {
-    return this.run(cheat, cheat.enableScript, true)
+  // extraState overlays fresh, never-persisted values (anchor pointers —
+  // see ScriptCheat.anchors) on top of whatever this cheat's last run left
+  // behind. It must win on key collision: an anchor's pointer is only ever
+  // correct for THIS run (the object it points to, or the cave holding it,
+  // can be gone by the next one), so a stale copy of the same key surviving
+  // in persisted state would silently outrank the fresh reading otherwise.
+  async enable(
+    cheat: ScriptCheat,
+    extraState?: Record<string, LuaValue>
+  ): Promise<{ ok: boolean; error?: string }> {
+    return this.run(cheat, cheat.enableScript, true, extraState)
   }
 
-  async disable(cheat: ScriptCheat): Promise<{ ok: boolean; error?: string }> {
-    return this.run(cheat, cheat.disableScript, false)
+  async disable(
+    cheat: ScriptCheat,
+    extraState?: Record<string, LuaValue>
+  ): Promise<{ ok: boolean; error?: string }> {
+    return this.run(cheat, cheat.disableScript, false, extraState)
   }
 
   // Detach/vanish/quit: the process handle is dead, so running
@@ -103,7 +115,8 @@ export class ScriptRuntime {
   private async run(
     cheat: ScriptCheat,
     source: string,
-    markEnabledOnSuccess: boolean
+    markEnabledOnSuccess: boolean,
+    extraState?: Record<string, LuaValue>
   ): Promise<{ ok: boolean; error?: string }> {
     if (this.inFlight.has(cheat.id)) {
       return { ok: false, error: 'A run is already in progress for this cheat.' }
@@ -116,7 +129,9 @@ export class ScriptRuntime {
     }
     this.inFlight.add(cheat.id)
     try {
-      const stateIn = this.state.get(cheat.id) ?? {}
+      // extraState spread last — see enable/disable's doc on why it must
+      // win over whatever this cheat's previous run persisted.
+      const stateIn = { ...(this.state.get(cheat.id) ?? {}), ...extraState }
       const result = await this.runScript(source, stateIn)
       if (result.success) {
         this.state.set(cheat.id, result.stateOut)

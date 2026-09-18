@@ -1,0 +1,48 @@
+{
+  "schema": 2,
+  "exe": "Schedule I",
+  "modules": {
+    "UnityPlayer.dll": {
+      "size": 31870976,
+      "timestamp": 1758886063,
+      "version": "2022.3.62.28864"
+    },
+    "GameAssembly.dll": {
+      "size": 68820992,
+      "timestamp": 1786590259,
+      "version": null
+    }
+  },
+  "cheats": [
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "schedule1-capture-online-balance",
+      "name": "Capture: Online balance instance",
+      "originalBytes": "f30f11b628010000",
+      "length": 8,
+      "signature": "d3 e8 b7 39 dc ff 80 3d ?? ?? ?? ?? 00 f3 0f 10 73 1c f3 0f 59 73 18 f3 0f 58 b6 28 01 00 00 75 1f 48 8d 0d ?? ?? ?? ?? e8 80 47 dc ff 48 8d 0d ?? ?? ?? ?? e8 74 47 dc ff c6 05 ?? ?? ?? ?? 01 f3 0f 11 b6 28 01 00 00",
+      "signatureOffset": 64,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x5ca073",
+      "baseRegister": "rsi",
+      "internal": true
+    },
+    {
+      "id": "schedule1-infinite-money",
+      "name": "Infinite Money (Online Balance)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "schedule1-capture-online-balance",
+          "offset": "0x128",
+          "dataType": "float"
+        }
+      ],
+      "value": 999999999,
+      "hotkey": "num2"
+    }
+  ]
+}

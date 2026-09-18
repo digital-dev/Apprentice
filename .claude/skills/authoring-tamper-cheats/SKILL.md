@@ -20,6 +20,18 @@ profiles) follows a small set of proven moves plus a few sharp edges in
 the `game-memory` MCP tools — most learned the hard way, including a
 shipped-then-reverted cheat.
 
+**IL2CPP game (no `mono.dll` in `list_modules`, `mono_*` tools return
+empty)?** Byte-pattern/AOB porting from a reference CT table usually
+can't carry forward alone — most real tables name hook sites as bare
+`Namespace.Class.Method` symbols with no AOB signature at all. Read
+`docs/superpowers/specs/2026-09-07-il2cpp-symbol-resolution-design.md`
+first: it's a fully-worked, repeatable recipe (six generic remote-call
+MCP tools already wired up) for resolving any such symbol to a real,
+current-build address without needing a live in-game trigger — plus two
+live-fire landmines (identical-code-folding making some exports lie about
+their own signature, and a bad pointer arg crashing the target outright)
+worth knowing before making a single remote call.
+
 ## Which recipe is this?
 
 Name which of the five patterns
