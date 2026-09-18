@@ -9,6 +9,9 @@ function isAnchor(target: CheatTarget): target is Extract<CheatTarget, { kind: '
 function isMono(target: CheatTarget): target is Extract<CheatTarget, { kind: 'mono' }> {
   return (target as { kind?: string }).kind === 'mono'
 }
+function isUe(target: CheatTarget): target is Extract<CheatTarget, { kind: 'ue' }> {
+  return (target as { kind?: string }).kind === 'ue'
+}
 
 const HEX_RE = /^0x[0-9a-fA-F]+$/
 
@@ -19,6 +22,7 @@ const HEX_RE = /^0x[0-9a-fA-F]+$/
 // modal.
 function targetIsValid(target: CheatTarget): boolean {
   if (isAnchor(target)) return true
+  if (isUe(target)) return true
   if (isMono(target)) return target.className.trim() !== '' && target.staticFieldName.trim() !== ''
   return (
     target.moduleName.trim() !== '' &&
@@ -51,6 +55,24 @@ function TargetEditor({
           Reached through <code>{target.patchId}</code> + <code>{target.offset}</code> — not editable
           here. Re-capture it from Scanner's "Find what writes this" if it needs to point somewhere
           else.
+        </p>
+      </div>
+    )
+  }
+
+  if (isUe(target)) {
+    return (
+      <div className="target-card">
+        <div className="target-card-head">
+          <span className="eyebrow">UE reflection target</span>
+          <button className="btn-icon" onClick={onRemove} disabled={!removable} aria-label="Remove target">
+            ✕
+          </button>
+        </div>
+        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          <code>{target.className}.{target.fieldName}</code>, instance from capture patch{' '}
+          <code>{target.instanceAnchorPatchId}</code> — not editable here. Use UE Explorer's
+          "Use as UE target" to create or re-point one of these.
         </p>
       </div>
     )

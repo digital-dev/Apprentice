@@ -14,6 +14,28 @@ export interface ModuleFingerprint {
   version: string | null
 }
 
+// Calibration numbers for this game's UE build's GNames pool and
+// GUObjectArray, found once via the manual recipe in
+// docs/superpowers/specs/2026-09-17-ue-reflection-decode-design.md.
+// Genuinely build-dependent (confirmed against Dumper-7's own runtime
+// probing logic) -- there is no safe default to fall back to.
+export interface UeConfig {
+  gNames: {
+    gNamesBase: string
+    blockOffsetBits: number
+    nameEntryStride: number
+    stringOffset: number
+    headerOffset: number
+    lengthShiftCount: number
+  }
+  gObjectArray: {
+    chunksArrayBase: string
+    numElementsPerChunk: number
+    itemStride: number
+    itemInitialOffset: number
+  }
+}
+
 export interface GameProfile {
   schema: 2
   exe: string
@@ -21,6 +43,11 @@ export interface GameProfile {
   // loaded — so an unrelated DLL updating costs nothing.
   modules: Record<string, ModuleFingerprint>
   cheats: StoredCheat[]
+  // Absent means no UeTarget in this profile can resolve (same "not live
+  // yet" null-return convention every other resolver already uses) --
+  // every profile saved before this field existed keeps loading and
+  // working unchanged.
+  ueConfig?: UeConfig
 }
 
 let gamesDir = path.resolve(__dirname, '../../games')

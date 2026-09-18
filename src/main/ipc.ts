@@ -12,7 +12,9 @@ import {
   AnchorTarget,
   isAnchorTarget,
   isMonoTarget,
+  isUeTarget,
   MonoTarget,
+  UeTarget,
   StoredCheat,
   PatchCheat,
   patchMode,
@@ -34,6 +36,7 @@ import {
   MonoResolverOps
 } from './monoTargetResolve'
 import { findClassLocations } from './monoClassLocations'
+import { resolveUeTargetAddress } from './ueTargetResolve'
 import {
   loadProfile,
   recordModuleFingerprint,
@@ -160,6 +163,43 @@ function resolveAnchor(handle: number, target: AnchorTarget): string | null {
   return '0x' + (pointer + BigInt(target.offset)).toString(16)
 }
 
+// The script-cheat counterpart to toggle()'s anchor-arming in CheatList.tsx
+// — but done here, in the main process, rather than the renderer. A script
+// runs identically whether a click or a hotkey fired it (ScriptRuntime.run
+// doesn't know which), and hotkeys.ts's fireScript calls straight into
+// HotkeyDeps.runScriptEnable/Disable without ever going through the
+// renderer — so arming logic that only lived in CheatList's onClick handler
+// (as it does for value cheats today) would silently never run for a
+// script fired by hotkey. See the hotkey/anchor investigation this
+// followed for the value-cheat version of exactly this gap.
+// Arms every capture patch a script's anchors name (idempotent — arm() is
+// itself a no-op once arming/active), then resolves each to the RAW
+// captured pointer (zero offset — a script does its own field-offset math,
+// unlike a value cheat's fixed single field) and returns them keyed by
+// name for ScriptRuntime's extraState. An anchor that isn't resolving yet
+// (patch still arming, or armed but the game hasn't touched the object
+// this session) is simply left out of the returned state rather than
+// failing the whole run — the script sees a nil `state.<name>` and can
+// report that itself, the same "not live yet, not an error" tolerance
+// resolveAnchor already gives value cheats.
+function resolveScriptAnchors(
+  handle: number,
+  exeName: string,
+  anchors: ScriptCheat['anchors']
+): Record<string, LuaValue> {
+  if (!anchors || anchors.length === 0) return {}
+  const patches = loadCheats(exeName).filter(isPatchCheat)
+  const state: Record<string, LuaValue> = {}
+  for (const anchor of anchors) {
+    const patch = patches.find((p) => p.id === anchor.patchId)
+    if (!patch) continue
+    cheatRuntime.arm(patch)
+    const pointerHex = resolveAnchor(handle, { kind: 'anchor', patchId: anchor.patchId, offset: '0x0' })
+    if (pointerHex !== null) state[anchor.name] = pointerHex
+  }
+  return state
+}
+
 // Finds mono.dll's (or the embedded-runtime variant's) base among the
 // modules refreshModuleContext already recorded for the current attach —
 // resolved once per attach, the same way every other module lookup here
@@ -213,6 +253,37 @@ async function resolveMonoTarget(handle: number, target: MonoTarget): Promise<st
     return await resolveMonoTargetAddress(target, handle, base, monoOps)
   } catch (err) {
     console.warn(`[mono] target resolution failed: ${String(err)}`)
+    return null
+  }
+}
+
+// Resolves a UeTarget's live address, or null if it can't right now (no
+// ueConfig calibrated for this game yet, the instance anchor patch isn't
+// installed/hasn't captured a pointer this session, or the class/field
+// don't resolve against GUObjectArray/GNames -- all routine, matching
+// resolveMonoTarget's "can't resolve right now" convention). The instance
+// pointer comes from the SAME slot-read resolveAnchor already uses for
+// AnchorTarget -- see store.ts's UeTarget doc for why reflection alone
+// never reaches a live instance on its own.
+function resolveUeTarget(handle: number, target: UeTarget): string | null {
+  if (attachedExe === null) return null
+  const profile = loadProfile(attachedExe)
+  if (profile.ueConfig === undefined) return null
+
+  const slot = patchEngine.slotAddress(target.instanceAnchorPatchId)
+  if (slot === null) return null
+  const pointerHex = nativeAddon.tryReadBytes(handle, slot, 8)
+  if (pointerHex === null) return null
+  const pointer = littleEndianToBigInt(pointerHex)
+  if (pointer === 0n) return null
+  const instancePointer = '0x' + pointer.toString(16)
+
+  try {
+    return resolveUeTargetAddress(target, profile.ueConfig, instancePointer, (address, length) =>
+      nativeAddon.tryReadBytes(handle, address, length)
+    )
+  } catch (err) {
+    console.warn(`[ue] target resolution failed: ${String(err)}`)
     return null
   }
 }
@@ -296,6 +367,16 @@ async function writeCheat(
       if (ok) anySucceeded = true
       continue
     }
+    if (isUeTarget(target)) {
+      const resolved = resolveUeTarget(handle, target)
+      if (resolved === null) continue
+      const ok =
+        target.bitIndex !== undefined
+          ? writeBit(handle, resolved, [], dataType, target.bitIndex, value)
+          : nativeAddon.writeValue(handle, resolved, [], dataType, value)
+      if (ok) anySucceeded = true
+      continue
+    }
     const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)
     if (moduleBase === null) continue
     const ok =
@@ -358,6 +439,15 @@ async function verifyCheat(
       }
       if (isMonoTarget(target)) {
         const resolved = await resolveMonoTarget(handle, target)
+        if (resolved === null) return { alive: false, value: null }
+        const raw = nativeAddon.tryReadValue(handle, resolved, [], dataType)
+        if (raw === null) return { alive: false, value: null }
+        const value = extract(raw)
+        const alive = expected === null ? true : valueMatches(value, expected, dataType)
+        return { alive, value }
+      }
+      if (isUeTarget(target)) {
+        const resolved = resolveUeTarget(handle, target)
         if (resolved === null) return { alive: false, value: null }
         const raw = nativeAddon.tryReadValue(handle, resolved, [], dataType)
         if (raw === null) return { alive: false, value: null }
@@ -652,6 +742,14 @@ const scriptRuntime = new ScriptRuntime(async (source, stateIn) => {
   return nativeAddon.runScript(attachedHandle, source, stateIn)
 }, scriptRunLimiter)
 
+// Thin wrapper so both callers below (the hotkey path and 'scripts:toggle')
+// share one "no attached process/exe yet" fallback instead of each
+// re-deriving it.
+function resolveScriptAnchorsFor(cheat: ScriptCheat): Record<string, LuaValue> {
+  if (attachedHandle === null || attachedExe === null) return {}
+  return resolveScriptAnchors(attachedHandle, attachedExe, cheat.anchors)
+}
+
 const hotkeyDeps: HotkeyDeps = {
   loadCheats,
   isFreezeEnabled: (cheatId) => freezeLoop.isEnabled(cheatId),
@@ -659,8 +757,8 @@ const hotkeyDeps: HotkeyDeps = {
   disableFreeze: (cheatId) => freezeLoop.disable(cheatId),
   oneShot: async (cheat) => (attachedHandle === null ? false : writeCheat(attachedHandle, cheat)),
   isScriptEnabled: (cheatId) => scriptRuntime.isEnabled(cheatId),
-  runScriptEnable: (cheat) => scriptRuntime.enable(cheat),
-  runScriptDisable: (cheat) => scriptRuntime.disable(cheat),
+  runScriptEnable: (cheat) => scriptRuntime.enable(cheat, resolveScriptAnchorsFor(cheat)),
+  runScriptDisable: (cheat) => scriptRuntime.disable(cheat, resolveScriptAnchorsFor(cheat)),
   // Mirrors exactly the condition cheatRuntime.arm() itself uses to decide
   // whether to no-op, so "is this patch armed, from the hotkey's
   // perspective" agrees with "will calling arm() actually do anything".
@@ -1040,7 +1138,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   ipcMain.handle(
     'scripts:toggle',
     async (_e, cheat: ScriptCheat, enabled: boolean): Promise<{ ok: boolean; error?: string }> => {
-      return enabled ? scriptRuntime.enable(cheat) : scriptRuntime.disable(cheat)
+      const extraState = resolveScriptAnchorsFor(cheat)
+      return enabled ? scriptRuntime.enable(cheat, extraState) : scriptRuntime.disable(cheat, extraState)
     }
   )
 
@@ -1158,6 +1257,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       if (attachedHandle === null) return null
       if (isAnchorTarget(target)) return resolveAnchor(attachedHandle, target)
       if (isMonoTarget(target)) return resolveMonoTarget(attachedHandle, target)
+      if (isUeTarget(target)) return resolveUeTarget(attachedHandle, target)
       const moduleBase = nativeAddon.getModuleBase(attachedHandle, target.moduleName)
       if (moduleBase === null) return null
       return nativeAddon.resolveAddress(attachedHandle, moduleBase, fullOffsets(target))

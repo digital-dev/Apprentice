@@ -120,7 +120,32 @@ export interface MonoTarget {
   bitIndex?: number
 }
 
-export type CheatTarget = ChainTarget | AnchorTarget | MonoTarget
+// A field reached through UE reflection (a UClass's FProperty offset) off
+// an instance pointer supplied by a capture-mode patch. Unlike MonoTarget,
+// UE reflection alone never reaches a live instance -- resolving
+// className+fieldName gives a class and a byte offset, never an object to
+// apply it to (see 2026-09-17-ue-target-wiring-design.md's "why this needs
+// a companion anchor" for the full reasoning). instanceAnchorPatchId names
+// a capture-mode PatchCheat (found via ordinary live-RE, unrelated to
+// reflection) whose captured pointer this target's field offset is added
+// to, the same way AnchorTarget's offset is added to ITS capture's pointer.
+export interface UeTarget {
+  kind: 'ue'
+  className: string
+  fieldName: string
+  // GUObjectArray scan is bounded -- no silent default, matching
+  // ueReflect.ts's resolveClass: the profile author must say how far to
+  // look, since a misconfigured UeConfig makes it easy to loop over a lot
+  // of memory harmlessly-but-uselessly.
+  maxObjectsToScan: number
+  instanceAnchorPatchId: string
+  // Per-target override, same convention as every other CheatTarget kind.
+  value?: number
+  dataType?: DataType
+  bitIndex?: number
+}
+
+export type CheatTarget = ChainTarget | AnchorTarget | MonoTarget | UeTarget
 
 export function isAnchorTarget(target: CheatTarget): target is AnchorTarget {
   return (target as AnchorTarget).kind === 'anchor'
@@ -128,6 +153,10 @@ export function isAnchorTarget(target: CheatTarget): target is AnchorTarget {
 
 export function isMonoTarget(target: CheatTarget): target is MonoTarget {
   return (target as MonoTarget).kind === 'mono'
+}
+
+export function isUeTarget(target: CheatTarget): target is UeTarget {
+  return (target as UeTarget).kind === 'ue'
 }
 
 export interface CheatDefinition {
@@ -369,6 +398,24 @@ export interface ScriptCheat {
   disableScript: string
   // Same meaning as CheatDefinition.hotkey / PatchCheat.hotkey above.
   hotkey?: string
+  // Capture patches this script needs to read/write through. A plain raw
+  // address only works until the process restarts (ASLR) or the object
+  // moves, so a script that wants a per-player field goes through the same
+  // capture-patch anchor a value cheat's AnchorTarget does — but a script
+  // has no `targets` array to hold it, so it's declared here instead.
+  // Before every enable/disable run, ipc.ts arms `patchId` (installing it
+  // if needed, exactly like CheatList's toggle() does for a value cheat's
+  // anchors) and hands the resolved pointer to the script as
+  // `state.<name>` — a hex STRING ("0x175e6f9a060"), not a Lua number:
+  // script_ops.cc's readInt64/writeInt64 take a Lua integer, and Lua 5.4's
+  // integers are a real 64-bit type so a pointer parsed from this string
+  // via `tonumber(state.name)` loses no precision — but the LuaValue this
+  // travels through en route (and the JS number type on the main-process
+  // side before that) would silently round anything past 2^53 if it were
+  // a number instead. This intentionally lives in the same address space
+  // as `state` (not a separate field) — see runScriptEnable's doc for why
+  // that's safe.
+  anchors?: { name: string; patchId: string }[]
 }
 
 export type StoredCheat = CheatDefinition | PatchCheat | ScriptCheat

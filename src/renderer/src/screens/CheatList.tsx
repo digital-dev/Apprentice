@@ -47,18 +47,26 @@ function isMono(target: CheatTarget): target is Extract<CheatTarget, { kind: 'mo
   return (target as { kind?: string }).kind === 'mono'
 }
 
+// Same reasoning as isAnchor above: a local guard rather than importing
+// store.ts's isUeTarget.
+function isUe(target: CheatTarget): target is Extract<CheatTarget, { kind: 'ue' }> {
+  return (target as { kind?: string }).kind === 'ue'
+}
+
 function targetLabel(target: CheatTarget): string {
   if (isAnchor(target)) return `${target.patchId} +${target.offset}`
   if (isMono(target))
     return target.instanceFieldName
       ? `${target.className}.${target.staticFieldName}+${target.instanceFieldName}`
       : `${target.className}.${target.staticFieldName}`
+  if (isUe(target)) return `${target.className}.${target.fieldName}`
   return target.baseOffset
 }
 
 function targetKey(target: CheatTarget, index: number): string {
   if (isAnchor(target)) return `anchor-${target.patchId}-${index}`
   if (isMono(target)) return `mono-${target.className}-${target.staticFieldName}-${index}`
+  if (isUe(target)) return `ue-${target.className}-${target.fieldName}-${index}`
   return `${target.moduleName}-${target.baseOffset}-${index}`
 }
 
