@@ -88,14 +88,25 @@ export function analyzeInstruction(hex: string): InstructionAnalysis {
   return { tokens, hazard: false }
 }
 
-function orderCandidates(methods: Il2cppMethod[], base: bigint, size: bigint): Il2cppMethod[] {
+// Update-style first (fires every frame), then methods that touch the target
+// property (accessors, Change*/Set*), then the rest in declaration order.
+function preference(m: Il2cppMethod, hint: string | undefined): number {
+  if (UPDATE_NAMES.includes(m.name)) return 0
+  if (hint !== undefined && hint.length > 0) {
+    const lower = m.name.toLowerCase()
+    if (lower === `get_${hint}`.toLowerCase() || lower === `set_${hint}`.toLowerCase()) return 1
+    if (lower.includes(hint.toLowerCase())) return 2
+  }
+  return /^(change|set|add|remove|get)/i.test(m.name) ? 3 : 4
+}
+
+function orderCandidates(methods: Il2cppMethod[], base: bigint, size: bigint, hint?: string): Il2cppMethod[] {
   const usable = methods.filter((m) => {
     if (m.isStatic || m.name === '.ctor' || m.name === '.cctor') return false
     const p = BigInt(m.pointer)
     return p >= base && p < base + size
   })
-  const rank = (m: Il2cppMethod) => (UPDATE_NAMES.includes(m.name) ? 0 : 1)
-  return [...usable].sort((a, b) => rank(a) - rank(b)).slice(0, MAX_CANDIDATES)
+  return [...usable].sort((a, b) => preference(a, hint) - preference(b, hint)).slice(0, MAX_CANDIDATES)
 }
 
 async function tryMethod(method: Il2cppMethod, ops: HookOps, base: bigint): Promise<HookSite | null> {
@@ -146,10 +157,11 @@ async function tryMethod(method: Il2cppMethod, ops: HookOps, base: bigint): Prom
 export async function chooseHookSite(
   methods: Il2cppMethod[],
   ops: HookOps,
-  module: { base: string; size: number }
+  module: { base: string; size: number },
+  hint?: string
 ): Promise<HookSite | null> {
   const base = BigInt(module.base)
-  for (const method of orderCandidates(methods, base, BigInt(module.size))) {
+  for (const method of orderCandidates(methods, base, BigInt(module.size), hint)) {
     const site = await tryMethod(method, ops, base)
     if (site !== null) return site
   }

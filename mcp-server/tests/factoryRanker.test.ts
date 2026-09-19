@@ -47,6 +47,31 @@ describe('rankFields', () => {
   })
 })
 
+describe('a category whose target IS a multiplier', () => {
+  const fields: FieldCandidate[] = [
+    { className: 'TimeManager', fieldName: '<TimeSpeedMultiplier>k__BackingField' },
+    { className: 'TimeManager', fieldName: '<CurrentTime>k__BackingField' },
+    { className: 'PlayerMovement', fieldName: '<CurrentSprintMultiplier>k__BackingField' },
+    { className: 'PlayerMovement', fieldName: 'StaminaRestoreRate' }
+  ]
+  it('ranks the time-speed multiplier for freezetime', () => {
+    const cat = categoryById('freezetime')!
+    expect(rankFields(cat, fields).map((f) => f.fieldName)).toEqual(['<TimeSpeedMultiplier>k__BackingField'])
+  })
+  it('ranks the sprint multiplier for runspeed', () => {
+    const cat = categoryById('runspeed')!
+    expect(rankFields(cat, fields).map((f) => f.fieldName)).toEqual(['<CurrentSprintMultiplier>k__BackingField'])
+  })
+  it('still rejects max/regen variants of the matched word', () => {
+    const cat = categoryById('health')!
+    const variants: FieldCandidate[] = [
+      { className: 'Character', fieldName: 'MaxHealthMultiplier' },
+      { className: 'Character', fieldName: 'healthRegenRate' }
+    ]
+    expect(rankFields(cat, variants)).toEqual([])
+  })
+})
+
 describe('scoreField', () => {
   it('gives a class-hint bonus', () => {
     const cat = categoryById('health')!

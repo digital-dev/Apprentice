@@ -82,7 +82,8 @@ export async function authorIl2cpp(
       moduleName: gameAssembly.name,
       readBytes,
       scanQword,
-      chooseHook: (methods) => chooseHookSite(methods, hookOps, { base: gameAssembly.base, size: gameAssembly.size })
+      chooseHook: (methods, hint) =>
+        chooseHookSite(methods, hookOps, { base: gameAssembly.base, size: gameAssembly.size }, hint)
     })
 
     let draftPath: string | null = null

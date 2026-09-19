@@ -35,11 +35,15 @@ worth knowing before making a single remote call.
 ## Fast path: `author_cheats` (Unity/Mono and Unity/IL2CPP)
 
 For a Unity game, run this first — it replaces the per-cheat RE loop for
-the common categories (health, stamina, mana, money, godmode):
+the common categories (health, stamina, mana, money, bank, cash, water,
+curfew, freezetime, runspeed, nosearch, godmode; hunger and speed are
+reported as manual landmines). Categories are data in
+`mcp-server/src/factory/categories.ts`: add name hints there for a new game
+before reaching for manual RE:
 
 1. `attach`, `fingerprint_process` (must report `unity-mono` or `unity-il2cpp`).
 2. Get the player into a world/save (live instances must exist).
-3. `author_cheats(handle, ["health","stamina","mana","money","godmode"], "games/<exe>.json")`.
+3. `author_cheats(handle, ["health","bank","cash","curfew"], "games/<exe>.json")` (any category ids above).
 4. Read the result. `checklist` lists each drafted cheat with `verified`
    (was a live instance read with a plausible value?), `liveValue`, and
    `multiInstanceRisk` (a capture hook records whichever instance ran

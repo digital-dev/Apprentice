@@ -152,6 +152,15 @@ describe('chooseHookSite', () => {
     expect(reads[0]).toBe(update.pointer)
   })
 
+  it('prefers the target property accessors, then Change*/Set*, over unrelated methods', async () => {
+    const copy = method('GetCopy', 0x1000)
+    const change = method('ChangeBalance', 0x2000)
+    const setter = method('set_Balance', 0x3000)
+    const { ops, reads } = opsFor({ [copy.pointer]: GOOD, [change.pointer]: GOOD, [setter.pointer]: GOOD }, () => [])
+    await chooseHookSite([copy, change, setter], ops, MODULE, 'Balance')
+    expect(reads.slice(0, 3)).toEqual([setter.pointer, change.pointer, copy.pointer])
+  })
+
   it('returns null when nothing qualifies', async () => {
     const { ops } = opsFor({}, () => [])
     expect(await chooseHookSite([method('Update', 0x1000)], ops, MODULE)).toBeNull()

@@ -21,6 +21,12 @@ export interface Category {
   plausible: [number, number]
   lookFor: string
   manualReview?: string
+  // Take every matching field on the winning class as a target of one cheat
+  // (e.g. several curfew flags that must all be cleared).
+  multi?: boolean
+  // Also emit a one-shot "Edit ..." cheat on the same targets, for setting
+  // an exact value from the UI instead of freezing.
+  edit?: string
 }
 
 const ACTOR = [/player/i, /character/i, /humanoid/i, /hero/i, /entity/i, /unit/i, /actor/i]
@@ -69,6 +75,87 @@ export const CATEGORIES: Category[] = [
     value: 999999,
     plausible: [0, 1000000000],
     lookFor: 'The on-screen money reads 999999; buy something and it stays.'
+  },
+  {
+    id: 'bank',
+    label: 'Unlimited Bank Balance',
+    nameHints: [/onlinebalance/i, /bank/i],
+    classHints: [/money/i, /bank/i, /atm/i, /economy/i],
+    dataTypes: ['float', 'int32'],
+    mode: 'freeze',
+    value: 999999999,
+    plausible: [0, 1000000000000],
+    lookFor: 'The bank/online balance reads the frozen amount; spend some and it refills.',
+    edit: 'Edit Bank Balance'
+  },
+  {
+    id: 'cash',
+    label: 'Unlimited Cash',
+    nameHints: [/balance/i, /cash/i],
+    classHints: [/cash/i, /wallet/i],
+    dataTypes: ['float', 'int32'],
+    mode: 'freeze',
+    value: 999999,
+    plausible: [0, 1000000000],
+    lookFor: 'The cash in hand reads the frozen amount; buy something and it refills.',
+    edit: 'Edit Cash'
+  },
+  {
+    id: 'water',
+    label: 'Unlimited Water',
+    nameHints: [/fillamount/i, /waterlevel/i, /^water$/i, /watercontent/i],
+    classHints: [/watercontainer/i, /wateringcan/i, /water/i],
+    dataTypes: ['float', 'int32'],
+    mode: 'freeze',
+    value: 999,
+    plausible: [0, 100000],
+    lookFor: 'Water plants repeatedly: the can never empties. (If the can looks overfull, lower the frozen value.)'
+  },
+  {
+    id: 'curfew',
+    label: 'No Curfew',
+    nameHints: [/isenabled/i, /iscurrentlyactive/i, /ishardcurfewactive/i, /curfewactive/i],
+    classHints: [/curfew/i],
+    dataTypes: ['int8'],
+    mode: 'freeze',
+    value: 0,
+    plausible: [0, 1],
+    multi: true,
+    lookFor: 'Stay out past curfew: no warning, no police response.'
+  },
+  {
+    id: 'freezetime',
+    label: 'Freeze Daytime',
+    nameHints: [/timespeedmultiplier/i, /timescale/i],
+    classHints: [/timemanager/i, /gametime/i, /clock/i],
+    dataTypes: ['float'],
+    mode: 'freeze',
+    value: 0,
+    plausible: [0, 100],
+    lookFor: 'The in-game clock stops. Toggle off to resume; sleeping may misbehave while frozen.'
+  },
+  {
+    id: 'runspeed',
+    label: 'Run Speed Multiplier',
+    nameHints: [/sprintmultiplier/i, /runspeed/i],
+    classHints: [/movement/i, /controller/i],
+    dataTypes: ['float'],
+    mode: 'freeze',
+    value: 3,
+    plausible: [0.01, 100],
+    lookFor:
+      'Sprint: noticeably faster. This field may be recomputed every frame; if it does nothing, it needs a method patch instead.'
+  },
+  {
+    id: 'nosearch',
+    label: 'No Body Search',
+    nameHints: [/bodysearchpending/i, /searchpending/i],
+    classHints: [/crime/i, /police/i, /search/i],
+    dataTypes: ['int8'],
+    mode: 'freeze',
+    value: 0,
+    plausible: [0, 1],
+    lookFor: 'Get stopped by police: no body search is triggered.'
   },
   {
     id: 'godmode',

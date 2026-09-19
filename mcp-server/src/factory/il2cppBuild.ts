@@ -12,7 +12,9 @@ import { CLASS_HEADER_BYTES, decodeClass, leU64, toHex } from './il2cppLayout'
 export interface BuildOps {
   moduleName: string
   readBytes(address: string, length: number): string | null
-  chooseHook(methods: Il2cppMethod[]): Promise<HookSite | null>
+  // `hint` is the target field's property name; methods that touch it are
+  // preferred so the hook fires when the game reads or changes that value.
+  chooseHook(methods: Il2cppMethod[], hint?: string): Promise<HookSite | null>
   // Memory scan for a qword value (a class pointer), used to find live
   // instances no singleton root reaches. Optional: without it those cheats
   // are simply drafted unverified.
@@ -126,6 +128,9 @@ const MAX_OBJECT_SCAN_BYTES = 0x8000
 const MIN_POINTER = 0x10000n
 const MAX_POINTER = 0x7fffffffffffn
 const MAX_SCANNED_INSTANCES = 64
+// A scan that finds more candidates than this is mostly noise (freed and
+// look-alike objects), so its values prove nothing.
+const MAX_TRUSTED_SCAN_INSTANCES = 16
 
 function instanceWindow(ops: BuildOps, classPtr: string): number {
   const hex = ops.readBytes(classPtr, CLASS_HEADER_BYTES)
@@ -206,6 +211,9 @@ async function verifyField(field: Il2cppField, roots: Il2cppRoot[], ops: BuildOp
   //    failure leave the cheat unverified rather than rejected.
   if (ops.scanQword === undefined) return { state: 'unverified', value: null, instanceCount: null, lowRisk: false }
   const instances = await scannedInstances(ops, field.classPtr)
+  if (instances.length > MAX_TRUSTED_SCAN_INSTANCES) {
+    return { state: 'unverified', value: null, instanceCount: instances.length, lowRisk: false }
+  }
   for (const instance of instances) {
     const v = read(instance)
     if (v !== null && v !== 0 && plausible(v)) {
@@ -225,10 +233,26 @@ export async function buildIl2cppFactory(
   const result: Il2cppFactoryResult = { patches: [], cheats: [], checklist: [], manual: [], notFound: [], unresolved: [] }
   const patchIds = new Set<string>()
   const hookCache = new Map<string, HookSite | null>()
-  const methodsByClass = new Map(enumeration.classes.map((c) => [c.classPtr, c.methods]))
+  // Identical-code folding: the linker merges byte-identical functions, so
+  // one methodPointer can belong to several classes' MethodInfos (typically
+  // trivial getters). A capture hook there fires for whichever class calls
+  // it, so any pointer owned by more than one class is not a hook site.
+  const ownersByPointer = new Map<string, Set<string>>()
+  for (const c of enumeration.classes) {
+    for (const m of c.methods) {
+      if (!ownersByPointer.has(m.pointer)) ownersByPointer.set(m.pointer, new Set())
+      ownersByPointer.get(m.pointer)!.add(c.classPtr)
+    }
+  }
+  const methodsByClass = new Map(
+    enumeration.classes.map((c) => [c.classPtr, c.methods.filter((m) => ownersByPointer.get(m.pointer)!.size === 1)])
+  )
 
-  const hookFor = async (classPtr: string): Promise<HookSite | null> => {
-    if (!hookCache.has(classPtr)) hookCache.set(classPtr, await ops.chooseHook(methodsByClass.get(classPtr) ?? []))
+  const propertyName = (fieldName: string): string => fieldName.replace(/^<|>k__BackingField$/g, '')
+  const hookFor = async (classPtr: string, fieldName: string): Promise<HookSite | null> => {
+    if (!hookCache.has(classPtr)) {
+      hookCache.set(classPtr, await ops.chooseHook(methodsByClass.get(classPtr) ?? [], propertyName(fieldName)))
+    }
     return hookCache.get(classPtr)!
   }
 
@@ -262,7 +286,7 @@ export async function buildIl2cppFactory(
         implausible = true
         continue
       }
-      const hook = await hookFor(field.classPtr)
+      const hook = await hookFor(field.classPtr, field.fieldName)
       if (hook === null) {
         unhookable = true
         continue
@@ -288,15 +312,29 @@ export async function buildIl2cppFactory(
         })
       }
 
+      // A multi category takes every matching field on the same class.
+      const targetFields = cat.multi
+        ? ranked.filter((f) => f.classPtr === field.classPtr && f.dataType === field.dataType)
+        : [field]
+      const targets = targetFields.map((f) => ({
+        kind: 'anchor' as const,
+        patchId,
+        offset: '0x' + f.offset.toString(16),
+        dataType
+      }))
+
       const cheatId = `factory-${cat.id}`
-      result.cheats.push({
-        id: cheatId,
-        name: cat.label,
-        dataType,
-        mode: cat.mode,
-        targets: [{ kind: 'anchor', patchId, offset: '0x' + field.offset.toString(16), dataType }],
-        value: cat.value
-      })
+      result.cheats.push({ id: cheatId, name: cat.label, dataType, mode: cat.mode, targets, value: cat.value })
+      if (cat.edit !== undefined) {
+        result.cheats.push({
+          id: `${cheatId}-edit`,
+          name: cat.edit,
+          dataType,
+          mode: 'oneshot',
+          targets,
+          value: cat.value
+        })
+      }
       result.checklist.push({
         id: cheatId,
         name: cat.label,
@@ -310,7 +348,7 @@ export async function buildIl2cppFactory(
         instanceCount: verification.instanceCount,
         multiInstanceRisk: !(verification.state === 'verified' && verification.lowRisk),
         lookFor: cat.lookFor,
-        alternates: ranked.filter((f) => f !== field).map((f) => `${f.className}.${f.fieldName}`)
+        alternates: ranked.filter((f) => !targetFields.includes(f)).map((f) => `${f.className}.${f.fieldName}`)
       })
       done = true
       break

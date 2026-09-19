@@ -1,0 +1,292 @@
+{
+  "schema": 2,
+  "exe": "Schedule I",
+  "modules": {
+    "UnityPlayer.dll": {
+      "size": 31870976,
+      "timestamp": 1758886063,
+      "version": "2022.3.62.28864"
+    },
+    "GameAssembly.dll": {
+      "size": 68820992,
+      "timestamp": 1786590259,
+      "version": null
+    }
+  },
+  "cheats": [
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-PlayerHealth",
+      "name": "Capture: PlayerHealth.Update instance",
+      "originalBytes": "40534883ec60",
+      "length": 6,
+      "signature": "40 53 48 83 ec 60 0f 29 74 24 50 48 8b d9 f3 0f 10 b1 20 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x655210",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-MoneyManager",
+      "name": "Capture: MoneyManager.Update instance",
+      "originalBytes": "c6817801000001",
+      "length": 7,
+      "signature": "c6 81 78 01 00 00 01 c3 cc cc cc cc cc cc cc cc",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x5cacf0",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-CashInstance",
+      "name": "Capture: CashInstance.ChangeBalance instance",
+      "originalBytes": "40534883ec20",
+      "length": 6,
+      "signature": "40 53 48 83 ec 20 f3 0f 58 49 30 0f 57 c0 48 8b d9",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x641260",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-WaterContainerInstance",
+      "name": "Capture: WaterContainerInstance.get_NormalizedFillAmount instance",
+      "originalBytes": "4883ec380f29742420",
+      "length": 9,
+      "signature": "48 83 ec 38 0f 29 74 24 20 33 d2 f3 0f 10 71 30",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x659910",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-CurfewManager",
+      "name": "Capture: CurfewManager.get_IsEnabled instance",
+      "originalBytes": "0fb68120010000",
+      "length": 7,
+      "signature": "0f b6 81 20 01 00 00 c3 cc cc cc cc cc cc cc cc",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x4dc930",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-TimeManager",
+      "name": "Capture: TimeManager.Update instance",
+      "originalBytes": "40534883ec60",
+      "length": 6,
+      "signature": "40 53 48 83 ec 60 81 b9 28 01 00 00 90 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xa952d0",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-PlayerMovement",
+      "name": "Capture: PlayerMovement.Update instance",
+      "originalBytes": "40534883ec70",
+      "length": 6,
+      "signature": "40 53 48 83 ec 70 80 3d ?? ?? ?? ?? 00 48 8b d9 0f 29 74 24 60 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 0f 29 7c 24 50 33 d2",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x63e130",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-PlayerCrimeData",
+      "name": "Capture: PlayerCrimeData.Update instance",
+      "originalBytes": "40534883ec70",
+      "length": 6,
+      "signature": "40 53 48 83 ec 70 80 3d ?? ?? ?? ?? 00 48 8b d9 0f 29 74 24 60 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d 26 71",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x630fb0",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "id": "factory-health",
+      "name": "Infinite Health",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-PlayerHealth",
+          "offset": "0x11c",
+          "dataType": "float"
+        }
+      ],
+      "value": 1000
+    },
+    {
+      "id": "factory-bank",
+      "name": "Unlimited Bank Balance",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-MoneyManager",
+          "offset": "0x128",
+          "dataType": "float"
+        }
+      ],
+      "value": 999999999
+    },
+    {
+      "id": "factory-bank-edit",
+      "name": "Edit Bank Balance",
+      "dataType": "float",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-MoneyManager",
+          "offset": "0x128",
+          "dataType": "float"
+        }
+      ],
+      "value": 999999999
+    },
+    {
+      "id": "factory-cash",
+      "name": "Unlimited Cash",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-CashInstance",
+          "offset": "0x30",
+          "dataType": "float"
+        }
+      ],
+      "value": 999999
+    },
+    {
+      "id": "factory-cash-edit",
+      "name": "Edit Cash",
+      "dataType": "float",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-CashInstance",
+          "offset": "0x30",
+          "dataType": "float"
+        }
+      ],
+      "value": 999999
+    },
+    {
+      "id": "factory-water",
+      "name": "Unlimited Water",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-WaterContainerInstance",
+          "offset": "0x30",
+          "dataType": "float"
+        }
+      ],
+      "value": 999
+    },
+    {
+      "id": "factory-curfew",
+      "name": "No Curfew",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-CurfewManager",
+          "offset": "0x120",
+          "dataType": "int8"
+        },
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-CurfewManager",
+          "offset": "0x121",
+          "dataType": "int8"
+        },
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-CurfewManager",
+          "offset": "0x122",
+          "dataType": "int8"
+        }
+      ],
+      "value": 0
+    },
+    {
+      "id": "factory-freezetime",
+      "name": "Freeze Daytime",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-TimeManager",
+          "offset": "0x13c",
+          "dataType": "float"
+        }
+      ],
+      "value": 0
+    },
+    {
+      "id": "factory-runspeed",
+      "name": "Run Speed Multiplier",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-PlayerMovement",
+          "offset": "0x50",
+          "dataType": "float"
+        }
+      ],
+      "value": 3
+    },
+    {
+      "id": "factory-nosearch",
+      "name": "No Body Search",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-PlayerCrimeData",
+          "offset": "0x168",
+          "dataType": "int8"
+        }
+      ],
+      "value": 0
+    }
+  ]
+}

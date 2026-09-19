@@ -9,8 +9,11 @@ function field(cls: string, ptr: string, name: string, offset: number, dataType:
   return { className: cls, classPtr: ptr, fieldName: name, offset, dataType, isStatic }
 }
 
+// Each class gets its own code address (distinct classes never share a
+// pointer unless a test folds them on purpose).
 function method(cls: string, ptr: string, name: string): Il2cppMethod {
-  return { className: cls, classPtr: ptr, name, pointer: '0x7ff600001000', isStatic: false, paramCount: 0 }
+  const pointer = '0x7ff6' + BigInt(ptr).toString(16).padStart(8, '0')
+  return { className: cls, classPtr: ptr, name, pointer, isStatic: false, paramCount: 0 }
 }
 
 function klass(name: string, ptr: string, fields: Il2cppField[], methods: Il2cppMethod[]): Il2cppClassInfo {
@@ -215,6 +218,84 @@ describe('buildIl2cppFactory', () => {
     )
     const r = await buildIl2cppFactory(['health'], NOROOT, ops)
     expect(r.checklist[0]).toMatchObject({ verified: false })
+  })
+
+  it('takes every matching flag on the class for a multi-target category (curfew)', async () => {
+    const curfew = klass(
+      'CurfewManager',
+      '0x3000',
+      [
+        field('CurfewManager', '0x3000', '<IsEnabled>k__BackingField', 0x120, 'int8'),
+        field('CurfewManager', '0x3000', '<IsCurrentlyActive>k__BackingField', 0x121, 'int8'),
+        field('CurfewManager', '0x3000', '<IsHardCurfewActive>k__BackingField', 0x122, 'int8'),
+        field('CurfewManager', '0x3000', 'CurfewWarningSound', 0x128, null)
+      ],
+      [method('CurfewManager', '0x3000', 'Awake')]
+    )
+    const r = await buildIl2cppFactory(['curfew'], enumeration([curfew], []), opsWith(0))
+    expect(r.cheats).toHaveLength(1)
+    expect(r.cheats[0].targets.map((t) => t.offset)).toEqual(['0x120', '0x121', '0x122'])
+    expect(r.cheats[0]).toMatchObject({ dataType: 'int8', value: 0, mode: 'freeze' })
+    expect(r.patches).toHaveLength(1)
+  })
+
+  it('emits an Edit variant beside the freeze cheat when the category asks for one', async () => {
+    const r = await buildIl2cppFactory(['bank'], enumeration([MONEY]), opsWith(500))
+    expect(r.cheats.map((c) => [c.id, c.name, c.mode])).toEqual([
+      ['factory-bank', 'Unlimited Bank Balance', 'freeze'],
+      ['factory-bank-edit', 'Edit Bank Balance', 'oneshot']
+    ])
+    expect(r.cheats[1].targets).toEqual(r.cheats[0].targets)
+  })
+
+  it('refuses a hook whose method pointer is shared with another class (folded code)', async () => {
+    const a = klass('CashInstance', '0x4000', [field('CashInstance', '0x4000', '<Balance>k__BackingField', 0x30, 'float')], [
+      { ...method('CashInstance', '0x4000', 'get_Balance'), pointer: '0x7ff600002000' }
+    ])
+    const b = klass('WaterContainerInstance', '0x5000', [field('WaterContainerInstance', '0x5000', '<CurrentFillAmount>k__BackingField', 0x30, 'float')], [
+      { ...method('WaterContainerInstance', '0x5000', 'get_CurrentFillAmount'), pointer: '0x7ff600002000' }
+    ])
+    const seen: Il2cppMethod[][] = []
+    const ops: BuildOps = {
+      ...opsWith(0),
+      chooseHook: async (ms) => {
+        seen.push(ms)
+        return ms.length > 0 ? site(ms[0]) : null
+      }
+    }
+    const r = await buildIl2cppFactory(['cash'], enumeration([a, b], []), ops)
+    // Both classes own the same code, so neither is a safe hook site.
+    expect(seen.every((ms) => ms.length === 0)).toBe(true)
+    expect(r.unresolved).toEqual([{ category: 'cash', reason: expect.stringContaining('hook') }])
+  })
+
+  it('does not trust a scan that finds too many candidate objects', async () => {
+    const hits = Array.from({ length: 40 }, (_, i) => 0x1d400010000n + BigInt(i) * 0x100n)
+    const ops = scanWorld(
+      () => hits,
+      (m) => {
+        for (const o of hits) {
+          m.qword(o, 0x2000)
+          m.qword(o + 8n, 0)
+          m.float(o + 0x40n, 80)
+        }
+      }
+    )
+    const r = await buildIl2cppFactory(['health'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: false, instanceCount: 40, multiInstanceRisk: true })
+  })
+
+  it('asks for a hook using the field name as a preference hint', async () => {
+    const hints: (string | undefined)[] = []
+    const ops: BuildOps = {
+      ...opsWith(500),
+      chooseHook: async (ms, hint) => {
+        hints.push(hint)
+        return site(ms[0])
+      }
+    }
+    await buildIl2cppFactory(['bank'], enumeration([MONEY]), ops)
+    expect(hints).toEqual(['onlineBalance'])
   })
 
   it('shares one capture patch between cheats on the same class', async () => {
