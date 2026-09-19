@@ -93,7 +93,20 @@ jobs:
         run: npm run build
 
       - name: Unit and native-harness tests
-        run: npx vitest run
+        id: tests
+        run: |
+          set -o pipefail
+          npx vitest run 2>&1 | tee "$RUNNER_TEMP/vitest.log"
+
+      # Same reason as the native build step: the job log needs a login, annotations do not.
+      - name: Explain test failure
+        if: failure() && steps.tests.outcome == 'failure'
+        run: |
+          {
+            grep -nE "FAIL|Error:|AssertionError|Segmentation|exited|timed out|Test Files|Tests  " "$RUNNER_TEMP/vitest.log" | head -30
+            echo "--- tail of the test output ---"
+            tail -n 12 "$RUNNER_TEMP/vitest.log"
+          } | awk 'BEGIN { ORS = "%0A"; printf "::error title=Tests failed::" } { gsub(/%/, "%25"); gsub(/\r/, ""); print }'
 
   release:
     name: Publish release
