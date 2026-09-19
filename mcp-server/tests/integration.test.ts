@@ -30,7 +30,14 @@ describe('stdio integration', () => {
     const { tools } = await client.listTools()
     const names = tools.map((t) => t.name)
     expect(names).toEqual(
-      expect.arrayContaining(['list_processes', 'attach', 'read_bytes', 'scan_first', 'start_write_watch'])
+      expect.arrayContaining([
+        'list_processes',
+        'attach',
+        'read_bytes',
+        'scan_first',
+        'start_write_watch',
+        'author_cheats'
+      ])
     )
   })
 

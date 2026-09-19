@@ -32,6 +32,25 @@ live-fire landmines (identical-code-folding making some exports lie about
 their own signature, and a bad pointer arg crashing the target outright)
 worth knowing before making a single remote call.
 
+## Fast path: `author_cheats` (Unity/Mono)
+
+For a Unity/Mono game, run this first — it replaces the per-cheat RE loop
+for the common categories (health, stamina, mana, money, godmode):
+
+1. `attach`, `fingerprint_process` (must report `unity-mono`).
+2. Get the player into a world/save (the singleton root must be non-null).
+3. `author_cheats(handle, ["health","stamina","mana","money","godmode"], "games/<exe>.json")`.
+4. Read the result: `checklist` (confirm each in-game), `unresolved`
+   (fields matched but no plausible live value), `notFound` (no field
+   name matched — fall back to the recipes below), `manual` (hunger/speed:
+   landmines, do by hand).
+5. Toggle each drafted cheat in Tamper from `games/<exe>.draft.json` and
+   check its `lookFor` line. Move confirmed entries into the real profile.
+
+It only writes the draft file, never game memory or the live profile.
+Non-Mono engines get an error naming the playbook; use the recipes below.
+Design: `docs/superpowers/specs/2026-09-19-cheat-factory-design.md`.
+
 ## Which recipe is this?
 
 Name which of the five patterns

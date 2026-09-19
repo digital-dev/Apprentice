@@ -7,6 +7,14 @@ reverse-engineering sessions against a running game. No write operations —
 see `docs/superpowers/specs/2026-08-22-mcp-memory-server-design.md` at the
 repo root for the full design rationale.
 
+## Game-memory safety
+
+Every tool is read-only against game memory. The one tool that writes
+anything, `author_cheats` (Unity/Mono only), writes a draft profile
+(`<profile>.draft.json`) on disk and never touches the live profile or the
+game process: wishlist of categories in, read-verified draft value cheats
+plus an in-game checklist out.
+
 ## Prerequisites
 
 - Windows (the native addon it wraps is Windows-only).
