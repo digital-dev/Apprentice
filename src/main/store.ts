@@ -45,7 +45,15 @@ export interface ChainTarget {
 export interface AnchorTarget {
   kind: 'anchor'
   patchId: string
+  // Offset of the target field, from the captured object (or, with
+  // derefOffset, from the object that reference points at).
   offset: string
+  // Optional extra hop: the captured object only HOLDS a reference at this
+  // offset; read that pointer and use the object it points at as the base
+  // for `offset`. Lets a capture on a method that runs every frame (an
+  // inventory's Update) reach a value on another object it references (the
+  // wallet), instead of hooking that object's own rarely-called methods.
+  derefOffset?: string
   // See MonoTarget.value/dataType below — the same per-target override,
   // available on every target kind.
   value?: number

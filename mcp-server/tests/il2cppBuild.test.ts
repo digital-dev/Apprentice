@@ -249,11 +249,11 @@ describe('buildIl2cppFactory', () => {
   })
 
   it('refuses a hook whose method pointer is shared with another class (folded code)', async () => {
-    const a = klass('CashInstance', '0x4000', [field('CashInstance', '0x4000', '<Balance>k__BackingField', 0x30, 'float')], [
-      { ...method('CashInstance', '0x4000', 'get_Balance'), pointer: '0x7ff600002000' }
+    const a = klass('PlayerHealth', '0x4000', [field('PlayerHealth', '0x4000', '<CurrentHealth>k__BackingField', 0x30, 'float')], [
+      { ...method('PlayerHealth', '0x4000', 'get_CurrentHealth'), pointer: '0x7ff600002000' }
     ])
-    const b = klass('WaterContainerInstance', '0x5000', [field('WaterContainerInstance', '0x5000', '<CurrentFillAmount>k__BackingField', 0x30, 'float')], [
-      { ...method('WaterContainerInstance', '0x5000', 'get_CurrentFillAmount'), pointer: '0x7ff600002000' }
+    const b = klass('Character', '0x5000', [field('Character', '0x5000', 'm_hp', 0x30, 'float')], [
+      { ...method('Character', '0x5000', 'get_hp'), pointer: '0x7ff600002000' }
     ])
     const seen: Il2cppMethod[][] = []
     const ops: BuildOps = {
@@ -263,10 +263,10 @@ describe('buildIl2cppFactory', () => {
         return ms.length > 0 ? site(ms[0]) : null
       }
     }
-    const r = await buildIl2cppFactory(['cash'], enumeration([a, b], []), ops)
+    const r = await buildIl2cppFactory(['health'], enumeration([a, b], []), ops)
     // Both classes own the same code, so neither is a safe hook site.
     expect(seen.every((ms) => ms.length === 0)).toBe(true)
-    expect(r.unresolved).toEqual([{ category: 'cash', reason: expect.stringContaining('hook') }])
+    expect(r.unresolved).toEqual([{ category: 'health', reason: expect.stringContaining('hook') }])
   })
 
   it('does not trust a scan that finds too many candidate objects', async () => {

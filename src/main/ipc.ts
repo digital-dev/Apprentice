@@ -25,6 +25,7 @@ import {
 import { importCheatTableWithBudget } from './ctImportSafe'
 import { buildCheatTable } from './ctExport'
 import { PatchEngine, PatchOps, slotHexToPointer } from './patchEngine'
+import { resolveAnchorAddress } from './anchorResolve'
 import { FreezeLoop } from './freezeLoop'
 import { CaptureStore } from './captureStore'
 import { monoResolver } from './monoResolver'
@@ -141,27 +142,18 @@ export function littleEndianToBigInt(hex: string): bigint {
 // than an error — the same state a stale chain produces.
 function resolveAnchor(handle: number, target: AnchorTarget): string | null {
   const slot = patchEngine.slotAddress(target.patchId)
-  if (slot === null) {
-    // No breadcrumb here: this is the routine case for any anchor target
-    // whose capture patch isn't currently installed, not a fault.
-    return null
-  }
-  const pointerHex = nativeAddon.tryReadBytes(handle, slot, 8)
-  if (pointerHex === null) {
-    // Distinguish this from the other two null returns below — this one
-    // means the slot address itself couldn't be read (e.g. the cave went
-    // away), which is worth knowing when debugging live against a game.
+  const resolution = resolveAnchorAddress(target, slot, (address, length) =>
+    nativeAddon.tryReadBytes(handle, address, length)
+  )
+  if (resolution.ok) return resolution.address
+  // Only a slot that cannot be read at all is worth a breadcrumb (e.g. the
+  // cave went away). The other failures -- no patch installed, not captured
+  // yet, a null reference -- are routine transient states that would spam the
+  // console at freeze-loop cadence.
+  if (resolution.reason === 'slot-unreadable') {
     console.warn(`[patch] anchor ${target.patchId}: slot ${slot} unreadable`)
-    return null
   }
-  const pointer = littleEndianToBigInt(pointerHex)
-  if (pointer === 0n) {
-    // No breadcrumb here: this is the expected transient state on every
-    // tick until the game executes the captured instruction, not a fault —
-    // logging it here would spam the console at freeze-loop cadence.
-    return null
-  }
-  return '0x' + (pointer + BigInt(target.offset)).toString(16)
+  return null
 }
 
 // The script-cheat counterpart to toggle()'s anchor-arming in CheatList.tsx

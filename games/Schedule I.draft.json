@@ -45,14 +45,14 @@
     {
       "kind": "patch",
       "mode": "capture",
-      "id": "factory-capture-CashInstance",
-      "name": "Capture: CashInstance.ChangeBalance instance",
-      "originalBytes": "40534883ec20",
-      "length": 6,
-      "signature": "40 53 48 83 ec 20 f3 0f 58 49 30 0f 57 c0 48 8b d9",
+      "id": "factory-capture-PlayerInventory",
+      "name": "Capture: PlayerInventory.Update instance",
+      "originalBytes": "40534881ec90000000",
+      "length": 9,
+      "signature": "40 53 48 81 ec 90 00 00 00 80 3d ?? ?? ?? ?? 00 48 8b d9 44 0f 29 44 24 60",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x641260",
+      "moduleOffset": "0x6365c0",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -165,8 +165,9 @@
       "targets": [
         {
           "kind": "anchor",
-          "patchId": "factory-capture-CashInstance",
+          "patchId": "factory-capture-PlayerInventory",
           "offset": "0x30",
+          "derefOffset": "0x48",
           "dataType": "float"
         }
       ],
@@ -180,8 +181,9 @@
       "targets": [
         {
           "kind": "anchor",
-          "patchId": "factory-capture-CashInstance",
+          "patchId": "factory-capture-PlayerInventory",
           "offset": "0x30",
+          "derefOffset": "0x48",
           "dataType": "float"
         }
       ],
@@ -266,13 +268,13 @@
       "mode": "replace",
       "id": "factory-noinvestigate-officers",
       "name": "No Investigate / No Body Search (all officers)",
-      "originalBytes": "440f2f8e28030000",
-      "length": 8,
-      "replacementBytes": "450f2fc990909090",
-      "signature": "33 d2 48 8b ce e8 ?? ?? ?? ?? 84 c0 0f 84 ?? ?? ?? ?? 45 0f 57 c9 44 0f 2f 8e 28 03 00 00 0f 83 ?? ?? ?? ?? 48 8b 05 ?? ?? ?? ??",
-      "signatureOffset": 22,
+      "originalBytes": "40534883ec20",
+      "length": 6,
+      "replacementBytes": "33c0c3909090",
+      "signature": "40 53 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b da 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 8b 0d ?? ?? ?? ?? 83 b9 e0 00 00 00 00 75 ?? e8 ?? ?? ?? ?? 45 33 c0 33 d2 48 8b cb e8 ?? ?? ?? ?? 84 c0 75 ?? 48 85 db 74 ?? 48 8b 83 68 01 00 00 48 85 c0 74 ?? 80 b8 18 01 00 00 00 74 ?? 48 8b 83 70 01 00 00 48 85 c0 74 ?? 80 b8 68 01 00 00 00 75 ?? 33 d2 48 8b c8 e8 ?? ?? ?? ?? 85 c0 7f ?? 48 8b 83 70 01 00 00 48 85 c0 74 ??",
+      "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x72abed"
+      "moduleOffset": "0x72a2b0"
     }
   ]
 }

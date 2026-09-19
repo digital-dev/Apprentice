@@ -103,8 +103,13 @@ export const CATEGORIES: Category[] = [
     mode: 'freeze',
     value: 999999,
     plausible: [0, 1000000000],
-    lookFor: 'The cash in hand reads the frozen amount; buy something and it refills.',
-    edit: 'Edit Cash'
+    lookFor: '',
+    manualReview:
+      'Cash is an ITEM instance (one of hundreds of look-alike CashInstance objects), so hooking its own methods only ' +
+      'captures it when cash changes, and Edit Cash then fails until you spend or pick some up. Reach it from the holder ' +
+      'instead: capture a per-frame method on the inventory singleton (PlayerInventory.Update) and use an anchor target with ' +
+      'derefOffset = the inventory field that holds the cash item (`cashInstance`, found by reading how the game\'s own ' +
+      'get_cashInstance ends) and offset = the Balance field.'
   },
   {
     id: 'water',
