@@ -163,7 +163,12 @@ export const CATEGORIES: Category[] = [
     mode: 'freeze',
     value: 0,
     plausible: [0, 1],
-    lookFor: 'Get stopped by police: no body search is triggered.'
+    lookFor: '',
+    manualReview:
+      'Freezing a player-side "search pending" flag does NOT stop police searches (confirmed in-game on Schedule I). ' +
+      'The decision is made per officer and the chance is read inline (a guard like `comiss xmm9,[officer+off]; jnb skip`), ' +
+      'so it needs a method-level `replace` patch at that comparison, which applies to every officer. Find the officer class, ' +
+      'the field its search-chance getter reads, and the inlined compare in its investigation check.'
   },
   {
     id: 'godmode',

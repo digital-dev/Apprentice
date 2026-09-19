@@ -21,11 +21,17 @@ Promote an entry to `Schedule I.json` only after its `lookFor` check passes.
 | No Curfew | `CurfewManager` `IsEnabled`, `IsCurrentlyActive`, `IsHardCurfewActive` | `0x120-0x122` | IsEnabled=1 | One cheat, three targets, all frozen to 0. |
 | Freeze Daytime | `TimeManager.<TimeSpeedMultiplier>` | `0x13c` | 1.0 | Frozen to 0. Sleeping may misbehave while frozen. |
 | Run Speed Multiplier | `PlayerMovement.<CurrentSprintMultiplier>` | `0x50` | 1.0 | Frozen to 3. May be recomputed every frame; if it does nothing use the static `SprintMultiplier` via a method patch. |
-| No Body Search | `PlayerCrimeData.BodySearchPending` | `0x168` | 0 | Verified through `Player.Local`. Covers the pending flag only; an in-progress search bar may still run. |
+| ~~No Body Search~~ | `PlayerCrimeData.BodySearchPending` | `0x168` | 0 | **Does not work** (police still searched, confirmed in-game): the flag is not what starts a search. Replaced by the officer patch below. |
 
 Every cheat is a `capture` patch on an instance method of the owning class
 (rcx = `this`) plus an `anchor` value cheat, the same pair `Schedule I.json`
 already uses. `multiInstanceRisk` cheats record whichever instance ran last.
+
+## Drafted (method patch)
+
+| Wishlist item | Site | Notes |
+|---|---|---|
+| No Investigate / No Body Search | `PoliceOfficer.CheckNewInvestigation` at RVA `0x72abed`: `comiss xmm9,[rsi+0x328]` becomes `comiss xmm9,xmm9` | The original is a guard: search chance <= 0 jumps over the investigation branch. Comparing xmm9 with itself always takes that jump, for every officer. A `replace` patch (unique 43-byte signature, `signatureOffset` 22). The getter `get_BodySearchChance` is NOT the site: nothing calls it, callers read the field inline. Untested in-game. |
 
 ## Not drafted: needs a method-level patch
 

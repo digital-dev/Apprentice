@@ -113,20 +113,6 @@
       "internal": true
     },
     {
-      "kind": "patch",
-      "mode": "capture",
-      "id": "factory-capture-PlayerCrimeData",
-      "name": "Capture: PlayerCrimeData.Update instance",
-      "originalBytes": "40534883ec70",
-      "length": 6,
-      "signature": "40 53 48 83 ec 70 80 3d ?? ?? ?? ?? 00 48 8b d9 0f 29 74 24 60 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d 26 71",
-      "signatureOffset": 0,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x630fb0",
-      "baseRegister": "rcx",
-      "internal": true
-    },
-    {
       "id": "factory-health",
       "name": "Infinite Health",
       "dataType": "float",
@@ -276,19 +262,17 @@
       "offValue": 1
     },
     {
-      "id": "factory-nosearch",
-      "name": "No Body Search",
-      "dataType": "int8",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "anchor",
-          "patchId": "factory-capture-PlayerCrimeData",
-          "offset": "0x168",
-          "dataType": "int8"
-        }
-      ],
-      "value": 0
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-noinvestigate-officers",
+      "name": "No Investigate / No Body Search (all officers)",
+      "originalBytes": "440f2f8e28030000",
+      "length": 8,
+      "replacementBytes": "450f2fc990909090",
+      "signature": "33 d2 48 8b ce e8 ?? ?? ?? ?? 84 c0 0f 84 ?? ?? ?? ?? 45 0f 57 c9 44 0f 2f 8e 28 03 00 00 0f 83 ?? ?? ?? ?? 48 8b 05 ?? ?? ?? ??",
+      "signatureOffset": 22,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x72abed"
     }
   ]
 }
