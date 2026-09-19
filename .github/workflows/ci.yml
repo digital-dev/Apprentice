@@ -23,10 +23,16 @@ defaults:
   run:
     shell: bash
 
+# Both jobs run on windows-2022 rather than windows-latest on purpose: the latest image now
+# ships Visual Studio 2026, which the pinned node-gyp (9.4.1) cannot find a compiler in
+# ("unknown version ... could not find a version of Visual Studio 2017 or newer"). The 2022
+# image has VS 2022, which is what the README asks contributors to install. Move to
+# windows-latest after upgrading node-gyp.
+
 jobs:
   test:
     name: Test and build
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -80,7 +86,7 @@ jobs:
     name: Publish release
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: write # create the tag and the release
     concurrency:
