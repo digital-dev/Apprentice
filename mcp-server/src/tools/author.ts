@@ -1,5 +1,3 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import * as addon from '../addon'
@@ -10,6 +8,8 @@ import { CATEGORIES } from '../factory/categories'
 import { enumerateMono, type MonoEnumOps } from '../factory/monoEnumerator'
 import { buildFactory, type VerifyFn } from '../factory/build'
 import { monoOpsFor } from './verify'
+import { authorIl2cpp } from './authorIl2cpp'
+import { writeDraft } from '../factory/draftFile'
 
 function enumOpsFor(handle: number, monoDllBase: string): MonoEnumOps {
   return {
@@ -21,26 +21,12 @@ function enumOpsFor(handle: number, monoDllBase: string): MonoEnumOps {
   }
 }
 
-function draftPathFor(profilePath: string): string {
-  return profilePath.replace(/\.json$/i, '') + '.draft.json'
-}
-
-function exeFor(profilePath: string): string {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(profilePath, 'utf-8')) as { exe?: string }
-    if (typeof parsed.exe === 'string') return parsed.exe
-  } catch {
-    // no readable profile yet -- fall through to the filename
-  }
-  return path.basename(profilePath).replace(/\.json$/i, '')
-}
-
 export function registerAuthorTools(server: McpServer): void {
   server.registerTool(
     'author_cheats',
     {
       description:
-        `Unity/Mono only. Turn a wishlist of cheat categories (${CATEGORIES.map((c) => c.id).join(', ')}) into draft, read-verified value cheats: enumerates Mono classes/fields, ranks them by name against each category, finds the live singleton root (e.g. Player.m_localPlayer -- the player must be in a world), tries each candidate through the real pointer chain, and keeps the first whose live value is plausible. Writes drafts to <profile>.draft.json (never the live profile, never game memory) and returns a checklist to confirm in-game. Landmine categories (hunger, speed) come back under "manual" with the reason and no draft.`,
+        `Unity/Mono and Unity/IL2CPP. Turn a wishlist of cheat categories (${CATEGORIES.map((c) => c.id).join(', ')}) into draft cheats plus an in-game checklist. Mono: enumerates classes/fields, ranks them by name, finds the live singleton root (player must be in a world) and keeps the first candidate whose live read is plausible. IL2CPP: reads class/field/method structs directly, ranks fields by name and type, verifies through a live singleton where one exists, and emits a capture patch (hooked on a method prologue, persisted by signature) plus an anchor value cheat -- unverified ones are flagged multiInstanceRisk. Writes drafts to <profile>.draft.json (never the live profile, never game memory beyond a scratch buffer). Landmine categories (hunger, speed) come back under "manual" with the reason and no draft.`,
       inputSchema: {
         handle: z.number().int(),
         wishlist: z.array(z.string()).min(1),
@@ -52,9 +38,10 @@ export function registerAuthorTools(server: McpServer): void {
       const classification = classifyEngine(addon.listModules(args.handle))
       let monoDllBase = args.monoDllBase ?? null
       if (monoDllBase === null) {
+        if (classification.engine === 'unity-il2cpp') return authorIl2cpp(args, classification.gameAssemblyBase)
         if (classification.engine !== 'unity-mono') {
           return err(
-            `author_cheats supports Unity/Mono only (detected: ${classification.engine}). Run fingerprint_process for that engine's playbook.`
+            `author_cheats supports Unity/Mono and Unity/IL2CPP only (detected: ${classification.engine}). Run fingerprint_process for that engine's playbook.`
           )
         }
         monoDllBase = classification.monoDllBase
@@ -90,11 +77,7 @@ export function registerAuthorTools(server: McpServer): void {
 
       let draftPath: string | null = null
       if (result.drafts.length > 0) {
-        draftPath = draftPathFor(args.profilePath)
-        fs.writeFileSync(
-          draftPath,
-          JSON.stringify({ schema: 2, exe: exeFor(args.profilePath), modules: {}, cheats: result.drafts }, null, 2)
-        )
+        draftPath = writeDraft(args.profilePath, result.drafts)
       }
 
       return ok({
