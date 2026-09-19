@@ -84,3 +84,32 @@ drafts are promoted into the real profile by hand.
 - No game-memory writes. No auto-promotion into the live profile.
 - No native-game scan/write-watch automation (deferred approach C).
 - No IL2CPP field enumeration.
+
+## Amendments (found while planning, against the real tool shapes)
+
+These override the sections above where they conflict.
+
+- **Mono only in this pass.** UE `anchor` cheats need a capture patch and
+  signature, which cannot be produced without RE, and UE enumeration needs
+  hand-calibrated pool/array configs. UE and IL2CPP return an error naming
+  the playbook. The category table, ranker and emitter stay engine-neutral.
+- **No type-fit scoring.** `mono_list_field_names` returns names only (no
+  type, no static flag). Ranking uses field name and class name. Each
+  category lists preferred data types; the verifier tries them in order and
+  keeps the first whose live value falls in the category's plausible range.
+- **Static roots are probed, not listed.** A root is a field on a
+  hint-matching, namespace-less class whose name looks like a singleton
+  handle (`m_localPlayer`, `instance`, ...) where `mono_static_field_address`
+  succeeds and the pointer is non-zero. No live root (player not in a
+  world) is reported as an error, not a guess.
+- **Instance field lives on a base class.** `mono_list_field_names` lists
+  declared fields only, so `m_health` appears on `Character`, not `Player`.
+  The emitter sets `instanceClassName` to the declaring class. Pairing is
+  checked only by the plausibility read through the real pointer, so the
+  checklist flags each pairing for the human pass.
+- **Landmine categories are report-only.** `hunger` (continuously decays)
+  and `speed` (rate/multiplier) get a `manualReview` note and no draft.
+  The right recipe for decay is a decay-enable flag write, which the
+  factory cannot find from names.
+- **Only namespace-less classes are targetable**, because
+  `resolveMonoTargetAddress` resolves with an empty namespace.
