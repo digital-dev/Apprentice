@@ -30,7 +30,8 @@ export function scoreField(cat: Category, f: FieldCandidate): number {
 }
 
 // Array.prototype.sort is stable, so equal scores keep input order.
-export function rankFields(cat: Category, fields: FieldCandidate[], topN = 3): ScoredField[] {
+// Generic so callers' extra fields (offset, data type, ...) survive ranking.
+export function rankFields<T extends FieldCandidate>(cat: Category, fields: T[], topN = 3): (T & { score: number })[] {
   return fields
     .map((f) => ({ ...f, score: scoreField(cat, f) }))
     .filter((s) => s.score >= MIN_SCORE)

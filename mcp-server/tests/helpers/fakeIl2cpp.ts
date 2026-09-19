@@ -25,6 +25,12 @@ export class FakeMemory {
     this.set(address, Buffer.from(text + '\0', 'utf8').toString('hex'))
   }
 
+  float(address: bigint | number, value: number): void {
+    const buf = Buffer.alloc(4)
+    buf.writeFloatLE(value)
+    this.set(address, buf.toString('hex'))
+  }
+
   qword(address: bigint | number, value: bigint | number): void {
     const buf = Buffer.alloc(8)
     buf.writeBigUInt64LE(BigInt(value))
