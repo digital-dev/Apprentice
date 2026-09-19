@@ -11,7 +11,11 @@ always-online requirement.
 Two ways to cheat:
 
 - **Value cheats** — find an address, write it repeatedly (a "freeze"), or
-  write it once ("one-shot").
+  write it once ("one-shot"). A cheat can also be *anchored*: a small capture
+  patch records the game object it belongs to, and the cheat writes a field of
+  that object (optionally following one pointer field first, `derefOffset`).
+  That keeps cheats working across restarts in games with no readable
+  metadata, such as Unity IL2CPP and Unreal.
 - **Code patches** — rewrite the instruction that writes a value, so the game
   itself never puts the old value back. NOP it out, replace it, force a
   fixed result, or skip a method entirely for one object.
@@ -21,7 +25,10 @@ Ships with two ready-made cheat sets: **Valheim** (Mono JIT — 15 cheats,
 cheats — 14 cheats, `games/start_protected_game.json`, named for Elden
 Ring's EAC-protected executable). The engine underneath isn't tied to
 either game — see [Sharing cheats](#sharing-cheats) below for adding your
-own.
+own. `games/` also holds profiles for Palworld (Unreal) and Aviassembly
+(Unity/Mono), and a work-in-progress one for **Schedule I** (Unity IL2CPP):
+its cheats are still being verified in-game, so treat that one as a starting
+point, not a finished set.
 
 > Windows only. The native addon's injection path is Win32; Linux is stubbed
 > out but not implemented (see `native/src/platform/platform_linux.cc`).
@@ -144,9 +151,11 @@ the cheat (if applicable), and what you expected vs. what happened.
 server that exposes the same native memory-introspection primitives
 Apprentice itself is built on — attach, scan, Mono class/field/method
 resolution, read, disassemble, write-watch — as tools an AI coding agent
-(Claude Code, etc.) can call directly against a live game process. It has no
-write operations by design: it's for *finding* the address/offset/signature
-a new cheat needs, not for installing one. See
+(Claude Code, etc.) can call directly against a live game process. It never
+writes to the game's memory by design: it's for *finding* the
+address/offset/signature a new cheat needs, not for installing one. (Its one
+tool that writes anything, `author_cheats`, writes a draft profile file on
+disk, and touches game memory only through a scratch buffer; see below.) See
 `docs/superpowers/specs/2026-08-22-mcp-memory-server-design.md` for the full
 design rationale.
 
@@ -169,6 +178,39 @@ the repo root registers the server (`game-memory`) pointing at
 automatically. Full tool list, dependency-pinning notes (there's a real
 reason `@modelcontextprotocol/sdk` is pinned exactly, not ranged), and more
 detail live in `mcp-server/README.md`.
+
+### Drafting a game's whole cheat list: `author_cheats`
+
+For a **Unity Mono or Unity IL2CPP** game, `author_cheats` turns a wishlist of
+categories (health, stamina, mana, money, bank, cash, water, curfew, time
+freeze, godmode…) into draft cheats and one in-game checklist, instead of a
+reverse-engineering session per cheat:
+
+- **Mono:** enumerates classes and fields, ranks them by name, finds the live
+  singleton root, and keeps the first candidate whose live read is plausible.
+- **IL2CPP:** reads the runtime's class, field and method structs directly
+  (no per-item remote call), ranks fields by name *and* type, verifies through
+  a live singleton or a filtered instance scan, and emits the same pair Tamper
+  already uses: a `capture` patch on a method prologue (found by a unique
+  signature) plus an `anchor` value cheat.
+- Output goes to `games/<exe>.draft.json`, beside the profile and never over
+  it (a profile is looked up by exact exe name, so a draft is not loaded by
+  accident). Every drafted cheat carries a `verified` flag and a
+  `multiInstanceRisk` flag; confirm each one in-game before promoting it.
+- Categories that are the wrong shape for a field cheat (continuously decaying
+  stats, rate multipliers, NPC-decided behaviour, item-held currency) come back
+  as **manual**, with the reason, instead of a draft that looks right and
+  isn't.
+
+When a cheat does nothing, or a mechanism isn't obvious, `mcp-server/scripts/`
+has read-only live-analysis scripts (survey classes, disassemble a method, list
+callers and inlined field readers, watch a field change while the game does
+something, generate a `replace`/`capture` patch with a unique signature). The
+method they support is written up in
+`.claude/skills/authoring-tamper-cheats/SKILL.md` and
+`mcp-server/scripts/README.md`. Design docs:
+`docs/superpowers/specs/2026-09-19-cheat-factory-design.md` and
+`docs/superpowers/specs/2026-09-19-il2cpp-cheat-factory-design.md`.
 
 ---
 
@@ -210,6 +252,9 @@ its `games/<exe>.json`:
    "looks right" in the JSON but was never actually tested against the game
    is worse than no PR — see `docs/superpowers/follow-ups/2026-07-28-valheim-session.md`
    for exactly how many ways a code patch can look fine and still be wrong.
+   A `*.draft.json` produced by `author_cheats` is a starting point, not a
+   verified profile: toggle each entry in-game and check what it does before
+   promoting it.
 2. Keep the file schema-2 shaped (`{ schema, exe, modules, cheats }`) — every
    cheat you add should be something the app itself saved, not hand-typed
    from scratch, so it's already validated against the app's own types.
