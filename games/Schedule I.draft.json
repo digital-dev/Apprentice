@@ -275,6 +275,19 @@
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
       "moduleOffset": "0x72a2b0"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-nobodysearch-officers",
+      "name": "No Body Search (all officers, incl. checkpoints)",
+      "originalBytes": "48895c2410",
+      "length": 5,
+      "replacementBytes": "33c0c39090",
+      "signature": "48 89 5c 24 10 57 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b da 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 85 db 0f 84 ?? ?? ?? ?? 33 d2 48 89 74 24 30 48 8b cb",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x72af60"
     }
   ]
 }

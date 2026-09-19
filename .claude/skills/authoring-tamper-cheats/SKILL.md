@@ -36,8 +36,9 @@ worth knowing before making a single remote call.
 
 For a Unity game, run this first — it replaces the per-cheat RE loop for
 the common categories (health, stamina, mana, money, bank, cash, water,
-curfew, freezetime, runspeed, nosearch, godmode; hunger and speed are
-reported as manual landmines). Categories are data in
+curfew, freezetime, runspeed, godmode). `hunger`, `speed`, `nosearch` and `cash`
+are reported as **manual** with the reason: each was tried as a field cheat
+and is the wrong shape (see the evidence-loop section below). Categories are data in
 `mcp-server/src/factory/categories.ts`: add name hints there for a new game
 before reaching for manual RE:
 
@@ -67,6 +68,70 @@ It only writes the draft file, never game memory or the live profile
 an error naming the playbook; use the recipes below.
 Design: `docs/superpowers/specs/2026-09-19-cheat-factory-design.md` and
 `docs/superpowers/specs/2026-09-19-il2cpp-cheat-factory-design.md`.
+
+## When a cheat doesn't work, or the mechanism isn't obvious: read the code, then watch the game
+
+Learned on Schedule I, where four confident guesses about police body
+searches and cash were wrong before evidence replaced them. The scripts are in
+`mcp-server/scripts/` (see its README); each is read-only.
+
+1. **Read what the game really does.** `disasm.js` on a getter or setter shows
+   the field it touches; `findCallers.js` shows who calls it. IL2CPP **inlines
+   trivial getters**, so a getter nobody calls is not a lever: patching
+   `get_BodySearchChance` would have done nothing, because callers read the
+   field inline (`comiss xmm9,[rsi+0x328]`).
+2. **Find the choke point.** When several routes reach one behaviour
+   (patrol investigation, checkpoint, a local-player search), patch the
+   function they all share (`ConductBodySearch`), not each gate. A player-side
+   flag ("search pending") rarely controls an NPC's decision: find the actor.
+3. **Watch the real event.** When reading code is not enough, poll the
+   relevant fields read-only while the user triggers the event
+   (`watchBehaviours.js`). A checkpoint officer switching straight to its
+   body-search behaviour named the route that the call graph had hidden behind
+   virtual calls.
+4. **After the user toggles it, read memory.** Are the patch bytes applied?
+   Did the field change? That separates "not applied", "applied at the wrong
+   site" and "written but not shown" in one step. Never tell the user a cheat
+   works because it was drafted; say what was read and what was not run in-game.
+
+Sharp edges, each of which cost a round trip:
+
+- **Live vs leftover objects.** A scan for a class pointer also finds
+  destroyed Unity objects still sitting in memory. Their native pointer at
+  `+0x10` is 0, and their values are stale (two `MoneyManager`s, one live).
+  Freed slots reused as noise also read as plausible numbers, so a scan is not
+  proof: `author_cheats` demands a non-zero plausible value and refuses when
+  more than 16 candidates match.
+- **A capture only fires when the hooked method runs.** Hooking a rarely called
+  method of an item (cash's `ChangeBalance`) means "the game never ran the
+  capture hook" until that event happens. Hook a per-frame method on a
+  **holder** singleton and reach the item with an anchor `derefOffset`
+  (`PlayerInventory.Update`, then `+0x48` to the wallet, `+0x30` for the
+  balance). Find the holder by reading how the game's own accessor ends
+  (`get_cashInstance`).
+- **Identical-code folding.** One method pointer can belong to several classes'
+  MethodInfos (trivial getters). A hook there fires for whichever class calls
+  it: refuse any pointer owned by more than one class.
+- **Disabling a freeze does not restore anything.** Give the cheat an
+  `offValue` (a known default) when the game never puts the field back itself
+  (a frozen time multiplier of 0 kept the clock stopped). `captureOriginal` is
+  racy for anchors: it reads before the hook has run, so the snapshot is empty.
+- **One-shot Apply on an anchored cheat** needs the capture patch installed and
+  the hook to have run; Tamper's `applyOnce` does both and reports failure.
+- **Writing a value does not refresh the UI.** The visible number updates when
+  the game raises its UI event (click it, open the inventory). Do not call the
+  UI method yourself from an injected thread: Unity's text APIs are
+  main-thread-only and can crash the game.
+- **A multiplier you freeze may feed other systems.** Freezing the sprint
+  multiplier at 3 also scaled the camera bob while standing still. Prefer the
+  value that only the target system reads, or scale it where it is consumed.
+- **Signature uniqueness.** Wildcarding addresses makes IL2CPP prologues
+  collide (71 bytes still matched 11 places). Extend into the method body until
+  exactly one match, typically 70 to 150 bytes.
+- **Early-return patch.** At a function's entry, replace the first whole
+  instructions with `xor eax,eax; ret` plus nops (`33 c0 c3 ...`). It is valid
+  for void, bool and pointer returns, and safe because no stack change has
+  happened yet.
 
 ## Which recipe is this?
 
@@ -107,6 +172,7 @@ check this before spending a session rediscovering the same lesson:
 | Movement speed / jump / godmode-style toggles | D — captured player pointer | Capture once (write-watch any known player-object field's write, e.g. jump count), then every other field off that same pointer is cheap — don't re-derive the pointer per field. |
 | World/global settings (drop rate, damage multiplier, work speed, time scale) | E — try a **plain value scan first** | Cheapest recipe to even attempt: a world-settings singleton is far more likely to be a stable global than a per-player heap struct, and may need no capture patch at all. Don't reach for capture-patch machinery before ruling this out. |
 | One-time flags / mode switches (stealth mode, disable a requirement system) | B — one-shot write, never `freeze` | Wording is a signal: "no X" / "disable X" in the wishlist usually means a flag, not a threshold — treat "unlimited X" and "no X" as different recipes by default, and verify which one it actually is before assuming. |
+| Police search / arrest / "no investigate" (an NPC decides, several routes reach it) | Method-level `replace` at the function all routes share | The player-side flag is not the lever. Read callers, then watch which behaviour turns on (see the section above). Two wrong sites before the right one on Schedule I. |
 | Compiler-baked immediates (a fixed threshold baked into a compare, found via CE `sN` wildcards) | C — `replace`/`nop`, no anchor | If the cheat needs genuinely NEW inserted logic (not just replacing/nopping existing bytes — e.g. an extra `xor`/comparison ahead of the original code), it doesn't fit Tamper's fixed cave encoders; needs a Lua script cheat instead of a code patch. |
 
 **Cheapest-first attempt order**, confirmed across sessions: E (plain
@@ -223,3 +289,11 @@ types, multiple building types) before trusting full coverage.
   doesn't need updating — but a live investigation address computed this
   game session is not reusable literally in a later one; recompute
   `base + RVA` after any reattach.
+- **Restart Tamper after editing a profile or rebuilding the app.** It loads a
+  profile once and can overwrite an on-disk edit the next time it saves; and
+  `Apprentice.cmd` runs the pre-built bundle, so app changes need
+  `npm run build` first.
+- **The addon caps a read at 4096 bytes** (larger reads return null, not a
+  short read). Chunk big reads (`mcp-server/src/factory/chunkedRead.ts`).
+- **The Edit dialog does not expose `offValue`** (or `derefOffset`): set them
+  in the profile JSON.

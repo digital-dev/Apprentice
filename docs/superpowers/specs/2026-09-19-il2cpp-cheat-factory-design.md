@@ -138,6 +138,15 @@ Drafts go to `<profile>.draft.json` (patches then cheats, plus the
 - **`instanceCount` is an upper bound.** Freed objects still in memory also
   match the scan. `multiInstanceRisk` is false only for tier 1, or a scan
   that found exactly one instance.
+- **Field cheats are the wrong shape for some categories.** Two categories the
+  factory drafted did not work in-game and are now `manualReview`:
+  `nosearch` (police decide per officer; the lever is a method-level `replace`
+  at the function every search route shares) and `cash` (an item instance
+  with hundreds of look-alikes: hook a per-frame method on the holder singleton
+  and reach the item with an anchor `derefOffset`). Both are documented in the
+  authoring skill's evidence-loop section.
+- **Tamper gained `derefOffset` on anchor targets** (`src/main/anchorResolve.ts`):
+  follow a pointer field of the captured object before adding `offset`.
 - **Live result (Schedule I):** money `MoneyManager.onlineBalance` `0x128`
   (matches the shipped cheat; read 56174.875), health
   `PlayerHealth.<CurrentHealth>k__BackingField` `0x11c` (100, via
