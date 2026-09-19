@@ -50,6 +50,16 @@ describe('buildFactory', () => {
     expect(r.checklist[0]).toMatchObject({ id: 'factory-health', liveValue: 25 })
   })
 
+  it('carries a category offValue onto the draft', async () => {
+    const withTime: Enumeration = {
+      ...enumeration,
+      fields: [{ className: 'TimeManager', fieldName: 'm_timeSpeedMultiplier' }]
+    }
+    const verify = verifyFrom({ 'm_timeSpeedMultiplier:float': 1 })
+    const r = await buildFactory(['freezetime'], withTime, verify)
+    expect(r.drafts[0]).toMatchObject({ id: 'factory-freezetime', value: 0, offValue: 1 })
+  })
+
   it('falls back to the next data type when the first read is dead', async () => {
     const verify = verifyFrom({ 'm_health:int32': 25 })
     const r = await buildFactory(['health'], enumeration, verify)

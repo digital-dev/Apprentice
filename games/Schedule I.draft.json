@@ -18,13 +18,13 @@
       "kind": "patch",
       "mode": "capture",
       "id": "factory-capture-PlayerHealth",
-      "name": "Capture: PlayerHealth.Update instance",
-      "originalBytes": "40534883ec60",
-      "length": 6,
-      "signature": "40 53 48 83 ec 60 0f 29 74 24 50 48 8b d9 f3 0f 10 b1 20 01 00 00",
+      "name": "Capture: PlayerHealth.get_TimeSinceLastDamage instance",
+      "originalBytes": "f30f108120010000",
+      "length": 8,
+      "signature": "f3 0f 10 81 20 01 00 00 c3 cc cc cc cc cc cc cc",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x655210",
+      "moduleOffset": "0x572f70",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -256,7 +256,8 @@
           "dataType": "float"
         }
       ],
-      "value": 0
+      "value": 0,
+      "offValue": 1
     },
     {
       "id": "factory-runspeed",
@@ -271,7 +272,8 @@
           "dataType": "float"
         }
       ],
-      "value": 3
+      "value": 3,
+      "offValue": 1
     },
     {
       "id": "factory-nosearch",

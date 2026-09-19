@@ -298,6 +298,23 @@ describe('buildIl2cppFactory', () => {
     expect(hints).toEqual(['onlineBalance'])
   })
 
+  it('emits offValue for a category whose field the game never restores (time freeze)', async () => {
+    const time = klass(
+      'TimeManager',
+      '0x6000',
+      [field('TimeManager', '0x6000', '<TimeSpeedMultiplier>k__BackingField', 0x13c, 'float')],
+      [method('TimeManager', '0x6000', 'Update')]
+    )
+    const r = await buildIl2cppFactory(['freezetime'], enumeration([time], []), opsWith(0))
+    expect(r.cheats).toHaveLength(1)
+    expect(r.cheats[0]).toMatchObject({ id: 'factory-freezetime', value: 0, offValue: 1 })
+  })
+
+  it('leaves offValue off cheats where keeping the frozen value is the point (bank)', async () => {
+    const r = await buildIl2cppFactory(['bank'], enumeration([MONEY]), opsWith(500))
+    expect(r.cheats.every((c) => c.offValue === undefined)).toBe(true)
+  })
+
   it('shares one capture patch between cheats on the same class', async () => {
     const r = await buildIl2cppFactory(['health', 'stamina'], enumeration([PLAYER]), opsWith(0))
     expect(r.patches).toHaveLength(1)

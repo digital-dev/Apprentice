@@ -3,7 +3,7 @@ import { categoryById } from './categories'
 import { rankFields } from './ranker'
 import type { Enumeration } from './monoEnumerator'
 
-export type DraftCheat = CheatDefinition & { mode: 'freeze' | 'oneshot' }
+export type DraftCheat = CheatDefinition & { mode: 'freeze' | 'oneshot'; offValue?: number }
 
 export interface ChecklistItem {
   id: string
@@ -84,7 +84,8 @@ export async function buildFactory(
       dataType: accepted.dataType,
       mode: cat.mode,
       targets: [accepted.target],
-      value: cat.value
+      value: cat.value,
+      ...(cat.offValue !== undefined ? { offValue: cat.offValue } : {})
     })
     result.checklist.push({
       id: draftId,

@@ -17,6 +17,7 @@ import EditCheatModal from '../components/EditCheatModal'
 import EditPatchModal from '../components/EditPatchModal'
 import MultiplierSlider from '../components/MultiplierSlider'
 import { playOn, playOff, playError } from '../sound'
+import { applyOnce } from '../applyOnce'
 
 // Deliberately re-declared here instead of importing store.ts's
 // isPatchCheat: that would be a VALUE import from the main process into the
@@ -217,6 +218,8 @@ export default function CheatList({
   const [hotkeyFireError, setHotkeyFireError] = useState<{ cheatName: string; message: string } | null>(
     null
   )
+  // A failed one-shot Apply from the list button (see applyCheatOnce).
+  const [applyError, setApplyError] = useState<{ cheatName: string; message: string } | null>(null)
   // "View in Memory" on a value cheat's own ⋮ menu — unlike a patch (whose
   // located address is already sitting in patchStatuses from locatePatch),
   // a value cheat has no address to hand until asked: resolve it fresh
@@ -734,6 +737,33 @@ export default function CheatList({
         copy.delete(cheat.id)
         return copy
       })
+    }
+  }
+
+  // One-shot Apply. An anchored cheat needs its capture patch installed and
+  // the game to have run the hook before there is anything to write to, which
+  // a bare oneShot call never arranged (it silently wrote nothing) -- see
+  // applyOnce.ts.
+  async function applyCheatOnce(cheat: CheatDefinition) {
+    setApplyError(null)
+    const result = await applyOnce(cheat, {
+      patches,
+      isPatchEnabled: (id) => patchEnabled.has(id),
+      applyPatch: (patch) => window.tamper.applyPatch(patch),
+      restorePatch: (patch) => window.tamper.restorePatch(patch),
+      oneShot: (c) => window.tamper.oneShot(c),
+      markPatch: (id, on) =>
+        setPatchEnabled((prev) => {
+          const copy = new Set(prev)
+          if (on) copy.add(id)
+          else copy.delete(id)
+          return copy
+        }),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    })
+    if (!result.ok) {
+      setApplyError({ cheatName: cheat.name, message: result.error })
+      playError()
     }
   }
 
@@ -1372,6 +1402,15 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
         </div>
       )}
 
+      {applyError && (
+        <div className="banner banner-error" style={{ flexWrap: 'wrap' }}>
+          <p style={{ flexBasis: '100%' }}>
+            Couldn't apply "{applyError.cheatName}": {applyError.message}
+          </p>
+          <button onClick={() => setApplyError(null)}>Dismiss</button>
+        </div>
+      )}
+
       {hotkeyFireError && (
         <div className="banner" style={{ flexWrap: 'wrap' }}>
           <p style={{ flexBasis: '100%' }}>
@@ -1830,7 +1869,7 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                         )}
                     </div>
                   ) : (
-                    <button className="btn-sm" onClick={() => window.tamper.oneShot(cheat)}>
+                    <button className="btn-sm" onClick={() => void applyCheatOnce(cheat)}>
                       Apply
                     </button>
                   ),

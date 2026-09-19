@@ -27,6 +27,12 @@ export interface Category {
   // Also emit a one-shot "Edit ..." cheat on the same targets, for setting
   // an exact value from the UI instead of freezing.
   edit?: string
+  // Written once when the cheat is turned OFF. Needed when the game never
+  // puts the field back itself, so a frozen value would otherwise stay for
+  // good (a frozen time multiplier of 0 keeps the clock stopped after the
+  // toggle is switched off). Left unset where keeping the value is the point
+  // (money, health). Must be a known default: a wrong one is worse than none.
+  offValue?: number
 }
 
 const ACTOR = [/player/i, /character/i, /humanoid/i, /hero/i, /entity/i, /unit/i, /actor/i]
@@ -131,6 +137,7 @@ export const CATEGORIES: Category[] = [
     dataTypes: ['float'],
     mode: 'freeze',
     value: 0,
+    offValue: 1,
     plausible: [0, 100],
     lookFor: 'The in-game clock stops. Toggle off to resume; sleeping may misbehave while frozen.'
   },
@@ -142,6 +149,7 @@ export const CATEGORIES: Category[] = [
     dataTypes: ['float'],
     mode: 'freeze',
     value: 3,
+    offValue: 1,
     plausible: [0.01, 100],
     lookFor:
       'Sprint: noticeably faster. This field may be recomputed every frame; if it does nothing, it needs a method patch instead.'

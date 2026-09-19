@@ -44,6 +44,8 @@ export interface AnchorCheatDraft {
   mode: 'freeze' | 'oneshot'
   targets: { kind: 'anchor'; patchId: string; offset: string; dataType: DataType }[]
   value: number
+  // Written when the cheat is switched off (see Category.offValue).
+  offValue?: number
 }
 
 export interface Il2cppChecklistItem {
@@ -324,7 +326,15 @@ export async function buildIl2cppFactory(
       }))
 
       const cheatId = `factory-${cat.id}`
-      result.cheats.push({ id: cheatId, name: cat.label, dataType, mode: cat.mode, targets, value: cat.value })
+      result.cheats.push({
+        id: cheatId,
+        name: cat.label,
+        dataType,
+        mode: cat.mode,
+        targets,
+        value: cat.value,
+        ...(cat.offValue !== undefined ? { offValue: cat.offValue } : {})
+      })
       if (cat.edit !== undefined) {
         result.cheats.push({
           id: `${cheatId}-edit`,
