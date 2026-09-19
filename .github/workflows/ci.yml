@@ -36,6 +36,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # node-gyp 9's bundled gyp still imports distutils, which Python 3.12 (the runner default)
+      # removed. Build with 3.11 until node-gyp is upgraded.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -62,8 +68,10 @@ jobs:
             echo "node $(node -v) | npm $(npm -v) | node-gyp $(npx node-gyp -v 2>&1 | head -1)"
             echo "python: $(python --version 2>&1)"
             echo "vswhere: $("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -all -format value -property displayName 2>&1 | tr '\n' ';')"
+            echo "--- error lines in the build log ---"
+            grep -nE "Error|error|No module|not found|ERR!" "$RUNNER_TEMP/native-build.log" | grep -v "gyp info" | head -14
             echo "--- last lines of the build log ---"
-            tail -n 45 "$RUNNER_TEMP/native-build.log"
+            tail -n 14 "$RUNNER_TEMP/native-build.log"
           } | sed -e 's/%/%25/g' -e 's/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g' | sed 's/^/::error title=Native addon build failed::/'
 
       # The MCP server tests spawn its built dist/ and load the native addon.
@@ -111,6 +119,13 @@ jobs:
             echo "v$VERSION has no release yet: publishing."
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # node-gyp 9's bundled gyp still imports distutils, which Python 3.12 (the runner default)
+      # removed. Build with 3.11 until node-gyp is upgraded.
+      - uses: actions/setup-python@v5
+        if: steps.version.outputs.publish == 'true'
+        with:
+          python-version: "3.11"
 
       - uses: actions/setup-node@v4
         if: steps.version.outputs.publish == 'true'
