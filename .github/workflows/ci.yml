@@ -1,0 +1,138 @@
+name: CI
+
+# Every push and pull request is tested and built. A GitHub release (tag v<version>,
+# installer attached, notes generated from the commits) is created automatically only
+# when a push to master carries a package.json version that has no release yet, so you
+# publish by bumping the version, not by tagging by hand, and ordinary pushes do not
+# create releases.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Never cancel a run on master: it may be the one publishing a release.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The native addon needs the C++ build tools, which the Windows runner ships.
+      # node-addon-api comes from the root install; node-gyp is a root dev dependency.
+      - name: Build native addon
+        working-directory: native
+        run: |
+          npx node-gyp configure
+          npx node-gyp build
+
+      # The MCP server tests spawn its built dist/ and load the native addon.
+      - name: Build MCP server
+        working-directory: mcp-server
+        run: |
+          npm ci
+          npm run build
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Production bundle compiles
+        run: npm run build
+
+      - name: Unit and native-harness tests
+        run: npx vitest run
+
+  release:
+    name: Publish release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    permissions:
+      contents: write # create the tag and the release
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Decide first, so a push that does not bump the version stops here in seconds
+      # instead of building an installer it will not publish.
+      - name: Is this version already released?
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already released: nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$VERSION has no release yet: publishing."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.publish == 'true'
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.version.outputs.publish == 'true'
+        run: npm ci
+
+      - name: Build native addon
+        if: steps.version.outputs.publish == 'true'
+        working-directory: native
+        run: |
+          npx node-gyp configure
+          npx node-gyp build
+
+      # `dist` is `electron-vite build && electron-builder --win`. --publish never keeps
+      # electron-builder from uploading anything itself: the release step below does that.
+      - name: Build installer
+        if: steps.version.outputs.publish == 'true'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false" # the installer is not code-signed
+        run: npm run dist -- --publish never
+
+      - name: Create release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          INSTALLER="release/Apprentice-Setup-${VERSION}.exe"
+          test -f "$INSTALLER" || { echo "Expected $INSTALLER was not built"; ls release; exit 1; }
+          (cd release && sha256sum "Apprentice-Setup-${VERSION}.exe" > SHA256SUMS.txt)
+
+          # A version with a hyphen (0.1.2-beta) is a prerelease.
+          FLAGS=""
+          case "$VERSION" in *-*) FLAGS="--prerelease" ;; esac
+
+          gh release create "v${VERSION}" \
+            --target "$GITHUB_SHA" \
+            --title "Apprentice v${VERSION}" \
+            --generate-notes \
+            $FLAGS \
+            "$INSTALLER" release/SHA256SUMS.txt
