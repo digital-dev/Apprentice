@@ -13,6 +13,7 @@ import { registerRemoteTools } from './tools/remote'
 import { registerFingerprintTools } from './tools/fingerprint'
 import { registerVerifyTools } from './tools/verify'
 import { registerUeTools } from './tools/ue'
+import { registerAuthorTools } from './tools/author'
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'game-memory', version: '0.1.0' })
@@ -26,5 +27,6 @@ export function createServer(): McpServer {
   registerFingerprintTools(server)
   registerVerifyTools(server)
   registerUeTools(server)
+  registerAuthorTools(server)
   return server
 }

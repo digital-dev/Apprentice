@@ -39,7 +39,7 @@ function loadCheat(profilePath: string, cheatId: string): CheatDefinition | { er
   return cheat
 }
 
-function monoOpsFor(handle: number): MonoResolveOps {
+export function monoOpsFor(handle: number): MonoResolveOps {
   return {
     resolveClass: (h, base, ns, cls) => addon.monoResolveClass(h, base, ns, cls),
     resolveField: (h, base, cls, field) => addon.monoResolveField(h, base, cls, field),
