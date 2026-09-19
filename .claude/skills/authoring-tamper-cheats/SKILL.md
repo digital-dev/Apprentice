@@ -56,7 +56,7 @@ before reaching for manual RE:
 
 **IL2CPP** drafts are a `capture` patch (on the owning class's `Update`,
 found by unique signature) plus an `anchor` value cheat — the same pair
-`games/Schedule I.json` uses. Mono drafts are plain `mono` value cheats.
+existing IL2CPP profiles in `games/` use. Mono drafts are plain `mono` value cheats.
 IL2CPP details worth knowing: enumeration reads runtime structs directly
 (never `il2cpp_class_get_fields`, which can be a folded stub); the addon
 caps reads at 4096 bytes; a game running MelonLoader/Harmony may already
@@ -71,63 +71,79 @@ Design: `docs/superpowers/specs/2026-09-19-cheat-factory-design.md` and
 
 ## When a cheat doesn't work, or the mechanism isn't obvious: read the code, then watch the game
 
-Learned on Schedule I, where four confident guesses about police body
-searches and cash were wrong before evidence replaced them. The scripts are in
-`mcp-server/scripts/` (see its README); each is read-only.
+Confident guesses from field and method *names* fail often; evidence does not.
+The scripts are in `mcp-server/scripts/` (see its README); each is read-only.
 
-1. **Read what the game really does.** `disasm.js` on a getter or setter shows
-   the field it touches; `findCallers.js` shows who calls it. IL2CPP **inlines
-   trivial getters**, so a getter nobody calls is not a lever: patching
-   `get_BodySearchChance` would have done nothing, because callers read the
-   field inline (`comiss xmm9,[rsi+0x328]`).
-2. **Find the choke point.** When several routes reach one behaviour
-   (patrol investigation, checkpoint, a local-player search), patch the
-   function they all share (`ConductBodySearch`), not each gate. A player-side
-   flag ("search pending") rarely controls an NPC's decision: find the actor.
-3. **Watch the real event.** When reading code is not enough, poll the
-   relevant fields read-only while the user triggers the event
-   (`watchBehaviours.js`). A checkpoint officer switching straight to its
-   body-search behaviour named the route that the call graph had hidden behind
-   virtual calls.
-4. **After the user toggles it, read memory.** Are the patch bytes applied?
-   Did the field change? That separates "not applied", "applied at the wrong
-   site" and "written but not shown" in one step. Never tell the user a cheat
-   works because it was drafted; say what was read and what was not run in-game.
+1. **Read what the game really does.** Disassemble the getter or setter to see
+   which field it touches, and find its callers. IL2CPP **inlines trivial
+   getters**, so a getter with no callers is not a lever: patching it changes
+   nothing, because the readers load the field directly. Search for readers of
+   the field's offset, not just callers of its accessor.
+2. **Find the choke point.** When several routes reach one behaviour, patch the
+   function they all share rather than each gate. A flag on the *player* rarely
+   controls an *NPC's* decision (search, arrest, detect, attack): find the
+   actor and its decision function.
+3. **Watch the real event.** When reading code is not enough, poll the relevant
+   fields read-only while the user triggers the event (`watchBehaviours.js`
+   shows the shape). A live state change often names a route that the call
+   graph hides behind virtual calls or callbacks.
+4. **After the user toggles it, read memory.** Are the patch bytes applied? Did
+   the field change? That separates "not applied", "applied at the wrong site"
+   and "written but not shown" in one step. Never say a cheat works because it
+   was drafted: say what was read live and what was not run in-game.
 
 Sharp edges, each of which cost a round trip:
 
-- **Live vs leftover objects.** A scan for a class pointer also finds
-  destroyed Unity objects still sitting in memory. Their native pointer at
-  `+0x10` is 0, and their values are stale (two `MoneyManager`s, one live).
-  Freed slots reused as noise also read as plausible numbers, so a scan is not
-  proof: `author_cheats` demands a non-zero plausible value and refuses when
-  more than 16 candidates match.
+- **Live vs leftover objects.** A scan for a class pointer also finds destroyed
+  Unity objects still sitting in memory. Their native pointer at `+0x10` is 0
+  and their values are stale, so a game can appear to have two managers with
+  only one alive. Freed slots reused as noise also read as plausible numbers, so
+  a scan is not proof: `author_cheats` demands a non-zero plausible value and
+  refuses when more than 16 candidates match.
 - **A capture only fires when the hooked method runs.** Hooking a rarely called
-  method of an item (cash's `ChangeBalance`) means "the game never ran the
-  capture hook" until that event happens. Hook a per-frame method on a
-  **holder** singleton and reach the item with an anchor `derefOffset`
-  (`PlayerInventory.Update`, then `+0x48` to the wallet, `+0x30` for the
-  balance). Find the holder by reading how the game's own accessor ends
-  (`get_cashInstance`).
+  method of an *item* means "the game never ran the capture hook" until that
+  event happens. Hook a per-frame method on a **holder** singleton (an
+  inventory, a manager) and reach the item with an anchor `derefOffset`. Find
+  the holder by reading how the game's own accessor for that item ends.
+- **Shared classes need a gate.** A value that lives on a generic helper type
+  (a stack of multipliers, a timer, a wrapper) is shared by many systems.
+  Patching the helper affects all of them; patch at a site that only the target
+  system executes, or gate the patch to it.
+- **Read-modify-write sites vs consuming sites.** A load of a field is not
+  always where the value is *used*: a smoothing/lerp step reads and writes the
+  same field. Scaling there corrupts the stored value and everything that reads
+  it. Scale where the value is consumed, or you change the state, not the effect.
+- **`const` fields have no storage.** A "static" field that sits at offset 0
+  with the same value as its neighbours is a compile-time constant baked into
+  the code as an immediate: there is nothing to write. Look for the instance
+  field or scale the product where it is consumed.
+- **Prefer a `scale` patch at the consuming site over freezing an input.**
+  Find where the code multiplies its factors into the final value (a chain of
+  `mulss` ending in the result) and scale that register (`sourceRegister`
+  plus `value`). It needs no instance capture, leaves every stored field alone
+  (so nothing else that reads them changes), and only affects the code path it
+  sits in. The patch site must be a whole instruction with no branch or
+  rip-relative operand, after the register holds the final product (scale runs
+  before the displaced instruction).
 - **Identical-code folding.** One method pointer can belong to several classes'
   MethodInfos (trivial getters). A hook there fires for whichever class calls
   it: refuse any pointer owned by more than one class.
 - **Disabling a freeze does not restore anything.** Give the cheat an
-  `offValue` (a known default) when the game never puts the field back itself
-  (a frozen time multiplier of 0 kept the clock stopped). `captureOriginal` is
-  racy for anchors: it reads before the hook has run, so the snapshot is empty.
+  `offValue` (a known default) when the game never puts the field back itself.
+  `captureOriginal` is racy for anchors: it reads before the hook has run, so
+  the snapshot is empty.
 - **One-shot Apply on an anchored cheat** needs the capture patch installed and
   the hook to have run; Tamper's `applyOnce` does both and reports failure.
 - **Writing a value does not refresh the UI.** The visible number updates when
-  the game raises its UI event (click it, open the inventory). Do not call the
-  UI method yourself from an injected thread: Unity's text APIs are
-  main-thread-only and can crash the game.
-- **A multiplier you freeze may feed other systems.** Freezing the sprint
-  multiplier at 3 also scaled the camera bob while standing still. Prefer the
-  value that only the target system reads, or scale it where it is consumed.
+  the game raises its UI event (click it, open the panel). Do not call the UI
+  method yourself from an injected thread: Unity's text APIs are main-thread
+  only and can crash the game.
+- **A frozen value may feed other systems.** Freezing a multiplier to speed
+  something up can also scale things that read it (animation, camera). Prefer
+  the value only the target system reads, or scale it where it is consumed.
 - **Signature uniqueness.** Wildcarding addresses makes IL2CPP prologues
-  collide (71 bytes still matched 11 places). Extend into the method body until
-  exactly one match, typically 70 to 150 bytes.
+  collide (a 71-byte signature still matched 11 places). Extend into the method
+  body until exactly one match, typically 70 to 150 bytes.
 - **Early-return patch.** At a function's entry, replace the first whole
   instructions with `xor eax,eax; ret` plus nops (`33 c0 c3 ...`). It is valid
   for void, bool and pointer returns, and safe because no stack change has
@@ -172,7 +188,7 @@ check this before spending a session rediscovering the same lesson:
 | Movement speed / jump / godmode-style toggles | D — captured player pointer | Capture once (write-watch any known player-object field's write, e.g. jump count), then every other field off that same pointer is cheap — don't re-derive the pointer per field. |
 | World/global settings (drop rate, damage multiplier, work speed, time scale) | E — try a **plain value scan first** | Cheapest recipe to even attempt: a world-settings singleton is far more likely to be a stable global than a per-player heap struct, and may need no capture patch at all. Don't reach for capture-patch machinery before ruling this out. |
 | One-time flags / mode switches (stealth mode, disable a requirement system) | B — one-shot write, never `freeze` | Wording is a signal: "no X" / "disable X" in the wishlist usually means a flag, not a threshold — treat "unlimited X" and "no X" as different recipes by default, and verify which one it actually is before assuming. |
-| Police search / arrest / "no investigate" (an NPC decides, several routes reach it) | Method-level `replace` at the function all routes share | The player-side flag is not the lever. Read callers, then watch which behaviour turns on (see the section above). Two wrong sites before the right one on Schedule I. |
+| NPC-decided behaviour (search, arrest, detect, attack: several routes reach one decision) | Method-level `replace` at the function all routes share | A player-side flag is not the lever. Read callers, then watch which state turns on (see the section above). |
 | Compiler-baked immediates (a fixed threshold baked into a compare, found via CE `sN` wildcards) | C — `replace`/`nop`, no anchor | If the cheat needs genuinely NEW inserted logic (not just replacing/nopping existing bytes — e.g. an extra `xor`/comparison ahead of the original code), it doesn't fit Tamper's fixed cave encoders; needs a Lua script cheat instead of a code patch. |
 
 **Cheapest-first attempt order**, confirmed across sessions: E (plain

@@ -105,11 +105,11 @@ export const CATEGORIES: Category[] = [
     plausible: [0, 1000000000],
     lookFor: '',
     manualReview:
-      'Cash is an ITEM instance (one of hundreds of look-alike CashInstance objects), so hooking its own methods only ' +
-      'captures it when cash changes, and Edit Cash then fails until you spend or pick some up. Reach it from the holder ' +
-      'instead: capture a per-frame method on the inventory singleton (PlayerInventory.Update) and use an anchor target with ' +
-      'derefOffset = the inventory field that holds the cash item (`cashInstance`, found by reading how the game\'s own ' +
-      'get_cashInstance ends) and offset = the Balance field.'
+      'A currency held as an ITEM is one of hundreds of look-alike instances, so hooking its own methods only ' +
+      'captures it when it changes, and an Edit then fails until you spend or gain some. Reach it from the holder ' +
+      'instead: capture a per-frame method on the singleton that owns it (an inventory or manager) and use an anchor ' +
+      'target with derefOffset = the field on the holder that references the item (read how the accessor for it ends) ' +
+      'and offset = the amount field.'
   },
   {
     id: 'water',
@@ -156,8 +156,12 @@ export const CATEGORIES: Category[] = [
     value: 3,
     offValue: 1,
     plausible: [0.01, 100],
-    lookFor:
-      'Sprint: noticeably faster. This field may be recomputed every frame; if it does nothing, it needs a method patch instead.'
+    lookFor: '',
+    manualReview:
+      'A per-instance speed/sprint multiplier is usually read by other systems too (animation, camera bob), so freezing ' +
+      'it changes more than speed, and the game may rewrite it every frame. Use a `scale` patch instead: find where the ' +
+      'movement code multiplies its factors together (a chain of mulss ending in the velocity factor) and scale that ' +
+      'register at the consuming site. It leaves the stored field alone and only runs for the code that moves the player.'
   },
   {
     id: 'nosearch',

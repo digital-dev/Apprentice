@@ -248,22 +248,6 @@
       "offValue": 1
     },
     {
-      "id": "factory-runspeed",
-      "name": "Run Speed Multiplier",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "anchor",
-          "patchId": "factory-capture-PlayerMovement",
-          "offset": "0x50",
-          "dataType": "float"
-        }
-      ],
-      "value": 3,
-      "offValue": 1
-    },
-    {
       "kind": "patch",
       "mode": "replace",
       "id": "factory-noinvestigate-officers",
@@ -288,6 +272,21 @@
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
       "moduleOffset": "0x72af60"
+    },
+    {
+      "kind": "patch",
+      "mode": "scale",
+      "id": "factory-movespeed-scale",
+      "name": "Movement Speed Multiplier (player only)",
+      "originalBytes": "80b95b02000000",
+      "length": 7,
+      "signature": "e8 ?? ?? ?? ?? 48 8b 05 ?? ?? ?? ?? 48 8b 80 b8 00 00 00 48 8b 48 18 48 85 c9 0f 84 ?? ?? ?? ?? 80 b9 5b 02 00 00 00 f3 44 0f 10 0d ?? ?? ?? ?? f3 0f 59 fe 74 ?? f3 41 0f 59 f9",
+      "signatureOffset": 32,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x63c300",
+      "sourceRegister": "xmm6",
+      "value": 2,
+      "dataType": "float"
     }
   ]
 }

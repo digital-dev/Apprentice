@@ -1,5 +1,5 @@
 // Build a persistent `replace` patch for an instruction span inside a method (e.g. make a function return early).
-// usage: MINLEN=5 node makeReplace.js <pid> "<classRegex>" <method> "<instrTextRegex>" <replacementHex> <id> "<name>" [instructionsBefore=6]
+// usage: MINLEN=5 [BYTES=4000 ROWS=900] [AT=0xADDRESS] node makeReplace.js <pid> "<classRegex>" <method> "<instrTextRegex>" <replacementHex> <id> "<name>" [instructionsBefore=6]
 const root = require('node:path').resolve(__dirname, '../dist')
 const addon = require(root + '/addon.js')
 const { chunkedRead } = require(root + '/factory/chunkedRead.js')
@@ -33,9 +33,12 @@ const moduleEnd = '0x' + (BigInt(ga.base) + BigInt(ga.size)).toString(16)
   const method = en.classes.flatMap((c) => c.methods).find((m) => m.name === methodName)
   if (!method) { console.error('method not found'); process.exit(1) }
 
-  const rows = addon.disassembleBuffer(Buffer.from(read(method.pointer, 1200), 'hex'), method.pointer, 400)
+  const rows = addon.disassembleBuffer(Buffer.from(read(method.pointer, Number(process.env.BYTES || 1200)), 'hex'), method.pointer, Number(process.env.ROWS || 400))
     .map((r) => ({ address: BigInt(r.address), bytes: r.bytes.replace(/\s+/g, ''), text: r.text, length: r.length }))
-  const idx = rows.findIndex((r) => new RegExp(instrRe, 'i').test(r.text))
+  // AT=<address> selects an exact instruction (a text match can hit an earlier identical one).
+  const idx = process.env.AT
+    ? rows.findIndex((r) => r.address === BigInt(process.env.AT))
+    : rows.findIndex((r) => new RegExp(instrRe, 'i').test(r.text))
   if (idx < 0) { console.error('instruction not found'); process.exit(1) }
   const MINLEN = Number(process.env.MINLEN || 0)
   let covered = 1

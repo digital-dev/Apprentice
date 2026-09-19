@@ -20,7 +20,7 @@ Promote an entry to `Schedule I.json` only after its `lookFor` check passes.
 | Unlimited Water | `WaterContainerInstance.<CurrentFillAmount>` | `0x30` | 5 | Frozen at 999; lower it if the can looks overfull. Hook `get_NormalizedFillAmount`. |
 | No Curfew | `CurfewManager` `IsEnabled`, `IsCurrentlyActive`, `IsHardCurfewActive` | `0x120-0x122` | IsEnabled=1 | One cheat, three targets, all frozen to 0. |
 | Freeze Daytime | `TimeManager.<TimeSpeedMultiplier>` | `0x13c` | 1.0 | Frozen to 0. Sleeping may misbehave while frozen. |
-| Run Speed Multiplier | `PlayerMovement.<CurrentSprintMultiplier>` | `0x50` | 1.0 | Frozen to 3. May be recomputed every frame; if it does nothing use the static `SprintMultiplier` via a method patch. |
+| ~~Run Speed Multiplier~~ | `PlayerMovement.<CurrentSprintMultiplier>` | `0x50` | 1.0 | Worked, but froze a field the camera also reads, so the camera bobbed while standing still. Replaced by the scale patch below. |
 | ~~No Body Search~~ | `PlayerCrimeData.BodySearchPending` | `0x168` | 0 | **Does not work** (police still searched, confirmed in-game): the flag is not what starts a search. Replaced by the officer patch below. |
 
 Every cheat is a `capture` patch on an instance method of the owning class
@@ -28,6 +28,10 @@ Every cheat is a `capture` patch on an instance method of the owning class
 already uses. `multiInstanceRisk` cheats record whichever instance ran last.
 
 ## Drafted (method patch)
+
+| Wishlist item | Site | Notes |
+|---|---|---|
+| Movement Speed Multiplier (player only) | `PlayerMovement.Move` at RVA `0x63c300`: `scale` `xmm6` by `value` (default 2) | In `Move` the speed factor is built as `CurrentSprintMultiplier * walk const * crouch * static` into `xmm6` and then `mulss xmm7,xmm6` combines it with the shared `FloatStack` multiplier. Scaling `xmm6` there speeds all player movement without changing the stored sprint field, so the camera bob (which reads that field inline in `PlayerCamera.UpdateCameraBob`) is untouched. It runs only inside the player's own `Move`, so NPCs and everything else that shares `FloatStack` are unaffected. `WalkSpeed`, `SprintMultiplier` and the other caps names are `const`s with no storage. Untested in-game. |
 
 | Wishlist item | Site | Notes |
 |---|---|---|
