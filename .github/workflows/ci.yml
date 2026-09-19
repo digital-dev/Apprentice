@@ -5,6 +5,10 @@ name: CI
 # when a push to master carries a package.json version that has no release yet, so you
 # publish by bumping the version, not by tagging by hand, and ordinary pushes do not
 # create releases.
+#
+# Dry run: the release job can also be started by hand (Actions -> CI -> Run workflow). On any branch
+# other than master it builds the installer and uploads it as a workflow artifact instead of
+# publishing, which is how to check that a build works before merging.
 
 on:
   push:
@@ -118,7 +122,10 @@ jobs:
   release:
     name: Publish release
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/ci/release-workflow'
     runs-on: windows-2022
     permissions:
       contents: write # create the tag and the release
@@ -127,6 +134,8 @@ jobs:
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
+      # Anything that is not master builds but never publishes.
+      DRY_RUN: ${{ github.ref != 'refs/heads/master' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -137,7 +146,10 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run (not master): building v$VERSION but will not publish."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "v$VERSION is already released: nothing to publish."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
@@ -177,7 +189,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # the installer is not code-signed
         run: npm run dist -- --publish never
 
-      - name: Create release
+      - name: Check the installer was built
         if: steps.version.outputs.publish == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -185,6 +197,24 @@ jobs:
           INSTALLER="release/Apprentice-Setup-${VERSION}.exe"
           test -f "$INSTALLER" || { echo "Expected $INSTALLER was not built"; ls release; exit 1; }
           (cd release && sha256sum "Apprentice-Setup-${VERSION}.exe" > SHA256SUMS.txt)
+          ls -l release/*.exe release/SHA256SUMS.txt
+
+      - name: Upload the installer (dry run)
+        if: steps.version.outputs.publish == 'true' && env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apprentice-Setup-${{ steps.version.outputs.version }}
+          path: |
+            release/Apprentice-Setup-*.exe
+            release/SHA256SUMS.txt
+          retention-days: 3
+
+      - name: Create release
+        if: steps.version.outputs.publish == 'true' && env.DRY_RUN != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          INSTALLER="release/Apprentice-Setup-${VERSION}.exe"
 
           # A version with a hyphen (0.1.2-beta) is a prerelease.
           FLAGS=""

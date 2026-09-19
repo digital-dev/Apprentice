@@ -46,7 +46,7 @@
       "out/**/*",
       "package.json",
       { "from": "native/build/Release", "to": "native/build/Release", "filter": ["memory_addon.node"] },
-      { "from": "games", "to": "games", "filter": ["*.json"] }
+      { "from": "games", "to": "games", "filter": ["*.json", "!*.draft.json"] }
     ],
     "win": {
       "target": "nsis",
