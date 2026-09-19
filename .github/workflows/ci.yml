@@ -23,10 +23,12 @@ defaults:
   run:
     shell: bash
 
-# Node 22 (22.18 or newer), deliberately not older and not 24. Older: src/main/ctImportSafe.ts starts a
-# worker thread from a .ts file, which needs Node's built-in TypeScript support (22.18+). Newer:
-# Node 24's headers build native addons with the ClangCL toolset, which the pinned node-gyp (9.4.1)
-# cannot drive ("llvm-lib.exe exited with code 1"). Revisit both after upgrading node-gyp.
+# Two Node versions on purpose. The native addon is BUILT with Node 22: Node 24+ headers use the
+# ClangCL toolset, which the pinned node-gyp (9.4.1) cannot drive ("llvm-lib.exe exited with code 1").
+# The tests RUN on Node 26 (what development uses): they load a TypeScript worker
+# (src/main/ctImportSafe.ts) and import the compiled .node file directly, and Node 22 rejects that
+# ("Unknown file extension .node"). The addon is N-API, which is ABI-stable, so a build made under 22
+# loads fine under 26. Revisit after upgrading node-gyp.
 #
 # Both jobs run on windows-2022 rather than windows-latest on purpose: the latest image now
 # ships Visual Studio 2026, which the pinned node-gyp (9.4.1) cannot find a compiler in
@@ -78,6 +80,11 @@ jobs:
             echo "--- last lines of the build log ---"
             tail -n 14 "$RUNNER_TEMP/native-build.log"
           } | sed -e 's/%/%25/g' -e 's/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g' | sed 's/^/::error title=Native addon build failed::/'
+
+      # Everything from here runs the tests, so switch to the Node they need (see the note at the top).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
 
       # The MCP server tests spawn its built dist/ and load the native addon.
       - name: Build MCP server

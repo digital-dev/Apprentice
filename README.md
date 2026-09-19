@@ -43,9 +43,10 @@ Prefer to build it yourself, or want to hack on it? Keep reading.
 
 ## Building from source
 
-Requirements: Node.js 22.18 or newer on the 22.x line (a test loads a TypeScript worker
-with Node's built-in TypeScript support, and the pinned node-gyp can't yet build the
-addon against Node 24+ headers), a recent `npm`, and the
+Requirements: Node.js 26 to run the tests (they load a TypeScript worker and the compiled
+`.node` addon natively), Node.js 22 to *build* the addon (the pinned node-gyp can't yet
+drive the toolset Node 24+ headers use; the addon is N-API, so a build made under 22 loads
+fine under 26), a recent `npm`, and the
 [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
 (C++ workload) for compiling the native addon.
 
