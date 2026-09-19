@@ -67,7 +67,7 @@
         "src/platform"
       ],
       "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
-      "defines": ["NAPI_DISABLE_CPP_EXCEPTIONS", "ZYDIS_STATIC_BUILD"],
+      "defines": ["NAPI_DISABLE_CPP_EXCEPTIONS", "ZYDIS_STATIC_BUILD", "NOMINMAX"],
       "msvs_settings": {
         "VCCLCompilerTool": { "ExceptionHandling": 1, "AdditionalOptions": ["/std:c++17"] }
       },
