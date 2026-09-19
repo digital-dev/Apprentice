@@ -41,10 +41,24 @@ jobs:
       # The native addon needs the C++ build tools, which the Windows runner ships.
       # node-addon-api comes from the root install; node-gyp is a root dev dependency.
       - name: Build native addon
+        id: native
         working-directory: native
         run: |
-          npx node-gyp configure
-          npx node-gyp build
+          set -o pipefail
+          { npx node-gyp configure && npx node-gyp build; } 2>&1 | tee "$RUNNER_TEMP/native-build.log"
+
+      # Job logs need a login to download, so on failure surface the toolchain and the tail
+      # of the build log as an annotation anyone can read on the run page.
+      - name: Explain native build failure
+        if: failure() && steps.native.outcome == 'failure'
+        run: |
+          {
+            echo "node $(node -v) | npm $(npm -v) | node-gyp $(npx node-gyp -v 2>&1 | head -1)"
+            echo "python: $(python --version 2>&1)"
+            echo "vswhere: $("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -all -format value -property displayName 2>&1 | tr '\n' ';')"
+            echo "--- last lines of the build log ---"
+            tail -n 45 "$RUNNER_TEMP/native-build.log"
+          } | sed -e 's/%/%25/g' -e 's/\r//g' | sed ':a;N;$!ba;s/\n/%0A/g' | sed 's/^/::error title=Native addon build failed::/'
 
       # The MCP server tests spawn its built dist/ and load the native addon.
       - name: Build MCP server
