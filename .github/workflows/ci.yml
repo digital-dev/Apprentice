@@ -124,8 +124,7 @@ jobs:
     needs: test
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
-      github.event_name == 'workflow_dispatch' ||
-      github.ref == 'refs/heads/ci/release-workflow'
+      github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     permissions:
       contents: write # create the tag and the release

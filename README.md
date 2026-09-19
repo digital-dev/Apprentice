@@ -75,6 +75,27 @@ npx tsc --noEmit     # type check
 npm run build        # production bundle actually compiles
 ```
 
+### CI and releases
+
+`.github/workflows/ci.yml` runs on every push and pull request: it builds the native
+addon, builds the MCP server, type-checks, compiles the production bundle, and runs the
+whole test suite (native-harness tests included) on a Windows runner.
+
+**To publish a release, bump `version` in `package.json` and push it to `master`.** If
+there is no release for that version yet, CI builds the installer, creates the tag
+`v<version>` and a GitHub Release (a prerelease when the version has a `-`, like
+`0.1.2-beta`), attaches `Apprentice-Setup-<version>.exe` plus a `SHA256SUMS.txt`, and
+generates the notes from the commits since the previous release. A push that doesn't
+change the version publishes nothing.
+
+To check that a build works without publishing, run **Actions → CI → Run workflow** on
+any branch other than `master`: it builds the installer and attaches it to the run as an
+artifact (kept for 3 days) instead of releasing it.
+
+The installer is not code-signed, so Windows SmartScreen will warn on first run. The
+toolchain pins (Windows 2022 image, Python 3.11, Node 22 to build the addon and Node 26 to
+run the tests) each exist for a specific reason, recorded as comments in the workflow.
+
 ### The native test harness
 
 `tests/native/*.test.ts` don't touch a real game — they drive
