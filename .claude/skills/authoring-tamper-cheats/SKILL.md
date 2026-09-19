@@ -32,24 +32,37 @@ live-fire landmines (identical-code-folding making some exports lie about
 their own signature, and a bad pointer arg crashing the target outright)
 worth knowing before making a single remote call.
 
-## Fast path: `author_cheats` (Unity/Mono)
+## Fast path: `author_cheats` (Unity/Mono and Unity/IL2CPP)
 
-For a Unity/Mono game, run this first — it replaces the per-cheat RE loop
-for the common categories (health, stamina, mana, money, godmode):
+For a Unity game, run this first — it replaces the per-cheat RE loop for
+the common categories (health, stamina, mana, money, godmode):
 
-1. `attach`, `fingerprint_process` (must report `unity-mono`).
-2. Get the player into a world/save (the singleton root must be non-null).
+1. `attach`, `fingerprint_process` (must report `unity-mono` or `unity-il2cpp`).
+2. Get the player into a world/save (live instances must exist).
 3. `author_cheats(handle, ["health","stamina","mana","money","godmode"], "games/<exe>.json")`.
-4. Read the result: `checklist` (confirm each in-game), `unresolved`
-   (fields matched but no plausible live value), `notFound` (no field
-   name matched — fall back to the recipes below), `manual` (hunger/speed:
-   landmines, do by hand).
+4. Read the result. `checklist` lists each drafted cheat with `verified`
+   (was a live instance read with a plausible value?), `liveValue`, and
+   `multiInstanceRisk` (a capture hook records whichever instance ran
+   last). `unresolved` = matched but no plausible value or no hookable
+   method; `notFound` = no field matched (fall back to the recipes below);
+   `manual` = hunger/speed, known landmines, do by hand.
 5. Toggle each drafted cheat in Tamper from `games/<exe>.draft.json` and
    check its `lookFor` line. Move confirmed entries into the real profile.
 
-It only writes the draft file, never game memory or the live profile.
-Non-Mono engines get an error naming the playbook; use the recipes below.
-Design: `docs/superpowers/specs/2026-09-19-cheat-factory-design.md`.
+**IL2CPP** drafts are a `capture` patch (on the owning class's `Update`,
+found by unique signature) plus an `anchor` value cheat — the same pair
+`games/Schedule I.json` uses. Mono drafts are plain `mono` value cheats.
+IL2CPP details worth knowing: enumeration reads runtime structs directly
+(never `il2cpp_class_get_fields`, which can be a folded stub); the addon
+caps reads at 4096 bytes; a game running MelonLoader/Harmony may already
+have detoured method starts, which the hook chooser refuses. Layout offsets
+are per Unity version and re-verified each run (see the IL2CPP factory spec).
+
+It only writes the draft file, never game memory or the live profile
+(beyond one scratch buffer for a few `il2cpp_*` calls). Other engines get
+an error naming the playbook; use the recipes below.
+Design: `docs/superpowers/specs/2026-09-19-cheat-factory-design.md` and
+`docs/superpowers/specs/2026-09-19-il2cpp-cheat-factory-design.md`.
 
 ## Which recipe is this?
 

@@ -41,6 +41,8 @@ export interface ClassHeader {
   staticFieldsPtr: string
   methodCount: number
   fieldCount: number
+  // Bytes of a live instance (Il2CppObject header included).
+  instanceSize: number
 }
 
 export function decodeClass(hex: string): ClassHeader {
@@ -53,6 +55,7 @@ export function decodeClass(hex: string): ClassHeader {
     fieldsPtr: ptrAt(buf, 0x80),
     methodsPtr: ptrAt(buf, 0x98),
     staticFieldsPtr: ptrAt(buf, 0xb8),
+    instanceSize: buf.readUInt32LE(0xf8),
     methodCount: buf.readUInt16LE(0x120),
     fieldCount: buf.readUInt16LE(0x124)
   }

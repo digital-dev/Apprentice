@@ -7,6 +7,7 @@ import { chooseHookSite, type HookOps } from '../factory/hookSite'
 import { buildIl2cppFactory } from '../factory/il2cppBuild'
 import { writeDraft, type ProfileModules } from '../factory/draftFile'
 import { toHex } from '../factory/il2cppLayout'
+import { chunkedRead } from '../factory/chunkedRead'
 
 const EXPORTS: Record<BootstrapCall, string> = {
   domain_get: 'il2cpp_domain_get',
@@ -47,6 +48,13 @@ export async function authorIl2cpp(
   if (scratch === null) return err('could not allocate a scratch buffer in the target')
 
   try {
+    // Every read goes through the chunker: the addon caps a read at 4096 bytes.
+    const readBytes = (address: string, length: number) =>
+      chunkedRead((a, n) => addon.tryReadBytes(handle, a, n), address, length)
+
+    const scanQword = async (value: bigint) =>
+      (await addon.scanFirst(handle, 'int64', Number(value))).map((c) => c.address)
+
     const bootstrapOps: BootstrapOps = {
       call: (fn, callArgs) => addon.callRemoteFunction(handle, addresses[fn], callArgs),
       writeString: (text) => {
@@ -54,12 +62,11 @@ export async function authorIl2cpp(
         if (!addon.writeBytes(handle, scratch, hex)) throw new Error('scratch write failed')
         return scratch
       },
-      scanQword: async (value) => (await addon.scanFirst(handle, 'int64', Number(value))).map((c) => c.address),
-      readBytes: (address, length) => addon.tryReadBytes(handle, address, length)
+      scanQword,
+      readBytes
     }
 
     const classPointers = await findClassTable(bootstrapOps)
-    const readBytes = (address: string, length: number) => addon.tryReadBytes(handle, address, length)
     const enumeration = enumerateIl2cpp({ readBytes }, classPointers, wanted.flatMap((c) => c.classHints))
     if (enumeration.classesScanned === 0) {
       return err(`no class names matched the wishlist's hints among ${enumeration.classesTotal} classes`)
@@ -74,6 +81,7 @@ export async function authorIl2cpp(
     const result = await buildIl2cppFactory(args.wishlist, enumeration, {
       moduleName: gameAssembly.name,
       readBytes,
+      scanQword,
       chooseHook: (methods) => chooseHookSite(methods, hookOps, { base: gameAssembly.base, size: gameAssembly.size })
     })
 

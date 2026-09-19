@@ -10,10 +10,11 @@ repo root for the full design rationale.
 ## Game-memory safety
 
 Every tool is read-only against game memory. The one tool that writes
-anything, `author_cheats` (Unity/Mono only), writes a draft profile
-(`<profile>.draft.json`) on disk and never touches the live profile or the
-game process: wishlist of categories in, read-verified draft value cheats
-plus an in-game checklist out.
+anything, `author_cheats` (Unity/Mono and Unity/IL2CPP), writes a draft profile
+(`<profile>.draft.json`) on disk and never touches the live profile. On
+IL2CPP it makes a few `il2cpp_*` calls through one scratch buffer in the
+game process, then reads memory only. Wishlist of categories in, draft
+cheats plus an in-game checklist out.
 
 ## Prerequisites
 

@@ -117,3 +117,31 @@ Drafts go to `<profile>.draft.json` (patches then cheats, plus the
   with scripted disassembly and AOB results.
 - Live: run on Schedule I and compare with `games/Schedule I.json`: the
   money category must resolve `MoneyManager.onlineBalance` at `0x128`.
+
+## Amendments (found during the first live run on Schedule I)
+
+- **The addon caps a read at 4096 bytes** (8192+ return null, not a short
+  read). Every IL2CPP read goes through `chunkedRead`. The unit-test fakes
+  had no cap, which is why this only showed up live.
+- **Verification has three tiers, strongest first.**
+  1. *Singleton root*, or a component the root object references (its
+     qwords are scanned for a pointer whose object header is the wanted
+     class, bounded by the class's `instance_size` at `+0xF8`). Authoritative:
+     an implausible read rejects the candidate; a zero is accepted.
+  2. *Instance scan* for classes no root reaches (e.g. singletons on a
+     generic base class, whose per-instantiation class is not in the image
+     table): scan memory for the class pointer, keep hits whose monitor
+     word is null (metadata records have a non-null word there). Not
+     authoritative: requires a plausible **non-zero** value, since zero is
+     what stray hits read as, and failure only leaves the cheat unverified.
+  3. *Nothing reachable*: drafted unverified for the in-game pass.
+- **`instanceCount` is an upper bound.** Freed objects still in memory also
+  match the scan. `multiInstanceRisk` is false only for tier 1, or a scan
+  that found exactly one instance.
+- **Live result (Schedule I):** money `MoneyManager.onlineBalance` `0x128`
+  (matches the shipped cheat; read 56174.875), health
+  `PlayerHealth.<CurrentHealth>k__BackingField` `0x11c` (100, via
+  `Player.Local`), stamina `PlayerMovement.<CurrentStaminaReserve>k__BackingField`
+  `0x4c` (100). Three capture patches on each class's `Update`, each with a
+  signature that matched exactly once. `godmode` and `mana` correctly found
+  nothing (no such fields); `hunger`/`speed` reported as manual.

@@ -48,6 +48,7 @@ describe('decodeClass (real MoneyManager header)', () => {
   it('decodes the counts', () => {
     expect(cls.methodCount).toBe(61)
     expect(cls.fieldCount).toBe(22)
+    expect(cls.instanceSize).toBe(0x198)
   })
 })
 

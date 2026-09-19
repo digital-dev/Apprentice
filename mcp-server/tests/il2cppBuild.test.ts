@@ -102,6 +102,121 @@ describe('buildIl2cppFactory', () => {
     expect(r.checklist[0]).toMatchObject({ verified: false, liveValue: null, multiInstanceRisk: true })
   })
 
+  // Realistic user-mode addresses: the scanner ignores anything under the 64 KB null page.
+  const HEAP_ROOT = 0x1d400006000n
+  const HEAP_COMPONENT = 0x1d400007000n
+  const heapRoot = { ...ROOT, instancePtr: '0x' + HEAP_ROOT.toString(16) }
+
+  function heapWorld(componentClass: number): BuildOps {
+    const mem = new FakeMemory()
+    mem.qword(HEAP_ROOT, 0x1000) // root instance header
+    mem.qword(HEAP_ROOT + 0x30n, HEAP_COMPONENT) // reference to the component
+    mem.qword(HEAP_COMPONENT, componentClass) // the component's class header
+    mem.float(HEAP_COMPONENT + 0x40n, 100)
+    return { moduleName: 'GameAssembly.dll', readBytes: mem.readBytes, chooseHook: async (ms) => site(ms[0]) }
+  }
+
+  it('verifies a component class by following a reference from the singleton root', async () => {
+    const r = await buildIl2cppFactory(['health'], enumeration([PLAYER], [heapRoot]), heapWorld(0x2000))
+    expect(r.checklist[0]).toMatchObject({ verified: true, liveValue: 100, multiInstanceRisk: false })
+  })
+
+  it('ignores a referenced object of a different class', async () => {
+    const r = await buildIl2cppFactory(['health'], enumeration([PLAYER], [heapRoot]), heapWorld(0x3333))
+    expect(r.checklist[0]).toMatchObject({ verified: false })
+  })
+
+  // Fallback for classes no root reaches: scan memory for objects whose
+  // header is the class pointer, dropping metadata self-references.
+  function scanWorld(hitsFor: (classPtr: bigint) => bigint[], setup: (mem: FakeMemory) => void): BuildOps {
+    const mem = new FakeMemory()
+    setup(mem)
+    return {
+      moduleName: 'GameAssembly.dll',
+      readBytes: mem.readBytes,
+      chooseHook: async (ms) => site(ms[0]),
+      scanQword: async (v) => hitsFor(v).map((a) => '0x' + a.toString(16))
+    }
+  }
+  const OBJ = 0x1d400009000n
+  const NOROOT = enumeration([PLAYER], [])
+
+  it('verifies through an instance scan and is low-risk when exactly one instance exists', async () => {
+    const ops = scanWorld(
+      () => [OBJ, 0x2000n + 0x40n], // a real object, plus a hit inside the class struct itself
+      (m) => {
+        m.qword(OBJ, 0x2000)
+        m.qword(OBJ + 8n, 0) // null monitor: an object, not a metadata record
+        m.float(OBJ + 0x40n, 80)
+        m.qword(0x2040, 0x2000) // the class's own self-reference
+        m.qword(0x2048, 0x1234) // nonzero neighbour
+      }
+    )
+    const r = await buildIl2cppFactory(['health'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: true, liveValue: 80, instanceCount: 1, multiInstanceRisk: false })
+  })
+
+  it('drops scan hits that are metadata records (non-null word after the pointer)', async () => {
+    const meta = 0x1d40000a000n
+    const ops = scanWorld(
+      () => [meta],
+      (m) => {
+        m.qword(meta, 0x2000)
+        m.qword(meta + 8n, 0x7ff600004000n) // e.g. a return_type pointer
+        m.float(meta + 0x40n, 80)
+      }
+    )
+    const r = await buildIl2cppFactory(['health'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: false, instanceCount: 0 })
+  })
+
+  it('flags multi-instance risk when several live instances are found', async () => {
+    const second = 0x1d40000b000n
+    const ops = scanWorld(
+      () => [OBJ, second],
+      (m) => {
+        for (const o of [OBJ, second]) {
+          m.qword(o, 0x2000)
+          m.qword(o + 8n, 0)
+          m.float(o + 0x40n, 60)
+        }
+      }
+    )
+    const r = await buildIl2cppFactory(['health'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: true, instanceCount: 2, multiInstanceRisk: true })
+  })
+
+  it('does not accept a zero from a scan: zero is what garbage hits read as', async () => {
+    const ops = scanWorld(
+      () => [OBJ],
+      (m) => {
+        m.qword(OBJ, 0x2000)
+        m.qword(OBJ + 8n, 0)
+        m.float(OBJ + 0x44n, 0) // stamina's plausible range includes 0
+      }
+    )
+    const r = await buildIl2cppFactory(['stamina'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: false, instanceCount: 1 })
+  })
+
+  it('still accepts a zero read through a singleton root (authoritative)', async () => {
+    const r = await buildIl2cppFactory(['money'], enumeration([MONEY]), opsWith(0))
+    expect(r.checklist[0]).toMatchObject({ verified: true, liveValue: 0 })
+  })
+
+  it('does not verify when every scanned instance reads an implausible value', async () => {
+    const ops = scanWorld(
+      () => [OBJ],
+      (m) => {
+        m.qword(OBJ, 0x2000)
+        m.qword(OBJ + 8n, 0)
+        m.float(OBJ + 0x40n, -5) // health plausible range starts at 1
+      }
+    )
+    const r = await buildIl2cppFactory(['health'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: false })
+  })
+
   it('shares one capture patch between cheats on the same class', async () => {
     const r = await buildIl2cppFactory(['health', 'stamina'], enumeration([PLAYER]), opsWith(0))
     expect(r.patches).toHaveLength(1)
