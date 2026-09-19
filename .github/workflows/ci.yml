@@ -23,8 +23,10 @@ defaults:
   run:
     shell: bash
 
-# Node 24, not the README's old "18+": src/main/ctImportSafe.ts starts a worker thread from a
-# .ts file, which needs Node's built-in TypeScript support (Node 22.18 or newer).
+# Node 22 (22.18 or newer), deliberately not older and not 24. Older: src/main/ctImportSafe.ts starts a
+# worker thread from a .ts file, which needs Node's built-in TypeScript support (22.18+). Newer:
+# Node 24's headers build native addons with the ClangCL toolset, which the pinned node-gyp (9.4.1)
+# cannot drive ("llvm-lib.exe exited with code 1"). Revisit both after upgrading node-gyp.
 #
 # Both jobs run on windows-2022 rather than windows-latest on purpose: the latest image now
 # ships Visual Studio 2026, which the pinned node-gyp (9.4.1) cannot find a compiler in
@@ -47,7 +49,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -133,7 +135,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.version.outputs.publish == 'true'
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
