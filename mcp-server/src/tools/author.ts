@@ -9,6 +9,7 @@ import { enumerateMono, type MonoEnumOps } from '../factory/monoEnumerator'
 import { buildFactory, type VerifyFn } from '../factory/build'
 import { monoOpsFor } from './verify'
 import { authorIl2cpp } from './authorIl2cpp'
+import { authorNative } from './authorNative'
 import { writeDraft } from '../factory/draftFile'
 
 function enumOpsFor(handle: number, monoDllBase: string): MonoEnumOps {
@@ -39,9 +40,10 @@ export function registerAuthorTools(server: McpServer): void {
       let monoDllBase = args.monoDllBase ?? null
       if (monoDllBase === null) {
         if (classification.engine === 'unity-il2cpp') return authorIl2cpp(args, classification.gameAssemblyBase)
+        if (classification.engine === 'native-unknown') return authorNative(args)
         if (classification.engine !== 'unity-mono') {
           return err(
-            `author_cheats supports Unity/Mono and Unity/IL2CPP only (detected: ${classification.engine}). Run fingerprint_process for that engine's playbook.`
+            `author_cheats supports Unity/Mono, Unity/IL2CPP and known native games only (detected: ${classification.engine}). Run fingerprint_process for that engine's playbook.`
           )
         }
         monoDllBase = classification.monoDllBase

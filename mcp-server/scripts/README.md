@@ -39,3 +39,8 @@ name (no namespace). They assume Unity IL2CPP with the layout in
 Caveats: linear disassembly stops at function padding (3+ `int3`); a scan can
 hit destroyed Unity objects (their native pointer at `+0x10` is 0); offsets are
 per Unity version, so re-verify on another game.
+
+## authorNativeLive.js
+
+`node authorNativeLive.js <pid> <profilePath> <category,...>` runs the native (non-Unity) `author_cheats` path against an
+attached game without the MCP server. Needs `npm run build` first. Known games are in `src/factory/nativeGames.ts`.

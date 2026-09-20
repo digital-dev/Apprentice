@@ -63,6 +63,10 @@ caps reads at 4096 bytes; a game running MelonLoader/Harmony may already
 have detoured method starts, which the hook chooser refuses. Layout offsets
 are per Unity version and re-verified each run (see the IL2CPP factory spec).
 
+**Native games** (`fingerprint_process` says `native-unknown`, e.g. Elden Ring) work only when listed in
+`mcp-server/src/factory/nativeGames.ts`: root signatures plus offset chains, verified live. To add one, see
+`docs/superpowers/specs/2026-09-20-native-cheat-factory-design.md`. Value cheats only; patches stay hand-authored.
+
 It only writes the draft file, never game memory or the live profile
 (beyond one scratch buffer for a few `il2cpp_*` calls). Other engines get
 an error naming the playbook; use the recipes below.
