@@ -1,0 +1,12 @@
+{
+  "stamina": {
+    "signature": "f3 0f 11 4c 24 10 48 89 4c 24 08 48 8b 44 24 08 f3 0f 10 44 24 10 f3 0f 11 40 10 c3",
+    "signatureOffset": 22,
+    "length": 5
+  },
+  "shield": {
+    "signature": "10 44 24 48 f3 0f 11 44 24 10 f3 0f 10 44 24 50 f3 0f 11 44 24 14 f3 0f 10 44 24 58 f3 0f 11 44 24 18 f3 0f 10 44 24 60 f3 0f 11 44 24 1c 0f 10 44 24 10 0f 29 04 24 48 8b 44 24 40 0f 28 04 24 0f 11 00",
+    "signatureOffset": 64,
+    "length": 3
+  }
+}
