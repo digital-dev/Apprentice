@@ -48,3 +48,15 @@ at +0xbfd when the piece is placed, behind a guard on a stack-passed local bool 
 is `return m_noPlacementCost` (+0x970), the field our No Placement Cost cheat freezes, but `PlacePiece` does not call it directly, so
 that link is inferred: the flagged items are exactly building materials, and no other shipped cheat touches placement except
 Easy Crafting (`HaveRequirements`) and Unlock All Build Pieces (`IsPieceAvailable`).
+
+### Patches that stop the tagging (2026-09-20)
+
+Requested: stop the game recording cheat use on items. Three `replace` patches (all off until toggled), each verified against the running game:
+
+- `mono-no-cheat-tag-pieces`: `Player.PlacePiece+0xc07`, `mov r8d, 1` -> `xor r8d, r8d` (+ 3-byte nop). New pieces are no longer tagged (`ZDO.Set(0xF6DA2160, false)`).
+- `mono-no-cheat-tag-drops-1` / `-2`: `Piece.DropResources+0x7b6` and `+0xc3a`, the two `mov byte [rax+0x61], 1` stores that set `ItemData.m_cheated`,
+  replaced by a 4-byte nop. Pieces already tagged in an existing world stop flagging their drops.
+
+Scope: a search of the crafting, placement, pickup, drop and inventory methods (`InventoryGui.DoCrafting`, `Player.ConsumeResources`, `Humanoid.Pickup`,
+`ItemDrop`, `Inventory.AddItem`, `Container`/`Smelter`/`CookingStation`/`Fermenter` drops, `CharacterDrop`, `Pickable` ...) found no other store to
+`ItemData+0x61`. Not covered: methods outside that list, and items already carrying the flag (they stay flagged; the patches do not clear them).

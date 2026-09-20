@@ -313,6 +313,54 @@
       ],
       "value": 10,
       "offValue": 3.5
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "mono-no-cheat-tag-pieces",
+      "name": "No Cheat Tag: New Pieces",
+      "originalBytes": "41b801000000",
+      "replacementBytes": "4533c00f1f00",
+      "length": 6,
+      "signature": "48 ba 60 21 da f6 ff ff ff ff 41 b8 01 00 00 00 83 38 00",
+      "signatureOffset": 10,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Player",
+      "monoMethod": "PlacePiece",
+      "monoMethodOffset": "0xc07"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "mono-no-cheat-tag-drops-1",
+      "name": "No Cheat Tag: Dismantled Items (1 of 2)",
+      "originalBytes": "c6406101",
+      "replacementBytes": "0f1f4000",
+      "length": 4,
+      "signature": "48 8b 85 38 fe ff ff c6 40 61 01 41 83 3f 00",
+      "signatureOffset": 7,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Piece",
+      "monoMethod": "DropResources",
+      "monoMethodOffset": "0x7b6"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "mono-no-cheat-tag-drops-2",
+      "name": "No Cheat Tag: Dismantled Items (2 of 2)",
+      "originalBytes": "c6406101",
+      "replacementBytes": "0f1f4000",
+      "length": 4,
+      "signature": "48 8b 40 20 c6 40 61 01 48 63 85 40 fe ff ff",
+      "signatureOffset": 4,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Piece",
+      "monoMethod": "DropResources",
+      "monoMethodOffset": "0xc3a"
     }
   ]
 }
