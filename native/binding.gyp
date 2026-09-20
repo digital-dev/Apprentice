@@ -9,6 +9,7 @@
         "src/pointer.cc",
         "src/memory_ops.cc",
         "src/write_watch.cc",
+        "src/sigbuild.cc",
         "src/patch_ops.cc",
         "src/cave_ops.cc",
         "src/module_info.cc",
