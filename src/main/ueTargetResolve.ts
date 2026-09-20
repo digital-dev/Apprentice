@@ -189,3 +189,115 @@ export function resolveUeTargetAddress(
 
   return addHex(instancePointer, field.offset)
 }
+
+const OFFSET_USTRUCT_SUPER_STRUCT = 0x40
+const MAX_SUPER_DEPTH = 64
+const CDO_PREFIX = 'Default__'
+
+// Like resolveFieldOffset, but keeps walking SuperStruct: members such as
+// CharacterMovement live on a parent class (ACharacter), not the game's own.
+export function resolveInheritedFieldOffset(
+  readBytes: ReadBytes,
+  poolConfig: UeConfig['gNames'],
+  classAddress: string,
+  fieldName: string
+): { offset: number } | null {
+  let current: string | null = classAddress
+  for (let depth = 0; depth < MAX_SUPER_DEPTH && current !== null; depth++) {
+    const found = resolveFieldOffset(readBytes, poolConfig, current, fieldName)
+    if (found !== null) return found
+    current = readPointer(readBytes, addHex(current, OFFSET_USTRUCT_SUPER_STRUCT))
+  }
+  return null
+}
+
+// First live instance of `classAddress`: an object whose ClassPrivate is that
+// class and whose name is not the class default object ("Default__X").
+export function findInstanceOfClass(
+  readBytes: ReadBytes,
+  arrayConfig: UeConfig['gObjectArray'],
+  poolConfig: UeConfig['gNames'],
+  classAddress: string,
+  maxObjectsToScan: number
+): string | null {
+  const { chunksArrayBase, numElementsPerChunk, itemStride, itemInitialOffset } = arrayConfig
+  const want = BigInt(classAddress)
+  // Items are read in slices (one read per ~170 objects, the addon caps a read at 4096 bytes)
+  // and only an object whose class matches costs further reads.
+  const sliceItems = Math.max(1, Math.floor(4000 / itemStride))
+  for (let start = 0; start < maxObjectsToScan; start += sliceItems) {
+    const blockBase = readPointer(readBytes, addHex(chunksArrayBase, Math.floor(start / numElementsPerChunk) * 8))
+    if (blockBase === null) {
+      start = (Math.floor(start / numElementsPerChunk) + 1) * numElementsPerChunk - sliceItems
+      continue
+    }
+    const inChunk = start % numElementsPerChunk
+    const count = Math.min(sliceItems, numElementsPerChunk - inChunk, maxObjectsToScan - start)
+    const raw = readBytes(addHex(blockBase, inChunk * itemStride), count * itemStride)
+    if (raw === null) continue
+    const buf = Buffer.from(raw, 'hex')
+    for (let i = 0; i < count; i++) {
+      const objectPtr = buf.readBigUInt64LE(i * itemStride + itemInitialOffset)
+      if (objectPtr === 0n) continue
+      const objectAddress = '0x' + objectPtr.toString(16)
+      const classPrivate = readPointer(readBytes, addHex(objectAddress, OFFSET_CLASS_PRIVATE))
+      if (classPrivate === null || BigInt(classPrivate) !== want) continue
+      const name = readFName(readBytes, addHex(objectAddress, OFFSET_NAME_PRIVATE))
+      const decoded = name === null ? null : decodeFName(readBytes, poolConfig, name.comparisonIndex)
+      if (decoded === null || decoded.startsWith(CDO_PREFIX)) continue
+      return objectAddress
+    }
+  }
+  return null
+}
+
+// Cache for the expensive GUObjectArray walk: rootClass -> live instance.
+export type UeInstanceCache = Map<string, string>
+
+// Resolves a root-path UeTarget: instance of rootClass, follow each `path`
+// pointer field by reflected name, then add the last field's offset. The
+// instance is cached and re-validated by its ClassPrivate on every call.
+export function resolveUeRootTargetAddress(
+  target: UeTarget,
+  config: UeConfig,
+  readBytes: ReadBytes,
+  cache: UeInstanceCache
+): string | null {
+  if (target.rootClass === undefined) return null
+  const classOf = (object: string): string | null => readPointer(readBytes, addHex(object, OFFSET_CLASS_PRIVATE))
+
+  let root = cache.get(target.rootClass) ?? null
+  let rootClassAddress: string | null = null
+  if (root !== null) {
+    rootClassAddress = classOf(root)
+    const name = rootClassAddress === null ? null : readFName(readBytes, addHex(rootClassAddress, OFFSET_NAME_PRIVATE))
+    const decoded = name === null ? null : decodeFName(readBytes, config.gNames, name.comparisonIndex)
+    if (decoded !== target.rootClass) {
+      cache.delete(target.rootClass)
+      root = null
+    }
+  }
+  if (root === null) {
+    rootClassAddress = resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootClass, target.maxObjectsToScan)
+    if (rootClassAddress === null) return null
+    root = findInstanceOfClass(readBytes, config.gObjectArray, config.gNames, rootClassAddress, target.maxObjectsToScan)
+    if (root === null) return null
+    cache.set(target.rootClass, root)
+  }
+
+  let object = root
+  for (const step of target.path ?? []) {
+    const cls = classOf(object)
+    if (cls === null) return null
+    const field = resolveInheritedFieldOffset(readBytes, config.gNames, cls, step)
+    if (field === null) return null
+    const next = readPointer(readBytes, addHex(object, field.offset))
+    if (next === null) return null
+    object = next
+  }
+
+  const cls = classOf(object)
+  if (cls === null) return null
+  const last = resolveInheritedFieldOffset(readBytes, config.gNames, cls, target.fieldName)
+  return last === null ? null : addHex(object, last.offset)
+}

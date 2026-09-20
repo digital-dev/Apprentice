@@ -37,7 +37,16 @@ import {
   MonoResolverOps
 } from './monoTargetResolve'
 import { findClassLocations } from './monoClassLocations'
-import { resolveUeTargetAddress, resolveClassAddress, walkProperties, decodeFName } from './ueTargetResolve'
+import {
+  resolveUeTargetAddress,
+  resolveUeRootTargetAddress,
+  resolveClassAddress,
+  walkProperties,
+  decodeFName,
+  type UeInstanceCache
+} from './ueTargetResolve'
+import { discoverUeConfig } from './ueDiscover'
+import type { UeConfig } from './profile'
 import {
   loadProfile,
   saveProfile,
@@ -263,23 +272,80 @@ async function resolveMonoTarget(handle: number, target: MonoTarget): Promise<st
 // pointer comes from the SAME slot-read resolveAnchor already uses for
 // AnchorTarget -- see store.ts's UeTarget doc for why reflection alone
 // never reaches a live instance on its own.
+// Discovered UE roots for the attached process, never persisted (addresses
+// change every session). `discovering` stops overlapping scans; a failed
+// discovery is retried no sooner than UE_DISCOVER_RETRY_MS.
+const UE_DISCOVER_RETRY_MS = 5000
+let ueDiscovered: UeConfig | null = null
+let ueDiscovering = false
+let ueDiscoverFailedAt = 0
+let ueInstanceCache: UeInstanceCache = new Map()
+// The GUObjectArray walk for an instance costs seconds, so a root class with no live
+// instance yet (title screen, no world loaded) is not searched again for UE_MISS_BACKOFF_MS.
+const UE_MISS_BACKOFF_MS = 30_000
+let ueRootMissAt = new Map<string, number>()
+
+function resetUeDiscovery(): void {
+  ueDiscovered = null
+  ueDiscovering = false
+  ueDiscoverFailedAt = 0
+  ueInstanceCache = new Map()
+  ueRootMissAt = new Map()
+}
+
+function ueConfigFor(handle: number, profileConfig: UeConfig | undefined): UeConfig | null {
+  if (profileConfig !== undefined) return profileConfig
+  if (ueDiscovered !== null) return ueDiscovered
+  if (ueDiscovering || Date.now() - ueDiscoverFailedAt < UE_DISCOVER_RETRY_MS) return null
+  ueDiscovering = true
+  void discoverUeConfig({
+    readBytes: (address, length) => nativeAddon.tryReadBytes(handle, address, length),
+    scanAob: (signature) => trackScanOp(() => nativeAddon.scanAob(handle, signature))
+  })
+    .then((config) => {
+      if (attachedHandle !== handle) return
+      ueDiscovered = config
+      if (config === null) ueDiscoverFailedAt = Date.now()
+    })
+    .catch((err) => {
+      console.warn(`[ue] discovery failed: ${String(err)}`)
+      ueDiscoverFailedAt = Date.now()
+    })
+    .finally(() => {
+      ueDiscovering = false
+    })
+  return null
+}
+
+// Resolves a UeTarget's live address, or null if it can't right now (roots
+// not discovered yet, capture patch hasn't captured, or the class/field
+// don't resolve -- all routine, matching resolveMonoTarget's convention).
+// Root-form targets (rootClass set) need no capture patch; anchor-form ones
+// take the instance pointer from the SAME slot-read resolveAnchor uses.
 function resolveUeTarget(handle: number, target: UeTarget): string | null {
   if (attachedExe === null) return null
-  const profile = loadProfile(attachedExe)
-  if (profile.ueConfig === undefined) return null
-
-  const slot = patchEngine.slotAddress(target.instanceAnchorPatchId)
-  if (slot === null) return null
-  const pointerHex = nativeAddon.tryReadBytes(handle, slot, 8)
-  if (pointerHex === null) return null
-  const pointer = littleEndianToBigInt(pointerHex)
-  if (pointer === 0n) return null
-  const instancePointer = '0x' + pointer.toString(16)
+  const config = ueConfigFor(handle, loadProfile(attachedExe).ueConfig)
+  if (config === null) return null
+  const readBytes = (address: string, length: number): string | null => nativeAddon.tryReadBytes(handle, address, length)
 
   try {
-    return resolveUeTargetAddress(target, profile.ueConfig, instancePointer, (address, length) =>
-      nativeAddon.tryReadBytes(handle, address, length)
-    )
+    if (target.rootClass !== undefined) {
+      const missedAt = ueRootMissAt.get(target.rootClass)
+      if (missedAt !== undefined && Date.now() - missedAt < UE_MISS_BACKOFF_MS) return null
+      const resolved = resolveUeRootTargetAddress(target, config, readBytes, ueInstanceCache)
+      if (resolved === null && !ueInstanceCache.has(target.rootClass)) ueRootMissAt.set(target.rootClass, Date.now())
+      else ueRootMissAt.delete(target.rootClass)
+      return resolved
+    }
+
+    if (target.instanceAnchorPatchId === undefined) return null
+    const slot = patchEngine.slotAddress(target.instanceAnchorPatchId)
+    if (slot === null) return null
+    const pointerHex = nativeAddon.tryReadBytes(handle, slot, 8)
+    if (pointerHex === null) return null
+    const pointer = littleEndianToBigInt(pointerHex)
+    if (pointer === 0n) return null
+    return resolveUeTargetAddress(target, config, '0x' + pointer.toString(16), readBytes)
   } catch (err) {
     console.warn(`[ue] target resolution failed: ${String(err)}`)
     return null
@@ -688,6 +754,7 @@ async function attachTo(
   // thrown attach leaves this module cleanly "not attached".
   const previousHandle = attachedHandle
   attachedHandle = null
+  resetUeDiscovery()
   if (previousHandle !== null) nativeAddon.detach(previousHandle)
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
@@ -927,6 +994,7 @@ export function startWatching(getWindow: () => BrowserWindow): void {
     }
     if (attachedHandle !== null) nativeAddon.detach(attachedHandle)
     attachedHandle = null
+    resetUeDiscovery()
     attachedBase = null
     attachedPid = null
     attachedExe = null
@@ -1006,6 +1074,7 @@ export async function releaseTarget(): Promise<void> {
   if (attachedHandle !== null) {
     nativeAddon.detach(attachedHandle)
     attachedHandle = null
+    resetUeDiscovery()
   }
 }
 

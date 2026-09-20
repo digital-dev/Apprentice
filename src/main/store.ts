@@ -139,14 +139,21 @@ export interface MonoTarget {
 // to, the same way AnchorTarget's offset is added to ITS capture's pointer.
 export interface UeTarget {
   kind: 'ue'
+  // Anchor form: className names the class the captured pointer is an
+  // instance of. Root form (rootClass set): no capture patch; the instance
+  // is found by scanning GUObjectArray, then `path` pointer fields are
+  // followed by name and fieldName's offset is added at the end. The
+  // field lookups walk parent classes.
   className: string
+  rootClass?: string
+  path?: string[]
   fieldName: string
   // GUObjectArray scan is bounded -- no silent default, matching
   // ueReflect.ts's resolveClass: the profile author must say how far to
   // look, since a misconfigured UeConfig makes it easy to loop over a lot
   // of memory harmlessly-but-uselessly.
   maxObjectsToScan: number
-  instanceAnchorPatchId: string
+  instanceAnchorPatchId?: string
   // Per-target override, same convention as every other CheatTarget kind.
   value?: number
   dataType?: DataType

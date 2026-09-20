@@ -220,6 +220,43 @@
         }
       ],
       "hotkey": "num5"
+    },
+    {
+      "id": "palworld-inf-carry-weight",
+      "name": "Huge Carry Capacity",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "PalPlayerInventoryData",
+          "rootClass": "PalPlayerInventoryData",
+          "fieldName": "MaxInventoryWeight",
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 99999
+    },
+    {
+      "id": "palworld-invincible",
+      "name": "Invincible (player flag)",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "PalPlayerCharacter",
+          "rootClass": "PalPlayerCharacter",
+          "fieldName": "bIsEnableMuteki",
+          "maxObjectsToScan": 400000,
+          "dataType": "int8",
+          "path": [
+            "CharacterParameterComponent"
+          ]
+        }
+      ],
+      "value": 1
     }
   ]
 }
