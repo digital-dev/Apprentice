@@ -51,7 +51,7 @@ function buildPool(mem: FakeMemory, names: string[]): Record<string, number> {
   return indexes
 }
 
-const NAMES = ['None', 'ByteProperty', 'Object', 'Class', 'Player', 'Base', 'MoveComp', 'Move', 'Speed', 'Default__Player', 'Player_0']
+const NAMES = ['None', 'ByteProperty', 'Object', 'Class', 'Player', 'Base', 'MoveComp', 'Move', 'Speed', 'Default__Player', 'Player_0', 'PlayerBP']
 
 describe('probeNamePool', () => {
   it('finds a layout the first candidates would not decode', () => {
@@ -78,12 +78,13 @@ const A = {
   moveClass: 0x9400n,
   cdo: 0xa000n,
   player: 0xa100n,
-  move: 0xa200n
+  move: 0xa200n,
+  bpClass: 0x9500n
 }
 const hex = (v: bigint): string => '0x' + v.toString(16)
 
 // Object array: Object class, Player class, CDO, instance. Player -> Base (Move field); MoveComp has Speed.
-function buildWorld(mem: FakeMemory, idx: Record<string, number>): void {
+function buildWorld(mem: FakeMemory, idx: Record<string, number>, opts: { blueprintInstance?: boolean } = {}): void {
   mem.ptr(ARRAY, CHUNK)
   const chunk = Buffer.alloc(16 * 24)
   ;[A.objectClass, A.playerClass, A.cdo, A.player].forEach((o, i) => chunk.writeBigUInt64LE(o, i * 24))
@@ -97,7 +98,10 @@ function buildWorld(mem: FakeMemory, idx: Record<string, number>): void {
   obj(A.baseClass, A.classClass, 'Base')
   obj(A.moveClass, A.classClass, 'MoveComp')
   obj(A.cdo, A.playerClass, 'Default__Player')
-  obj(A.player, A.playerClass, 'Player_0')
+  // A running game's instance is usually of a Blueprint subclass of the C++ class.
+  obj(A.player, opts.blueprintInstance ? A.bpClass : A.playerClass, 'Player_0')
+  obj(A.bpClass, A.classClass, 'PlayerBP')
+  mem.ptr(A.bpClass + 0x40n, A.playerClass)
   obj(A.move, A.moveClass, 'MoveComp')
   obj(A.classClass, A.classClass, 'Class')
   mem.ptr(A.playerClass + 0x40n, A.baseClass)
@@ -139,6 +143,12 @@ describe('root-path targets', () => {
     const mem = new FakeMemory()
     buildWorld(mem, buildPool(mem, NAMES))
     expect(resolveInheritedFieldOffset(mem.read, CONFIG.gNames, hex(A.playerClass), 'Move')).toEqual({ offset: 0x20 })
+  })
+
+  it('finds an instance of a Blueprint subclass of the root class', () => {
+    const mem = new FakeMemory()
+    buildWorld(mem, buildPool(mem, NAMES), { blueprintInstance: true })
+    expect(resolveUeRootTargetAddress(target({ path: ['Move'] }), CONFIG, mem.read, new Map())).toBe(hex(A.move + 0x30n))
   })
 
   it('returns null for an unknown path step', () => {

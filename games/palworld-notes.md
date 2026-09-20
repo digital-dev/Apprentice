@@ -18,10 +18,15 @@ Their in-game behaviour on the new build has NOT been re-tested.
 PalCharacterParameterComponent: bIsInfinitySP 200 [0xC8], bIsEnableMuteki 162 [0xA2], IsImmortality 1840 [0x730]
 PalPlayerInventoryData: NowItemWeight 388 [0x184], MaxInventoryWeight 392 [0x188] (500.0 was the CDO default), PassiveBuffedMaxWeight 408 [0x198]
 PalCharacterMovementComponent: WalkSpeed_Default 8724 [0x2214], RunSpeed_Default 8728 [0x2218], SprintMaxSpeed 4448 [0x1160]
-CORRECTION: the game was at the title screen. The single PalPlayerCharacter / PalPlayerInventoryData found were the class default
-objects (`Default__...`), so the 500.0 read was the CDO default, not a live player value. No live player instance has been read yet.
+Instances: at the title screen only `Default__` objects exist; in a world the player is a Blueprint SUBCLASS of PalPlayerCharacter, so
+instance search must match subclasses (SuperStruct chain), not just ClassPrivate == class.
 
-## Shipped as root-path targets (untested in-game, need a loaded world)
+## Live values in a world (read via the shipped root-path resolver, 2026-09-20)
+MaxInventoryWeight 1150, CharacterMovement WalkSpeed_Default 87.5, RunSpeed_Default 350, SprintMaxSpeed 500, bIsEnableMuteki 0.
+Resolve time ~2.5 s per uncached class, then cached.
+
+## Shipped as root-path targets (resolve verified live; writing and in-game effect NOT yet tested)
 - palworld-inf-carry-weight: PalPlayerInventoryData.MaxInventoryWeight float freeze 99999
 - palworld-invincible: PalPlayerCharacter -> CharacterParameterComponent (on PalCharacter) -> bIsEnableMuteki int8 freeze 1
-- Speed (WalkSpeed_Default/RunSpeed_Default/SprintMaxSpeed on CharacterMovement, inherited from ACharacter) not added: no live default value read yet.
+- palworld-fast-run: CharacterMovement RunSpeed_Default 700 + SprintMaxSpeed 1000. Which of the movement fields the game actually
+  consumes is not confirmed from code; if it does nothing, read the movement update to find the consuming field.

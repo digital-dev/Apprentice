@@ -257,6 +257,39 @@
         }
       ],
       "value": 1
+    },
+    {
+      "id": "palworld-fast-run",
+      "name": "Fast Run and Sprint",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "PalPlayerCharacter",
+          "rootClass": "PalPlayerCharacter",
+          "path": [
+            "CharacterMovement"
+          ],
+          "fieldName": "RunSpeed_Default",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 700
+        },
+        {
+          "kind": "ue",
+          "className": "PalPlayerCharacter",
+          "rootClass": "PalPlayerCharacter",
+          "path": [
+            "CharacterMovement"
+          ],
+          "fieldName": "SprintMaxSpeed",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 1000
+        }
+      ],
+      "value": 700
     }
   ]
 }

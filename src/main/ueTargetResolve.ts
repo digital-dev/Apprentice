@@ -212,7 +212,9 @@ export function resolveInheritedFieldOffset(
 }
 
 // First live instance of `classAddress`: an object whose ClassPrivate is that
-// class and whose name is not the class default object ("Default__X").
+// class or a subclass of it (a running game's player is usually a Blueprint
+// subclass of the C++ class), and whose name is not the class default object
+// ("Default__X"). Class pointers repeat heavily, so derivation is memoized.
 export function findInstanceOfClass(
   readBytes: ReadBytes,
   arrayConfig: UeConfig['gObjectArray'],
@@ -222,6 +224,23 @@ export function findInstanceOfClass(
 ): string | null {
   const { chunksArrayBase, numElementsPerChunk, itemStride, itemInitialOffset } = arrayConfig
   const want = BigInt(classAddress)
+  const derives = new Map<bigint, boolean>()
+  const isDerived = (cls: string): boolean => {
+    const key = BigInt(cls)
+    const known = derives.get(key)
+    if (known !== undefined) return known
+    let found = false
+    let current: string | null = cls
+    for (let depth = 0; depth < MAX_SUPER_DEPTH && current !== null; depth++) {
+      if (BigInt(current) === want) {
+        found = true
+        break
+      }
+      current = readPointer(readBytes, addHex(current, OFFSET_USTRUCT_SUPER_STRUCT))
+    }
+    derives.set(key, found)
+    return found
+  }
   // Items are read in slices (one read per ~170 objects, the addon caps a read at 4096 bytes)
   // and only an object whose class matches costs further reads.
   const sliceItems = Math.max(1, Math.floor(4000 / itemStride))
@@ -241,7 +260,7 @@ export function findInstanceOfClass(
       if (objectPtr === 0n) continue
       const objectAddress = '0x' + objectPtr.toString(16)
       const classPrivate = readPointer(readBytes, addHex(objectAddress, OFFSET_CLASS_PRIVATE))
-      if (classPrivate === null || BigInt(classPrivate) !== want) continue
+      if (classPrivate === null || !isDerived(classPrivate)) continue
       const name = readFName(readBytes, addHex(objectAddress, OFFSET_NAME_PRIVATE))
       const decoded = name === null ? null : decodeFName(readBytes, poolConfig, name.comparisonIndex)
       if (decoded === null || decoded.startsWith(CDO_PREFIX)) continue
