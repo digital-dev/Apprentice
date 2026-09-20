@@ -19,8 +19,14 @@ export interface ManifestSite {
   originalBytes: string
   signature: string
   signatureOffset: number
-  // Expected scan matches for `signature` in this build. Always 1: a site that
-  // is ambiguous in its own build is a bug in the recorded signature.
+  // 'builder': made by the write-watch signature builder, so rebuilding from
+  // the recorded bytes must reproduce it. 'shipped': taken from a shipped cheat
+  // (factory / makeReplace), which other tools made, so only relocation is checked.
+  signatureSource: 'builder' | 'shipped'
+  // Observed scan matches for `signature` in this build. Normally 1. Above 1 pins
+  // a KNOWN-AMBIGUOUS signature (the engine refuses those: "can't relocate"): the
+  // test then fails if it changes, so the ambiguity cannot silently get worse or
+  // silently get fixed without the manifest being updated.
   matchCount: number
   relocatable: boolean
 }
@@ -55,11 +61,12 @@ export function registerManifestSuite(manifest: Manifest, snapDir: string): void
     it_('the signature finds exactly the recorded instruction', async () => {
       const { ops } = load(site.snapshot)!
       const hits = await ops.scanAob(site.signature)
-      expect(hits).toEqual([hex(BigInt(site.address) - BigInt(site.signatureOffset))])
+      expect(hits.length).toBe(site.matchCount)
+      expect(hits).toContain(hex(BigInt(site.address) - BigInt(site.signatureOffset)))
       expect(ops.readBytes(site.address, site.length)).toBe(site.originalBytes)
     })
 
-    it_('rebuilding the signature from the recorded bytes reproduces the manifest', () => {
+    it.skipIf(!have(site.snapshot) || site.signatureSource !== 'builder')('rebuilding the signature from the recorded bytes reproduces the manifest', () => {
       const { snap } = load(site.snapshot)!
       const sig = a.snapshotBuildSignature(snap.regions, site.address, site.length)
       expect(sig).toEqual({ signature: site.signature, signatureOffset: site.signatureOffset })

@@ -39,6 +39,7 @@ function site(build: string, opts: Parameters<typeof buildSynthSnapshot>[0]): Ma
     originalBytes: new ReplayOps(snapshot, native).readBytes(address, RELOC_STORE_LEN)!,
     signature: sig.signature,
     signatureOffset: sig.signatureOffset,
+    signatureSource: 'builder',
     matchCount: 1,
     relocatable: a.snapshotDecodeRun(snapshot.regions, address, RELOC_STORE_LEN).relocatable
   }

@@ -20,7 +20,8 @@ describe('manifest', () => {
       expect(s.snapshotSha256).toMatch(/^[0-9a-f]{64}$/)
       expect(s.address).toMatch(/^0x[0-9a-f]+$/)
       expect(s.originalBytes.length).toBe(s.length * 2)
-      expect(s.matchCount).toBe(1)
+      expect(s.matchCount).toBeGreaterThanOrEqual(1)
+      expect(['builder', 'shipped']).toContain(s.signatureSource)
     }
   })
 })
