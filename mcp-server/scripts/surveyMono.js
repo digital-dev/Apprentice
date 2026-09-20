@@ -10,7 +10,7 @@ const { handle } = addon.attach(Number(pid))
 const cls = classifyEngine(addon.listModules(handle))
 if (cls.engine !== 'unity-mono') { console.error('not unity-mono:', cls.engine); process.exit(1) }
 const mono = cls.monoDllBase
-const ROOTS = ['m_Instance', '_instance', 'instance', 's_Instance', 'Instance', '_Instance', 'm_instance']
+const ROOTS = ['m_localPlayer', 'm_Instance', '_instance', 'instance', 's_Instance', 'Instance', '_Instance', 'm_instance']
 const u64 = (hex) => Buffer.from(hex, 'hex').readBigUInt64LE(0)
 ;(async () => {
   const images = (await addon.monoListAssemblyNames(handle, mono)).filter((a) => /^(Assembly-CSharp|assembly_)/i.test(a.name))

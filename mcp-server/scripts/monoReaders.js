@@ -16,8 +16,14 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
   for (const image of images) {
     for (const c of await addon.monoListClassesInImage(handle, mono, image.image)) {
       if (c.namespaceName !== '' || !classRe.test(c.className)) continue
-      for (const m of await addon.monoListMethodNames(handle, mono, c.classHandle)) {
-        if (m === '.cctor') continue
+      // Compiling hundreds of methods in one burst crashed both Aviassembly and Valheim (0xe0000001 in KERNELBASE, same offset), so
+      // the pass is bounded: METHODS=<regex> narrows it, MAX_METHODS (default 120) caps it, DELAY_MS (default 25) paces it.
+      const methodRe = process.env.METHODS ? new RegExp(process.env.METHODS) : null
+      const cap = Number(process.env.MAX_METHODS || 120)
+      const all = (await addon.monoListMethodNames(handle, mono, c.classHandle)).filter((m) => m !== '.cctor' && (!methodRe || methodRe.test(m)))
+      if (all.length > cap) { console.error(`${c.className}: ${all.length} methods, capped at ${cap} (narrow with METHODS=<regex> or raise MAX_METHODS)`); }
+      for (const m of all.slice(0, cap)) {
+        await new Promise((r) => setTimeout(r, Number(process.env.DELAY_MS || 25)))
         let addr
         try { addr = await raw.monoCompileMethod(handle, mono, c.classHandle, m) } catch { continue }
         if (!addr || addr === '0x0') continue
