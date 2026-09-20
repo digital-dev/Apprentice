@@ -53,6 +53,13 @@
         ]
       },
       {
+        "from": "App Icon",
+        "to": "App Icon",
+        "filter": [
+          "Apprentice.ico"
+        ]
+      },
+      {
         "from": "games",
         "to": "games",
         "filter": [
@@ -62,10 +69,13 @@
       }
     ],
     "win": {
+      "icon": "App Icon/Apprentice.ico",
       "target": "nsis",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
+      "installerIcon": "App Icon/Apprentice.ico",
+      "uninstallerIcon": "App Icon/Apprentice.ico",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true

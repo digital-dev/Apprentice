@@ -13,6 +13,9 @@ function createWindow() {
     width: 1280,
     height: 800,
     title: 'Apprentice',
+    // The window and taskbar icon. Lives outside out/ so it is the same file the
+    // installer uses for the exe; a missing file just falls back to the default.
+    icon: path.join(__dirname, '../../App Icon/Apprentice.ico'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
