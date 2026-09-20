@@ -32,9 +32,11 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
         const cut = rows.findIndex((r, i) => i > 0 && /^ret/.test(rows[i - 1].text) && /^(sub rsp|push r|mov \[rsp\])/.test(r.text))
         if (cut > 0) rows = rows.slice(0, cut)
         if (process.env.CALLEE) {
-          const want = process.env.CALLEE.toLowerCase().replace(/^0x/, '')
-          const hit = rows.filter((r) => /^mov r11, 0x/.test(r.text) && r.text.toLowerCase().endsWith(want))
-          if (hit.length) console.log(`${c.className}.${m}  @${addr}  calls ${process.env.CALLEE} x${hit.length}`)
+          const wants = process.env.CALLEE.toLowerCase().split(',').map((w) => w.replace(/^0x/, ''))
+          for (const want of wants) {
+            const hit = rows.filter((r) => /^mov r11, 0x/.test(r.text) && r.text.toLowerCase().endsWith(want))
+            if (hit.length) console.log(`${c.className}.${m}  @${addr}  calls 0x${want} x${hit.length}`)
+          }
           continue
         }
         const ctx = Number(process.env.CONTEXT || 0)

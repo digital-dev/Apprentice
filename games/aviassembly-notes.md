@@ -164,3 +164,21 @@ callers) before shipping a freeze. `Unlimited Fuel`, `Unlimited Electricity` and
 mass) for `xorpd xmm1, xmm1`, so the cargo term is zero and nothing else changes. Bytes at the site verified live; not run in-game.
 Because it acts inside `ReInitializePlane`, it takes effect the next time the plane is re-initialised (loading in, or whatever
 triggers that call), not instantly mid-flight. Which events call `ReInitializePlane` was not traced.
+
+## Unbreakable Plane was a dead flag (fixed 2026-09-20)
+
+The old cheat froze `PlaneController.<Exploded>` at 0. `ExplodePlane` sets that flag only after it has already spawned the
+effects and broken the plane, so holding it at 0 undoes nothing. Breakage paths found with `monoReaders.js CALLEE=`:
+
+- `Wing.ApplyLift` calls `PartExploder.ExplodePart` (wing overstress).
+- `Wheel.CheckWheelFailure` calls `PartExploder.ExplodePart` twice (wheel failure).
+- `PartExploder.ExplodePlane` calls `ExplodePart` for each part, and `PlaneController.ExplodePlane` calls it (crash).
+
+Two `replace` patches now turn the entry of each into `xor eax,eax; ret; nop` (`55 48 8b ec` -> `33 c0 c3 90`, two whole
+instructions, no stack change yet): `mono-unbreakable-plane` on `PlaneController.ExplodePlane` (keeps the `num4` hotkey) and
+`mono-unbreakable-parts` on `PartExploder.ExplodePart`. Bytes and signatures verified live; not run in-game.
+
+Not found: what calls `PlaneController.ExplodePlane` (no direct call from any part, plane, game or terrain class, so probably a
+Unity event or a virtual call). `maxTriggerVelocity` / `minTriggerVelocity` on `PlaneController` suggest a velocity-based
+crash check, but no code reads them in `PlaneController`. If a crash still ends the flight with both patches on, that trigger
+is where to look next.

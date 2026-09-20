@@ -52,20 +52,19 @@
       "hotkey": "num3"
     },
     {
+      "kind": "patch",
+      "mode": "replace",
       "id": "mono-unbreakable-plane",
-      "name": "Unbreakable Plane",
-      "dataType": "int8",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "mono",
-          "className": "PlaneContainer",
-          "staticFieldName": "m_Instance",
-          "instanceFieldName": "controller",
-          "pointerFieldOffset": "0xb8"
-        }
-      ],
-      "value": 0,
+      "name": "Unbreakable Plane (no crash explosion)",
+      "originalBytes": "55488bec",
+      "replacementBytes": "33c0c390",
+      "length": 4,
+      "signature": "55 48 8b ec 48 81 ec 20 01 00 00 48 89 75 f8 48 8b f1",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "PlaneController",
+      "monoMethod": "ExplodePlane",
       "hotkey": "num4"
     },
     {
@@ -196,6 +195,21 @@
       "monoClass": "PlaneContainer",
       "monoMethod": "ReInitializePlane",
       "monoMethodOffset": "0x19b"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "mono-unbreakable-parts",
+      "name": "Unbreakable Parts (wings and wheels)",
+      "originalBytes": "55488bec",
+      "replacementBytes": "33c0c390",
+      "length": 4,
+      "signature": "55 48 8b ec 48 83 ec 70 48 89 75 d0 48 89 7d d8 4c 89 65 e0",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "PartExploder",
+      "monoMethod": "ExplodePart"
     }
   ]
 }
