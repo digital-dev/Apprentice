@@ -193,6 +193,23 @@ export const NATIVE_GAMES: NativeGame[] = [
         lookFor: 'Inferred from code, not run in-game: using a consumable does not use it up.'
       },
       {
+        category: 'animspeed',
+        name: 'Player Animation Speed x1.5',
+        // WorldChrMan -> player -> module bag (+0x190) -> slot 0x28 (behavior module) -> +0x17C8.
+        root: 'WorldChrMan',
+        chains: [['0x10ef8', '0x0', '0x190', '0x28', '0x17c8']],
+        dataType: 'float',
+        mode: 'freeze',
+        value: 1.5,
+        plausible: [0.5, 2],
+        offValue: 1,
+        // Weakest evidence of any cheat here. Live it is 1.0 and the only non-zero float in a 0x60-byte
+        // sub-object the constructor (RVA 0xeb58bf) zero-fills, but no code reads it as a scalar (readers
+        // take the sub-object pointer), so the mechanism is not shown from code. It scales ANIMATION speed,
+        // so attacks, rolls and casts speed up along with movement.
+        lookFor: 'Not shown from code, not run in-game: the player moves and animates faster (attacks and rolls too).'
+      },
+      {
         category: 'oneshot',
         name: 'One-Shot Kill',
         root: 'flag-one-shot',
