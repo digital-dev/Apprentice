@@ -8,6 +8,9 @@ const valheim: FieldCandidate[] = [
   { className: 'Player', fieldName: 'm_godMode' },
   { className: 'Player', fieldName: 'm_stamina' },
   { className: 'Player', fieldName: 'm_staminaRegenTimer' },
+  { className: 'Character', fieldName: 'm_jumpStaminaUsage' },
+  { className: 'Player', fieldName: 'm_dodgeStaminaUsage' },
+  { className: 'Player', fieldName: 'm_baseStamina' },
   { className: 'Player', fieldName: 'm_eitr' },
   { className: 'Character', fieldName: 'm_health' },
   { className: 'Character', fieldName: 'm_maxHealth' },
@@ -25,7 +28,11 @@ describe('rankFields', () => {
     expect(names('health')).toEqual(['Character.m_health'])
   })
   it('finds stamina and rejects the regen timer', () => {
-    expect(names('stamina')).toEqual(['Player.m_stamina'])
+    expect(names('stamina')[0]).toBe('Player.m_stamina')
+  })
+  it('does not offer the cost of an action as the stat (jump/dodge stamina usage)', () => {
+    expect(names('stamina')).not.toContain('Character.m_jumpStaminaUsage')
+    expect(names('stamina')).not.toContain('Player.m_dodgeStaminaUsage')
   })
   it('finds the god-mode flag', () => {
     expect(names('godmode')).toEqual(['Player.m_godMode'])

@@ -24,7 +24,8 @@ export interface Enumeration {
   classesScanned: number
 }
 
-const GAME_ASSEMBLY = /^Assembly-CSharp/i
+// Valheim ships a small Assembly-CSharp stub and keeps its real code in assembly_valheim, so every match is scanned.
+const GAME_ASSEMBLY = /^(Assembly-CSharp|assembly_)/i
 const SYSTEM_ASSEMBLY = /^(mscorlib|System|Unity|Mono\.|netstandard|Newtonsoft)/i
 // Names that look like a singleton handle to the live instance.
 const ROOT_NAME = /^(m_|_|s_)?(instance|local|localplayer|player|current|main|singleton)$/i
@@ -59,8 +60,9 @@ export async function enumerateMono(ops: MonoEnumOps, classHints: RegExp[]): Pro
         const pointer = ops.readBytes(address, 8)
         if (pointer === null) return
         const root = { className: cls.className, staticFieldName: fieldName }
-        if (pointer === NULL_POINTER) deadRoots.push(root)
-        else roots.push(root)
+        // A class name can appear twice (Valheim has two Player classes); the target addresses it by name only.
+        const list = pointer === NULL_POINTER ? deadRoots : roots
+        if (!list.some((r) => r.className === root.className && r.staticFieldName === root.staticFieldName)) list.push(root)
         foundRoot = true
       }
       for (const fieldName of names) {

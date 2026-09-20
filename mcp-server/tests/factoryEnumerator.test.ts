@@ -102,3 +102,30 @@ describe('enumerateMono inherited singletons', () => {
     expect(result.deadRoots).toEqual([{ className: 'Player', staticFieldName: 'm_Instance' }])
   })
 })
+
+describe('enumerateMono game assemblies', () => {
+  it('scans assembly_* alongside a small Assembly-CSharp stub', async () => {
+    const ops = fakeOps({
+      listAssemblyNames: async () => [
+        { image: '0x1', name: 'Assembly-CSharp' },
+        { image: '0x3', name: 'assembly_valheim' },
+        { image: '0x2', name: 'mscorlib' }
+      ],
+      listClassesInImage: async (image) =>
+        image === '0x3' ? [{ namespaceName: '', className: 'Player', classHandle: '0xa' }] : []
+    })
+    const result = await enumerateMono(ops, HINTS)
+    expect(result.classesScanned).toBe(1)
+    expect(result.roots).toEqual([{ className: 'Player', staticFieldName: 'm_localPlayer' }])
+  })
+  it('lists a root once when two classes share a name', async () => {
+    const ops = fakeOps({
+      listClassesInImage: async () => [
+        { namespaceName: '', className: 'Player', classHandle: '0xa' },
+        { namespaceName: '', className: 'Player', classHandle: '0xa' }
+      ]
+    })
+    const result = await enumerateMono(ops, HINTS)
+    expect(result.roots).toEqual([{ className: 'Player', staticFieldName: 'm_localPlayer' }])
+  })
+})

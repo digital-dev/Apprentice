@@ -14,7 +14,9 @@ export const MIN_SCORE = 10
 // Variants of a stat that are not the stat itself. Freezing the current
 // value high is enough; chasing max/regen fields is a dead end (SKILL.md).
 // (No bare "min": it is a substring of "stamina".)
-const NOT_THE_STAT = /max|regen|rate|mult|timer|delay|cooldown|percent|ratio|color|text|label|bar|hud|default|drain|cost/i
+// `usage`/`use`/`consum` and the action words name what an action COSTS (Valheim's m_jumpStaminaUsage is the price of a jump,
+// not the stamina bar), so freezing them high would make the action cost that much.
+const NOT_THE_STAT = /max|regen|rate|mult|timer|delay|cooldown|percent|ratio|color|text|label|bar|hud|default|drain|cost|usage|consum|jump|dodge|attack|block/i
 
 function stripPrefix(fieldName: string): string {
   return fieldName.replace(/^(m_|_)+/, '')
@@ -31,6 +33,8 @@ export function scoreField(cat: Category, f: FieldCandidate): number {
   // leaves `Max` behind.
   if (NOT_THE_STAT.test(name.replace(hint, ''))) score -= 8
   if (cat.classHints.some((h) => h.test(f.className))) score += 3
+  // The field that IS the stat (`m_stamina`) beats every variant that merely contains its name.
+  if (name.replace(hint, '') === '') score += 5
   return score
 }
 
