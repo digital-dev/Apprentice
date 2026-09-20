@@ -26,7 +26,16 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
         let body = Buffer.from(hex, 'hex')
         const pad = body.indexOf(Buffer.from('cccccc', 'hex'))
         if (pad > 0) body = body.subarray(0, pad)
-        const rows = addon.disassembleBuffer(body, addr, 400)
+        let rows = addon.disassembleBuffer(body, addr, 400)
+        // Small accessors are packed back to back without padding: end the method at a ret that is followed by a new prologue.
+        const cut = rows.findIndex((r, i) => i > 0 && /^ret/.test(rows[i - 1].text) && /^(sub rsp|push r|mov \[rsp\])/.test(r.text))
+        if (cut > 0) rows = rows.slice(0, cut)
+        if (process.env.CALLEE) {
+          const want = process.env.CALLEE.toLowerCase().replace(/^0x/, '')
+          const hit = rows.filter((r) => /^mov r11, 0x/.test(r.text) && r.text.toLowerCase().endsWith(want))
+          if (hit.length) console.log(`${c.className}.${m}  @${addr}  calls ${process.env.CALLEE} x${hit.length}`)
+          continue
+        }
         const ctx = Number(process.env.CONTEXT || 0)
         const idx = rows.map((r, i) => (needles.some((n) => r.text.includes(n)) ? i : -1)).filter((i) => i >= 0)
         if (idx.length) {

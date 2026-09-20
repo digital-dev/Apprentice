@@ -69,19 +69,23 @@
       "hotkey": "num4"
     },
     {
+      "kind": "patch",
+      "mode": "force",
       "id": "mono-unlimited-cargo-space",
       "name": "Unlimited Cargo Space",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "mono",
-          "className": "PlaneContainer",
-          "staticFieldName": "m_Instance",
-          "instanceFieldName": "<cargoVolume>k__BackingField"
-        }
-      ],
+      "originalBytes": "f30f116e50",
+      "length": 5,
+      "signature": "f3 0f 11 6e 50",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "CargoInventory",
+      "monoMethod": "Update",
+      "monoMethodOffset": "0x45",
+      "baseRegister": "rsi",
+      "fieldOffset": "0x50",
       "value": 999999,
+      "dataType": "float",
       "hotkey": "num5"
     },
     {

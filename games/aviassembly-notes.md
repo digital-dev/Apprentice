@@ -143,3 +143,15 @@ Also seen: `PlaneContainer.ApplyAngularDrag` reads `yawDrag`/`pitchDrag`, anothe
 Stability: the game crashed (`0xe0000001` in KERNELBASE) shortly after the first survey, the same signature as the early
 crashes above; it survived the light check and eight `monoReaders` runs over the classes named here. Treat heavy passes as a
 possible trigger.
+
+## Unlimited Cargo Space was a dead field (fixed 2026-09-20)
+
+The original cheat froze `PlaneContainer.<cargoVolume>k__BackingField`. Nothing reads it: it read 150.99 while the real
+capacity was 40, and no cargo, contract or stats class calls `get_cargoVolume` or `ChangeCargoVolume`. The capacity is
+computed fresh: `CargoInventory.Update` does `this+0x50 (<MaxVolume>) = planeContainer.GetCargoVolume()` every frame, where
+`GetCargoVolume` sums the plane's cargo parts. A freeze on `MaxVolume` would lose to that per-frame write, so the cheat is now
+a `force` patch (`monoClass CargoInventory`, `monoMethod Update`, `monoMethodOffset 0x45`) on the store
+`movss [rsi+0x50], xmm5`, the same shape as Valheim's Infinite Weapon Durability. Bytes at the site verified live; not run in-game.
+
+Lesson: a field that reads a plausible number is not a lever. Find its readers (`scripts/monoReaders.js`, `CALLEE=` for
+callers) before shipping a freeze. `Unlimited Fuel`, `Unlimited Electricity` and `Low Plane Mass` were not re-checked this way.
