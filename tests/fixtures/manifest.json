@@ -270,6 +270,21 @@
       "signatureSource": "shipped",
       "matchCount": 1,
       "relocatable": true
+    },
+    {
+      "game": "schedule-i",
+      "build": "6a7d3433",
+      "snapshot": "schedule-i-6a7d3433.snap",
+      "snapshotSha256": "7747126bd2f86095456e5341ecb3712eb9099032a8701bfb387d102e8f21a3ae",
+      "id": "factory-capture-ItemUIManager",
+      "address": "0x7fffe641f400",
+      "length": 6,
+      "originalBytes": "40574883ec40",
+      "signature": "40 57 48 83 ec 40 80 3d ?? ?? ?? ?? 00 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 9e f3",
+      "signatureOffset": 0,
+      "signatureSource": "shipped",
+      "matchCount": 1,
+      "relocatable": true
     }
   ]
 }

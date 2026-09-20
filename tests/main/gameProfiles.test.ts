@@ -30,6 +30,9 @@ interface AnyCheat {
   value?: number
   dataType?: string
   targets?: { kind: string; patchId?: string }[]
+  anchors?: { name: string; patchId: string }[]
+  enableScript?: string
+  disableScript?: string
 }
 
 describe.each(files)('games/%s', (file) => {
@@ -48,6 +51,14 @@ describe.each(files)('games/%s', (file) => {
       for (const t of c.targets ?? []) {
         if (t.kind === 'anchor') expect(patchIds.has(t.patchId!), `${c.id} -> ${t.patchId}`).toBe(true)
       }
+    }
+  })
+
+  it('every script anchor names a capture patch in the same file, and scripts are non-empty', () => {
+    const captures = new Set(patches.filter((p) => p.mode === 'capture').map((p) => p.id))
+    for (const c of cheats.filter((x) => x.kind === 'script')) {
+      expect(c.enableScript?.trim().length, `${c.id} enableScript`).toBeGreaterThan(0)
+      for (const a of c.anchors ?? []) expect(captures.has(a.patchId), `${c.id} -> ${a.patchId}`).toBe(true)
     }
   })
 

@@ -440,6 +440,33 @@
       "signatureOffset": 29,
       "moduleName": "GameAssembly.dll",
       "moduleOffset": "0xa4e3ad"
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-ItemUIManager",
+      "name": "Capture: ItemUIManager.Update instance",
+      "originalBytes": "40574883ec40",
+      "length": 6,
+      "signature": "40 57 48 83 ec 40 80 3d ?? ?? ?? ?? 00 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 9e f3",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xa4f400",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "script",
+      "id": "factory-double-hovered-stack",
+      "name": "Double Hovered Stack (assign a hotkey; hover a slot and press it)",
+      "enableScript": "-- Doubles the stack in the inventory slot under the mouse, past the max stack.\n-- Chain (Schedule I): ItemUIManager.HoveredSlot(+0x30) -> ItemSlotUI.assignedSlot(+0x28)\n--   -> ItemSlot.ItemInstance(+0x10) -> ItemInstance.Quantity(+0x10, int32).\nlocal mgr = tonumber(state.mgr)\nif not mgr or mgr == 0 then\n  error(\"Inventory UI not captured yet: open your inventory, move the mouse, and try again.\")\nend\nlocal ui = readInt64(mgr + 0x30)\nif ui == 0 then error(\"Hover an item slot first.\") end\nlocal slot = readInt64(ui + 0x28)\nif slot == 0 then error(\"That slot is not assigned.\") end\nlocal inst = readInt64(slot + 0x10)\nif inst == 0 then error(\"That slot is empty.\") end\nlocal q = readInt32(inst + 0x10)\nif q < 1 or q > 1000000 then error(\"Unexpected quantity \" .. q .. \"; not touching it.\") end\nlocal doubled = q * 2\nwriteInt32(inst + 0x10, doubled)\nprint(\"stack \" .. q .. \" -> \" .. doubled)",
+      "disableScript": "-- Doubles the stack in the inventory slot under the mouse, past the max stack.\n-- Chain (Schedule I): ItemUIManager.HoveredSlot(+0x30) -> ItemSlotUI.assignedSlot(+0x28)\n--   -> ItemSlot.ItemInstance(+0x10) -> ItemInstance.Quantity(+0x10, int32).\nlocal mgr = tonumber(state.mgr)\nif not mgr or mgr == 0 then\n  error(\"Inventory UI not captured yet: open your inventory, move the mouse, and try again.\")\nend\nlocal ui = readInt64(mgr + 0x30)\nif ui == 0 then error(\"Hover an item slot first.\") end\nlocal slot = readInt64(ui + 0x28)\nif slot == 0 then error(\"That slot is not assigned.\") end\nlocal inst = readInt64(slot + 0x10)\nif inst == 0 then error(\"That slot is empty.\") end\nlocal q = readInt32(inst + 0x10)\nif q < 1 or q > 1000000 then error(\"Unexpected quantity \" .. q .. \"; not touching it.\") end\nlocal doubled = q * 2\nwriteInt32(inst + 0x10, doubled)\nprint(\"stack \" .. q .. \" -> \" .. doubled)",
+      "anchors": [
+        {
+          "name": "mgr",
+          "patchId": "factory-capture-ItemUIManager"
+        }
+      ]
     }
   ]
 }
