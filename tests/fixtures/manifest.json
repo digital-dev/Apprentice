@@ -225,6 +225,51 @@
       "signatureSource": "shipped",
       "matchCount": 1,
       "relocatable": false
+    },
+    {
+      "game": "schedule-i",
+      "build": "6a7d3433",
+      "snapshot": "schedule-i-6a7d3433.snap",
+      "snapshotSha256": "7747126bd2f86095456e5341ecb3712eb9099032a8701bfb387d102e8f21a3ae",
+      "id": "factory-clone-drag-all",
+      "address": "0x7fffe641c868",
+      "length": 2,
+      "originalBytes": "f7da",
+      "signature": "0f 84 ?? ?? ?? ?? 48 8b 49 28 48 85 c9 0f 84 ?? ?? ?? ?? 8b 97 90 00 00 00 45 33 c9 f7 da 45 33 c0 e8 ?? ?? ?? ?? 48 83 bf e0 00 00 00 00 74 ??",
+      "signatureOffset": 28,
+      "signatureSource": "shipped",
+      "matchCount": 1,
+      "relocatable": true
+    },
+    {
+      "game": "schedule-i",
+      "build": "6a7d3433",
+      "snapshot": "schedule-i-6a7d3433.snap",
+      "snapshotSha256": "7747126bd2f86095456e5341ecb3712eb9099032a8701bfb387d102e8f21a3ae",
+      "id": "factory-clone-drag-partial",
+      "address": "0x7fffe641c7c0",
+      "length": 5,
+      "originalBytes": "baffffffff",
+      "signature": "0f 84 ?? ?? ?? ?? 48 8b 49 28 48 85 c9 0f 84 ?? ?? ?? ?? 45 33 c9 45 33 c0 ba ff ff ff ff e8 ?? ?? ?? ?? ff 8f 90 00 00 00 48 8b 47 30 48 85 c0",
+      "signatureOffset": 25,
+      "signatureSource": "shipped",
+      "matchCount": 1,
+      "relocatable": true
+    },
+    {
+      "game": "schedule-i",
+      "build": "6a7d3433",
+      "snapshot": "schedule-i-6a7d3433.snap",
+      "snapshotSha256": "7747126bd2f86095456e5341ecb3712eb9099032a8701bfb387d102e8f21a3ae",
+      "id": "factory-clone-quickmove",
+      "address": "0x7fffe641e3ad",
+      "length": 2,
+      "originalBytes": "f7dd",
+      "signature": "48 8b 87 80 00 00 00 48 85 c0 0f 84 ?? ?? ?? ?? 48 8b 48 28 48 85 c9 0f 84 ?? ?? ?? ?? f7 dd 45 33 c9 8b d5 45 33 c0 e8 ?? ?? ?? ??",
+      "signatureOffset": 29,
+      "signatureSource": "shipped",
+      "matchCount": 1,
+      "relocatable": true
     }
   ]
 }

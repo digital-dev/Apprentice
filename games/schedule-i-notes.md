@@ -59,6 +59,8 @@ snapshot proves is that the bytes and signatures are right; whether each
 | Max Relationship | `NPCRelationData.get_NormalizedRelationDelta`: returns 1.0 | Customer deal logic (`OnMinPass`, counteroffers, rejections) and the UI read it. Sole owner of that code (no folding). It changes what is read, not the saved relationship | Deals accepted more readily; the UI bar shows full |
 | Fast Time x10 / x60 | `TimeManager.TimeSpeedMultiplier` `0x13c`, freeze; off restores 1 | `TimeManager.Update` multiplies frame time by it. Pots, ovens, mixing stations, cauldrons and chemistry all advance on the game's minute tick, so this speeds every timer with no per-machine patch | The game may clamp minutes per frame, so x60 may not be 6x faster than x10. Use one at a time. Sleeping may interact |
 
+| Clone Items (3 patches: drag all / drag partial / shift-click) | `ItemUIManager.EndDrag` (`neg edx`; `mov edx,-1`) and `SlotClicked` (`neg ebp`) | Moving items ends in `ItemSlot.ChangeQuantity(sourceSlot, -amountMoved)` after the target has already received them (`draggedSlot` `0x80`, `draggedAmount` `0x90`, `HoveredSlot` `0x30`). Each patch makes that subtraction 0, so the target gets the items and the source keeps them | Drag a stack onto another slot and shift-click an item: the source should stay full. Enable all three. Cash dragging is a separate path and is not covered. Untested: what a drop back onto the same slot does |
+
 Known limits: the three invisibility patches stack (enable together for full
 effect). Fast Time replaces the earlier idea of an "advance one hour" write:
 writing `CurrentTime` directly would skip the `onTimeSet`/`onMinutePass` events
@@ -97,8 +99,6 @@ should go up, not down). Each still needs a live differential check.
 - **Unlock All Shop Items** — `ShopListing` has stock/visibility flags
   (`LimitedStock`, `ConditionalVisibility`, `OverridePrice`) but the unlock
   gate is not a field on it; find the check in `ShopInterface`/item definition.
-- **Clone Items When Clicking** — needs the `ItemSlot` click path; no field
-  expresses it.
 - **Advance / Rewind 1 Hour** — a relative write to `TimeManager.<CurrentTime>`
   (`int32`, `0x128`, HHMM-style). A fixed `oneshot` cannot add or subtract, so
   this needs a Tamper Lua cheat, or a call to `TimeManager.SetTime`.

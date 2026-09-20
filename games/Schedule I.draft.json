@@ -401,6 +401,45 @@
       ],
       "value": 60,
       "offValue": 1
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-clone-drag-all",
+      "name": "Clone Items: dragging a stack leaves the source unchanged",
+      "originalBytes": "f7da",
+      "length": 2,
+      "replacementBytes": "31d2",
+      "signature": "0f 84 ?? ?? ?? ?? 48 8b 49 28 48 85 c9 0f 84 ?? ?? ?? ?? 8b 97 90 00 00 00 45 33 c9 f7 da 45 33 c0 e8 ?? ?? ?? ?? 48 83 bf e0 00 00 00 00 74 ??",
+      "signatureOffset": 28,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xa4c868"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-clone-drag-partial",
+      "name": "Clone Items: partial-fit drag leaves the source unchanged",
+      "originalBytes": "baffffffff",
+      "length": 5,
+      "replacementBytes": "ba00000000",
+      "signature": "0f 84 ?? ?? ?? ?? 48 8b 49 28 48 85 c9 0f 84 ?? ?? ?? ?? 45 33 c9 45 33 c0 ba ff ff ff ff e8 ?? ?? ?? ?? ff 8f 90 00 00 00 48 8b 47 30 48 85 c0",
+      "signatureOffset": 25,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xa4c7c0"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-clone-quickmove",
+      "name": "Clone Items: shift-click quick move leaves the source unchanged",
+      "originalBytes": "f7dd",
+      "length": 2,
+      "replacementBytes": "31ed",
+      "signature": "48 8b 87 80 00 00 00 48 85 c0 0f 84 ?? ?? ?? ?? 48 8b 48 28 48 85 c9 0f 84 ?? ?? ?? ?? f7 dd 45 33 c9 8b d5 45 33 c0 e8 ?? ?? ?? ??",
+      "signatureOffset": 29,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xa4e3ad"
     }
   ]
 }
