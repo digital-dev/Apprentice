@@ -113,7 +113,7 @@ export async function buildNativeFactory(
       continue
     }
 
-    const label = category?.label ?? id
+    const label = cheat.name ?? category?.label ?? id
     const draftId = `factory-${id}`
     const baseOffset = rootRva
     result.drafts.push({
@@ -121,7 +121,12 @@ export async function buildNativeFactory(
       name: label,
       dataType: cheat.dataType,
       mode: cheat.mode,
-      targets: cheat.chains.map((offsets) => ({ moduleName: module.name, baseOffset, offsets })),
+      targets: cheat.chains.map((offsets) => ({
+        moduleName: module.name,
+        baseOffset,
+        offsets,
+        ...(cheat.bitIndex !== undefined ? { bitIndex: cheat.bitIndex } : {})
+      })),
       value: cheat.value,
       ...(cheat.offValue !== undefined ? { offValue: cheat.offValue } : {})
     })

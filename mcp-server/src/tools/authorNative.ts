@@ -20,7 +20,7 @@ export async function authorNative(args: { handle: number; wishlist: string[]; p
 
   let game = null
   for (const candidate of NATIVE_GAMES) {
-    const resolved = await Promise.all(candidate.roots.map((r) => resolveRoot(r, ops, main)))
+    const resolved = await Promise.all(candidate.roots.filter((r) => r.optional !== true).map((r) => resolveRoot(r, ops, main)))
     if (resolved.every((r) => r.ok)) {
       game = candidate
       break
