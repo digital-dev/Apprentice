@@ -34,3 +34,17 @@ Not checked: `m_placeDelay`, `m_dodgeAdrenaline` and the rest of `Player`.
 Stability: compiling all of `Player` (300+ methods) in one burst crashed the game (`0xe0000001` in KERNELBASE, offset `0xc41ca`, the same
 fault as Aviassembly). `monoReaders.js` now caps and paces the pass; use `METHODS=<regex>`. The targeted searches above (about a dozen
 methods each) were fine.
+
+## "Picked up an item affected by dev commands, achievements disabled" (2026-09-20)
+
+Items carry a flag, `ItemData.m_cheated` (+0x61), which `ItemData.Save` writes, so it persists in the save. `Inventory.ItemCheated` /
+`AnyCheatedItem` query it. Live inventory dump (`scripts/valheimInventory.js <pid>`): the only flagged items were `ironnails`, `tar` and
+`frostwood`, all with normal stacks. Every item at 4000 durability (Infinite Weapon Durability, `DUR>MAX`) was NOT flagged, and no stack
+exceeded its maximum, so the durability and Infinite Items patches do not set it.
+
+The setter found: `Piece.DropResources` stores `m_cheated = 1` on the resources a removed piece drops, when the piece's ZDO bool
+`0xF6DA2160` is set (two sites, +0x7b6 and the second read at +0xbef). `Player.PlacePiece` writes that bool (`ZDO.Set(0xF6DA2160, true)`)
+at +0xbfd when the piece is placed, behind a guard on a stack-passed local bool that was not resolved to a specific cheat. `Player.NoCostCheat()`
+is `return m_noPlacementCost` (+0x970), the field our No Placement Cost cheat freezes, but `PlacePiece` does not call it directly, so
+that link is inferred: the flagged items are exactly building materials, and no other shipped cheat touches placement except
+Easy Crafting (`HaveRequirements`) and Unlock All Build Pieces (`IsPieceAvailable`).
