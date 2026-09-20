@@ -182,3 +182,21 @@ Not found: what calls `PlaneController.ExplodePlane` (no direct call from any pa
 Unity event or a virtual call). `maxTriggerVelocity` / `minTriggerVelocity` on `PlaneController` suggest a velocity-based
 crash check, but no code reads them in `PlaneController`. If a crash still ends the flight with both patches on, that trigger
 is where to look next.
+
+## Second pass on the open leads (2026-09-20)
+
+- **Low Gravity (`planeGravityMultiplier`, +0x6c): reader found, cheat not useful.** `PlaneContainer.get_GravityMultiplier` lerps
+  `planeGravityMultiplier` / `helicopterGravityMultiplier` by the `+0x48` blend; `get_RealGravity` is `gravityForce * GravityMultiplier`
+  and `PlaneContainer.FixedUpdate` applies it. But `Wing.GetLiftForce` multiplies its result by the same `GravityMultiplier`, so lowering
+  it scales gravity and wing lift down together and the flight balance barely moves. Not shipped.
+- **Extra Lift (`liftMultiplier`, +0x74): wrong field.** Its only reader is `GetLiniarDamping`; `Wing.GetLiftForce` never reads
+  `+0x74` of the container. A real lift lever is the value `Wing.GetLiftForce` returns (a scale patch on `xmm0` before its final
+  `call r11`, signature with the `49 bb ?? x8` immediate wildcarded), but `Wing.ApplyLift` does not call either `GetLiftForce` overload
+  or `GetMaxLiftForce` by direct call, so which method actually produces the applied lift is unresolved. Not shipped.
+- **No Fog of War (`Map.useFogOfWar`, +0xb8):** no method of Map, FogOfWar, the map icon classes, airport classes or the game-mode
+  classes reads it (it may be written only). Fog is texture-based (`FogOfWar.discoveredPartitions`, `AddNewLocation`), so a
+  reveal-map cheat would come from there. Not shipped.
+- **Unlock Races (`GameManager.unlockRaces`, +0x64):** still no reader.
+
+`monoReaders.js` `CALLEE=` now takes several addresses. `GetLiftForce` has two overloads and `monoCompileMethod` resolves by name
+only, so it returns the first; a lift patch needs the overload picked by signature.
