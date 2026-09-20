@@ -50,6 +50,7 @@ import {
 import { buildLibrary, artDataUrl, LibraryScanner } from './library'
 import { realSteamDeps, type ArtKind } from './steamLibrary'
 import { CheatRuntime } from './cheatRuntime'
+import { CompanionTracker } from './companions'
 import { HotkeyManager, HotkeyDeps } from './hotkeys'
 import {
   ScriptRuntime,
@@ -643,6 +644,7 @@ async function attachTo(
     // cheat without first disarming it by hand. Matches what the watcher's
     // onVanish path already does.
     cheatRuntime.processExited()
+    companions.reset()
     // Same reasoning as cheatRuntime above: a hotkey registered for the
     // process we're leaving must not still fire (or fire against the
     // wrong game) after we've switched. registerAll below re-registers
@@ -721,6 +723,16 @@ const cheatRuntime = new CheatRuntime({
     patch.moduleName === null || !changedModules.includes(patch.moduleName.toLowerCase())
 })
 
+// Companion patches (CheatDefinition.companions / PatchCheat.companions): an `internal` patch that a cheat brings along, armed
+// with the first cheat that needs it and disarmed with the last. Every path that switches a cheat on or off goes through this,
+// so a click, a hotkey and a delete all behave the same.
+const companions = new CompanionTracker({
+  findPatch: (id) =>
+    attachedExe === null ? undefined : loadCheats(attachedExe).filter(isPatchCheat).find((p) => p.id === id),
+  arm: (patch) => cheatRuntime.arm(patch),
+  disarm: (patch) => cheatRuntime.disarm(patch.id, patch)
+})
+
 // Real HotkeyDeps: wraps the electron globalShortcut module and this
 // file's own freezeLoop/patchEngine/cheatRuntime/loadCheats/writeCheat —
 // the same operations cheats:toggleFreeze/cheats:oneShot/patch:apply/
@@ -749,8 +761,14 @@ function resolveScriptAnchorsFor(cheat: ScriptCheat): Record<string, LuaValue> {
 const hotkeyDeps: HotkeyDeps = {
   loadCheats,
   isFreezeEnabled: (cheatId) => freezeLoop.isEnabled(cheatId),
-  enableFreeze: (cheat) => freezeLoop.enable(cheat),
-  disableFreeze: (cheatId) => freezeLoop.disable(cheatId),
+  enableFreeze: (cheat) => {
+    freezeLoop.enable(cheat)
+    companions.enable(cheat.id, cheat.companions)
+  },
+  disableFreeze: (cheatId) => {
+    freezeLoop.disable(cheatId)
+    companions.disable(cheatId)
+  },
   oneShot: async (cheat) => (attachedHandle === null ? false : writeCheat(attachedHandle, cheat)),
   isScriptEnabled: (cheatId) => scriptRuntime.isEnabled(cheatId),
   runScriptEnable: (cheat) => scriptRuntime.enable(cheat, resolveScriptAnchorsFor(cheat)),
@@ -766,8 +784,14 @@ const hotkeyDeps: HotkeyDeps = {
     const state = cheatRuntime.status(patchId).state
     return state === 'arming' || state === 'active' || state === 'degraded'
   },
-  armPatch: (patch) => cheatRuntime.arm(patch),
-  disarmPatch: (patch) => cheatRuntime.disarm(patch.id, patch),
+  armPatch: (patch) => {
+    cheatRuntime.arm(patch)
+    companions.enable(patch.id, patch.companions)
+  },
+  disarmPatch: (patch) => {
+    cheatRuntime.disarm(patch.id, patch)
+    companions.disable(patch.id)
+  },
   registerShortcut: (accelerator, callback) => globalShortcut.register(accelerator, callback),
   unregisterAllShortcuts: () => globalShortcut.unregisterAll()
 }
@@ -872,6 +896,7 @@ export function startWatching(getWindow: () => BrowserWindow): void {
     // this process's addresses forward into whatever attaches next (see
     // PatchEngine.forgetAll).
     cheatRuntime.processExited()
+    companions.reset()
     patchEngine.forgetAll()
     hotkeyManager.unregisterAll()
     for (const cheat of loadCheats(attachedExe ?? '').filter(isScriptCheat)) {
@@ -911,7 +936,10 @@ async function restoreActiveFreezeCheats(handle: number | null): Promise<void> {
         .map((c) => writeCheat(handle, { ...c, value: c.offValue as number }))
     )
   }
-  for (const cheat of cheats) freezeLoop.disable(cheat.id)
+  for (const cheat of cheats) {
+    freezeLoop.disable(cheat.id)
+    companions.disable(cheat.id)
+  }
 }
 
 // Called on app quit (from index.ts) so Tamper never leaves a game's code
@@ -946,6 +974,7 @@ export async function releaseTarget(): Promise<void> {
   // states to idle without writing anything, which is fine here since
   // restoreAll() is the thing that actually puts bytes back.
   cheatRuntime.processExited()
+  companions.reset()
   // Freeze/value cheats' offValue must go back too, through the still-valid
   // handle, before it's detached below — patchEngine.restoreAll() only ever
   // covered code patches, leaving an active value cheat (e.g. a debug flag
@@ -1104,6 +1133,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     // future cheat created with the same reused id.
     captureStore.clear(cheatId)
     freezeLoop.disable(cheatId)
+    companions.disable(cheatId)
     // A deleted script must not leave its enabled flag and captured `state`
     // behind: ids are reused (a new cheat can be created with the same id
     // after a delete), and a stale entry would hand a fresh cheat someone
@@ -1142,6 +1172,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
         )
       }
       freezeLoop.enable(cheat)
+      companions.enable(cheat.id, cheat.companions)
       return
     }
     // captureOriginal takes priority over offValue — see
@@ -1161,6 +1192,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       await writeCheat(attachedHandle, { ...cheat, value: cheat.offValue })
     }
     freezeLoop.disable(cheat.id)
+    companions.disable(cheat.id)
   })
 
   // Mirrors scripts:isEnabled below — lets the renderer re-derive which
@@ -1372,6 +1404,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     // starts it and returns immediately. The real outcome (active / failed /
     // still arming) arrives on 'cheat:state'.
     cheatRuntime.arm(patch)
+    companions.enable(patch.id, patch.companions)
     return { ok: true, error: null }
   })
 
@@ -1380,6 +1413,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     // sources its restore target from its own armed map, and patchOps'
     // writeBytes/suspendThreads already no-op against a null handle.
     cheatRuntime.disarm(patch.id, patch)
+    companions.disable(patch.id)
     return true
   })
 

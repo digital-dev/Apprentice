@@ -49,14 +49,23 @@ is `return m_noPlacementCost` (+0x970), the field our No Placement Cost cheat fr
 that link is inferred: the flagged items are exactly building materials, and no other shipped cheat touches placement except
 Easy Crafting (`HaveRequirements`) and Unlock All Build Pieces (`IsPieceAvailable`).
 
-### Patches that stop the tagging (2026-09-20)
+### Anti-tag patches are companions of the cheats that cause the tag (2026-09-20)
 
-Requested: stop the game recording cheat use on items. Three `replace` patches (all off until toggled), each verified against the running game:
+Requested: no separate cheat; the fix rides with the cheats that cause the tag. The app now supports `companions` (ids of `internal` patches) on a
+cheat; they arm with it and disarm with the last cheat using them (`src/main/companions.ts`, wired into every toggle, hotkey, delete and
+process-exit path in `ipc.ts`). `mono-no-placement-cost` (the game's `NoCostCheat` / `PlacementCostDisabled` both read the field it freezes),
+`mono-craft-without-materials` and `mono-unlock-all-build-pieces` carry four hidden patches:
 
-- `mono-no-cheat-tag-pieces`: `Player.PlacePiece+0xc07`, `mov r8d, 1` -> `xor r8d, r8d` (+ 3-byte nop). New pieces are no longer tagged (`ZDO.Set(0xF6DA2160, false)`).
-- `mono-no-cheat-tag-drops-1` / `-2`: `Piece.DropResources+0x7b6` and `+0xc3a`, the two `mov byte [rax+0x61], 1` stores that set `ItemData.m_cheated`,
-  replaced by a 4-byte nop. Pieces already tagged in an existing world stop flagging their drops.
+- `cheat-tag-pieces-1` / `-2`: two sites write `ZDO.Set(0xF6DA2160, true)` when a piece is placed (`mov r8d, 1` -> `xor r8d, r8d`). One is in
+  `Player.PlacePiece`; the second, in a different method, was found by a signature scan and not yet identified (it is followed by
+  `cmp dword [rbp+0x38], 2`). Its two signatures differ only in the nop encoding after `cmp dword [rax], 0`.
+- `cheat-tag-drops-1` / `-2`: the two `mov byte [rax+0x61], 1` stores in `Piece.DropResources` (`ItemData.m_cheated`) become a 4-byte nop.
 
-Scope: a search of the crafting, placement, pickup, drop and inventory methods (`InventoryGui.DoCrafting`, `Player.ConsumeResources`, `Humanoid.Pickup`,
-`ItemDrop`, `Inventory.AddItem`, `Container`/`Smelter`/`CookingStation`/`Fermenter` drops, `CharacterDrop`, `Pickable` ...) found no other store to
-`ItemData+0x61`. Not covered: methods outside that list, and items already carrying the flag (they stay flagged; the patches do not clear them).
+They are keyed by signature, not by method offset: the same code sat at different offsets after a game restart (`DropResources` stores moved from
+`+0x7b6`/`+0xc3a` to `+0x7c6`/`+0xc52`), which would have made a method-offset patch refuse to apply.
+
+Verified: both drop signatures matched exactly once on a running game after a restart. NOT yet verified: that the two piece signatures each match
+exactly once (the shorter form matched twice, which is how the second site was found). Not covered: items already carrying the flag.
+
+Stability: compiling about 60 methods across `Player`, `Piece` and neighbours crashed the game a third time (16:08, the same KERNELBASE fault);
+earlier searches of about a dozen methods were fine. Do not compile methods in Valheim without an explicit go-ahead; signature scans are safe.

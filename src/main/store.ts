@@ -194,6 +194,11 @@ export interface CheatDefinition {
   // not Apprentice, has focus) only while this cheat's exe is attached —
   // see hotkeys.ts.
   hotkey?: string
+  // Ids of `internal` patches that switch on and off WITH this cheat, kept out of the cheat list. For a side effect the game
+  // attaches to the cheat (Valheim tags pieces and drops as "cheated" and disables achievements), so the fix belongs to the
+  // cheat that causes it instead of being a second toggle. A companion patch shared by several cheats stays armed until
+  // the last of them is turned off (see companions.ts).
+  companions?: string[]
   // Written once, to every target, the moment this cheat is disabled — see
   // freezeLoop.ts's disable()/FreezeLoop.disable doc. A freeze cheat's
   // disable has always meant "stop re-asserting `value`," never "put it
@@ -267,6 +272,11 @@ export interface PatchCheat {
   // implementation showing through, not something to make the user manage.
   // The cheat list hides these and drives them from the cheat they belong to.
   internal?: boolean
+  // Ids of `internal` patches that switch on and off WITH this cheat, kept out of the cheat list. For a side effect the game
+  // attaches to the cheat (Valheim tags pieces and drops as "cheated" and disables achievements), so the fix belongs to the
+  // cheat that causes it instead of being a second toggle. A companion patch shared by several cheats stays armed until
+  // the last of them is turned off (see companions.ts).
+  companions?: string[]
   moduleName: string | null // named module, or null for JIT/anonymous code
   moduleOffset: string | null // hex offset within that module
   // An alternative to moduleName/moduleOffset: resolve this patch's
