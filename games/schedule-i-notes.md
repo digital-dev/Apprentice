@@ -42,6 +42,37 @@ Officer patches (both `replace`, both untested until toggled):
 - `factory-nobodysearch-officers` at `0x72af60`: `PoliceOfficer.ConductBodySearch` returns immediately. It is the function **every** search route calls (patrol `UpdateExistingInvestigation`, `BodySearchLocalPlayer`, and `CheckpointBehaviour.PlayerWalkedThroughCheckPoint`). Found by watching a live checkpoint officer switch from `checkpoint` to `bodySearch`, not by reading code.
 - `factory-noinvestigate-officers` at `0x72a2b0`: the investigation gate. In-game it did **not** stop searches by itself (checkpoint route), so enable it only with the one above.
 
+## Drafted 2026-09-19 (second batch; all untested in-game)
+
+Built from the code, not from names: each was found by reading callers and
+callees (`findCallers`, `callTree`, `findFieldReaders`) and confirmed unique in
+a recorded snapshot of the build (`tests/fixtures/manifest.json`). What the
+snapshot proves is that the bytes and signatures are right; whether each
+*does* what its name says is only established when you toggle it.
+
+| Cheat | Site | Why here | Watch for |
+|---|---|---|---|
+| Invisible: player visibility reads 0 | `VisionCone.GetPlayerVisibility` entry: `xorps xmm0,xmm0; ret` | Officer investigations and look-at-player read it | Officers no longer start investigations by sight |
+| Invisible: combat and pursuit never see the player | `VisionCone.IsTargetVisible` entry: `xor eax,eax; ret` | `CombatBehaviour` and `VehiclePursuitBehaviour` visibility checks | A chase drops when it should |
+| Invisible: NPCs never notice anything | `VisionCone.UpdateVision` entry: `ret` | General noticing (customers, crimes) runs here | **Least certain**: assumed void (large tick prologue, no return value seen). If NPCs freeze or behave oddly, turn this one off first |
+| No Arrest | `PlayerCrimeData.SetArrestProgress` entry: `scale` `xmm1` by 0 | The arrest fires from this function's own compare (`Player.Arrest_Server`) once the incoming progress passes the threshold; scaling the *stored* value would not stop it. `PursuitBehaviour.UpdateArrest` only accumulates a local timer and calls this | Dying still routes through `OnDie` -> arrest, deliberately left alone |
+| Max Relationship | `NPCRelationData.get_NormalizedRelationDelta`: returns 1.0 | Customer deal logic (`OnMinPass`, counteroffers, rejections) and the UI read it. Sole owner of that code (no folding). It changes what is read, not the saved relationship | Deals accepted more readily; the UI bar shows full |
+| Fast Time x10 / x60 | `TimeManager.TimeSpeedMultiplier` `0x13c`, freeze; off restores 1 | `TimeManager.Update` multiplies frame time by it. Pots, ovens, mixing stations, cauldrons and chemistry all advance on the game's minute tick, so this speeds every timer with no per-machine patch | The game may clamp minutes per frame, so x60 may not be 6x faster than x10. Use one at a time. Sleeping may interact |
+
+Known limits: the three invisibility patches stack (enable together for full
+effect). Fast Time replaces the earlier idea of an "advance one hour" write:
+writing `CurrentTime` directly would skip the `onTimeSet`/`onMinutePass` events
+NPC schedules run on.
+
+## Not drafted, and why
+
+- **Set XP / rank**: `LevelManager.XP` and `TotalXP` are plain fields, but the
+  rank-up is decided in the game's own add-XP path, so writing them would not
+  rank you up. It needs a call to that method, which is not something a field
+  or patch cheat can do.
+- **Per-station instant timers, instant plant growth**: replaced by Fast Time
+  above, which drives all of them from the shared clock.
+
 ## Not drafted: needs a method-level patch
 
 The field is per object (every pot, station, NPC), and a capture hook only

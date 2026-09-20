@@ -302,6 +302,105 @@
         }
       ],
       "value": 999
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-invisible-visibility",
+      "name": "Invisible: player visibility reads 0 (VisionCone.GetPlayerVisibility)",
+      "originalBytes": "48895c2408",
+      "length": 5,
+      "replacementBytes": "0f57c0c390",
+      "signature": "48 89 5c 24 08 57 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b fa 48 8b d9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 8b 8b 90 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x57e850"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-invisible-target",
+      "name": "Invisible: combat and pursuit never see the player (VisionCone.IsTargetVisible)",
+      "originalBytes": "48895c2408",
+      "length": 5,
+      "replacementBytes": "33c0c39090",
+      "signature": "48 89 5c 24 08 57 48 83 ec 50 80 3d ?? ?? ?? ?? 00 48 8b da 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 85 db 0f 84 ?? ?? ?? ?? 48 8b 15 ?? ?? ?? ?? 4c 8b 03 0f b6 82 30 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x57f200"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-invisible-noticing",
+      "name": "Invisible: NPCs never notice anything (VisionCone.UpdateVision)",
+      "originalBytes": "488bc4",
+      "length": 3,
+      "replacementBytes": "c39090",
+      "signature": "48 8b c4 48 89 58 10 48 89 48 08 56 57 41 54 41 56 41 57 48 81 ec a0 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x5811b0"
+    },
+    {
+      "kind": "patch",
+      "mode": "scale",
+      "id": "factory-noarrest-scale",
+      "name": "No Arrest (police can't complete an arrest)",
+      "originalBytes": "40534883ec20",
+      "length": 6,
+      "signature": "40 53 48 83 ec 20 0f 2f 0d ?? ?? ?? ?? 48 8b d9 f3 0f 11 89 48 01 00 00 72 ??",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x630390",
+      "sourceRegister": "xmm1",
+      "value": 0,
+      "dataType": "float"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-maxrelationship",
+      "name": "Max Relationship (every NPC reads as fully friendly)",
+      "originalBytes": "f30f104110f30f5e05a32c5202",
+      "length": 13,
+      "replacementBytes": "b80000803f660f6ec0c3909090",
+      "signature": "f3 0f 10 41 10 f3 0f 5e 05 ?? ?? ?? ?? c3 cc cc 40 53",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x8dcea0"
+    },
+    {
+      "id": "factory-fasttime-10",
+      "name": "Fast Time x10 (grow, cook, mix, chemistry)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-TimeManager",
+          "offset": "0x13c",
+          "dataType": "float"
+        }
+      ],
+      "value": 10,
+      "offValue": 1
+    },
+    {
+      "id": "factory-fasttime-60",
+      "name": "Fast Time x60",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-TimeManager",
+          "offset": "0x13c",
+          "dataType": "float"
+        }
+      ],
+      "value": 60,
+      "offValue": 1
     }
   ]
 }
