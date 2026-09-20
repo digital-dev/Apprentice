@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { ModuleBaseCache } from './moduleBaseCache'
 
 const addon = require(path.join(__dirname, '../../native/build/Release/memory_addon.node'))
 
@@ -73,6 +74,8 @@ export interface CaughtInstruction {
 // nested tables/functions a script stores in `state` are dropped natively.
 export type LuaValue = string | number | boolean
 
+const moduleBases = new ModuleBaseCache((handle, name) => addon.getModuleBase(handle, name))
+
 export const nativeAddon = {
   listProcesses: (): ProcessInfo[] => addon.listProcesses(),
   attach: (pid: number): AttachResult => addon.attach(pid),
@@ -80,7 +83,10 @@ export const nativeAddon = {
   // handle (re-attach to a different pid, the watcher's onVanish, app quit)
   // must call this — attach() previously had no matching close anywhere in
   // the codebase, leaking one kernel handle per attach/relaunch cycle.
-  detach: (handle: number): boolean => addon.detach(handle),
+  detach: (handle: number): boolean => {
+    moduleBases.forget(handle)
+    return addon.detach(handle)
+  },
   // scanFirst, scanNext and resolvePointerChain run on a background thread in
   // the native addon (Napi::AsyncWorker) and return Promises — walking a real
   // game's entire committed memory takes real wall-clock time even after
@@ -102,8 +108,7 @@ export const nativeAddon = {
     maxLevels: number
   ): Promise<{ moduleName: string; offsets: string[] } | null> =>
     addon.resolvePointerChain(handle, target, maxLevels),
-  getModuleBase: (handle: number, moduleName: string): string | null =>
-    addon.getModuleBase(handle, moduleName),
+  getModuleBase: (handle: number, moduleName: string): string | null => moduleBases.get(handle, moduleName),
   readValue: (handle: number, baseAddress: string, offsets: string[], dataType: string): number =>
     addon.readValue(handle, baseAddress, offsets, dataType),
   // readValue throws when the chain can't be resolved or the final address
