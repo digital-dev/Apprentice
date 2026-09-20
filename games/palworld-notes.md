@@ -30,3 +30,7 @@ Resolve time ~2.5 s per uncached class, then cached.
 - palworld-invincible: PalPlayerCharacter -> CharacterParameterComponent (on PalCharacter) -> bIsEnableMuteki int8 freeze 1
 - palworld-fast-run: CharacterMovement RunSpeed_Default 700 + SprintMaxSpeed 1000. Which of the movement fields the game actually
   consumes is not confirmed from code; if it does nothing, read the movement update to find the consuming field.
+
+## Carry weight (read live with the cheat on)
+Inventory UI shows MaxInventoryWeight (+0x188), but the encumbrance check uses MaxInventoryWeight_Cached (+0x18C, offset 396), which stayed 1150
+with NowItemWeight ~1887. The cheat now freezes both. In-game effect of the second target not yet confirmed.

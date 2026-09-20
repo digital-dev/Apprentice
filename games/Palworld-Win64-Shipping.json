@@ -234,6 +234,14 @@
           "fieldName": "MaxInventoryWeight",
           "maxObjectsToScan": 400000,
           "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "PalPlayerInventoryData",
+          "rootClass": "PalPlayerInventoryData",
+          "fieldName": "MaxInventoryWeight_Cached",
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
         }
       ],
       "value": 99999
