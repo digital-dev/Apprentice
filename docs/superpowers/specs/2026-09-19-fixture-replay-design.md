@@ -35,7 +35,13 @@ extraction (compared on `harness.exe` and the existing `tests/native` suite).
 ### 2. Snapshot format and `ReplayOps`
 
 One compressed `.snap` per game build: executable regions (base, size, bytes)
-plus `listModules` output (name, base, `SizeOfImage`, `TimeDateStamp`) and the
+each with its readable **margins** (up to 64 bytes before, 128 after - the
+largest window the signature builder reads; absent when unreadable at record
+time). The margins are load-bearing: the builder's window read is
+all-or-nothing and crosses region edges live, so a snapshot of executable
+bytes alone made a site near a region edge take the "window unreadable"
+fallback and produce a different, weaker signature (found by the live-vs-
+snapshot differential test). Margins are never scanned. Plus `listModules` output (name, base, `SizeOfImage`, `TimeDateStamp`) and the
 recorded sites. `ReplayOps` (TS) implements `PatchOps`/`AnchorOps` over it:
 `scanAob`, `readBytes`, `getModuleBase`, `decodeRun`. The real `patchEngine`
 runs against it unmodified.

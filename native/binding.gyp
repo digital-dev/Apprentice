@@ -10,6 +10,7 @@
         "src/memory_ops.cc",
         "src/write_watch.cc",
         "src/sigbuild.cc",
+        "src/snapshot_ops.cc",
         "src/patch_ops.cc",
         "src/cave_ops.cc",
         "src/module_info.cc",

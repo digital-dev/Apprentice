@@ -213,6 +213,12 @@ Napi::Value DecodeRun(const Napi::CallbackInfo& info) {
     }
   }
 
+  return DecodeRunBuffer(env, window, got, minBytes);
+}
+
+// The decode half of DecodeRun, over an already-read buffer: shared with the
+// snapshot replay path, which has no process to read from.
+Napi::Object DecodeRunBuffer(Napi::Env env, const uint8_t* window, size_t got, size_t minBytes) {
   ZydisDecoder decoder;
   ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
 

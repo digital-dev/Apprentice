@@ -4,6 +4,8 @@
 Napi::Value AllocateCave(const Napi::CallbackInfo& info);
 Napi::Value FreeCave(const Napi::CallbackInfo& info);
 Napi::Value DecodeRun(const Napi::CallbackInfo& info);
+// Decode half of DecodeRun over an already-read buffer.
+Napi::Object DecodeRunBuffer(Napi::Env env, const uint8_t* window, size_t got, size_t minBytes);
 Napi::Value EncodeStore(const Napi::CallbackInfo& info);
 Napi::Value EncodeStoreRegister(const Napi::CallbackInfo& info);
 Napi::Value EncodeScale(const Napi::CallbackInfo& info);

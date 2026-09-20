@@ -11,6 +11,7 @@
 #include "mono_bridge.h"
 #include "script_ops.h"
 #include "disasm_ops.h"
+#include "snapshot_ops.h"
 #include "thread_ops.h"
 #include "platform/platform.h"
 
@@ -105,6 +106,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monoCallAttached", Napi::Function::New(env, MonoCallAttached));
   exports.Set("runScript", Napi::Function::New(env, RunScript));
   exports.Set("disassembleBuffer", Napi::Function::New(env, DisassembleBuffer));
+  exports.Set("listExecRegions", Napi::Function::New(env, ListExecRegions));
+  exports.Set("readRegionBuffer", Napi::Function::New(env, ReadRegionBuffer));
+  exports.Set("snapshotBuildSignature", Napi::Function::New(env, SnapshotBuildSignature));
+  exports.Set("snapshotScanAob", Napi::Function::New(env, SnapshotScanAob));
+  exports.Set("snapshotDecodeRun", Napi::Function::New(env, SnapshotDecodeRun));
   exports.Set("listThreads", Napi::Function::New(env, ListThreads));
   exports.Set("getThreadRegisters", Napi::Function::New(env, GetThreadRegisters));
   return exports;

@@ -15,6 +15,7 @@
 - Never commit game bytes. Snapshots live in `fixtures/snapshots/` (gitignored). Only `tests/fixtures/manifest.json` (hashes, signatures, counts) is committed.
 - Signatures produced live must be byte-identical before and after the extraction (Task 1 golden pins this).
 - Safety rules stay the judge: never patch a guess (0 or >1 matches = "can't relocate"); never NOP bytes that are neither original nor NOPs; always restore.
+- Snapshot regions carry readable margins (`pre` <=64 bytes, `post` <=128 bytes, Buffers, optional). Snapshot `Read` is all-or-nothing across bodies+margins, mirroring live `ReadProcessMemory`. Margins are never scanned.
 - Signature is scanned one memory region at a time, executable regions only (matches `RunScanAob`); the snapshot must therefore keep VirtualQuery region boundaries, never merge adjacent regions.
 - Tests run serially (`fileParallelism: false`); native tests use `test-harness/harness.exe`.
 - Commits: no `Co-Authored-By` / `Claude-Session` trailers in this repo. Never stage `games/Schedule I.json` (unrelated uncommitted edit).
@@ -188,8 +189,9 @@ git commit -m "refactor(native): extract the signature builder behind a SigMemor
 
 **Interfaces:**
 - Consumes: `SigMemory`, `BuildSignature`, `ParseSignature`/`PatternByte`.
-- Produces addon exports (regions are `{ base: '0x..', bytes: Buffer }[]`, one entry per original memory region, never merged):
+- Produces addon exports (regions are `{ base: '0x..', bytes: Buffer, pre?: Buffer, post?: Buffer }[]`, one entry per original memory region, never merged):
   - `listExecRegions(handle): { base: string, size: number }[]` — committed, executable, non-guard regions (same predicate as `RunScanAob`).
+  - `readRegionBuffer(handle, base, size): Buffer | null` - bulk read for the recorder (`readBytes` is capped at 4096 and returns hex).
   - `snapshotBuildSignature(regions, insnAddress: string, insnLength: number): { signature: string, signatureOffset: number } | null` (null if `insnAddress` is in no region).
   - `snapshotScanAob(regions, signature: string): string[]` — hex addresses; scans each region independently, matches must lie fully inside one region.
   - `snapshotDecodeRun(regions, address: string, minBytes: number): { length, decodable, relocatable, clobbers }` — same result as live `decodeRun`.
@@ -283,7 +285,7 @@ git commit -m "feat(native): snapshot-backed signature build, AOB scan and decod
 - Consumes: addon `snapshotScanAob`, `snapshotDecodeRun`; `PatchOps` from `src/main/patchEngine.ts` (implement only the methods the locate path uses; the rest throw `Error('ReplayOps: <name> is not replayable')`).
 - Produces:
 ```ts
-export interface SnapshotRegion { base: string; size: number; bytes: Buffer }
+export interface SnapshotRegion { base: string; size: number; bytes: Buffer; pre?: Buffer; post?: Buffer }
 export interface SnapshotModule { name: string; base: string; size: number; timestamp: number }
 export interface SnapshotSite { id: string; address: string; length: number }
 export interface Snapshot {
@@ -397,7 +399,7 @@ git commit -m "test: synthetic fixture replay pins twin-body, region-edge and re
 ```
 Initial file: `{ "version": 1, "sites": [] }`.
 
-- [ ] **Step 1: Recorder.** `node mcp-server/scripts/recordSnapshot.js <pid|exe-name> <game> <out.snap> [siteId:address:length ...]`: attach, `listModules`, `listExecRegions`, read each region in chunks (respect the readBytes cap), write the layout from Task 4 with `zlib.gzipSync`. Print region count, total MB, SHA-256. Refuse to write inside the git-tracked tree except `fixtures/snapshots/`. Follow the style of the neighbouring scripts (`survey.js`).
+- [ ] **Step 1: Recorder.** `node mcp-server/scripts/recordSnapshot.js <pid|exe-name> <game> <out.snap> [siteId:address:length ...]`: attach, `listModules`, `listExecRegions`, read each region with `readRegionBuffer` plus its margins (`base-64` x 64 bytes, `base+size` x 128 bytes; null means absent), write the layout from Task 4 with `zlib.gzipSync`. Print region count, total MB, SHA-256. Refuse to write inside the git-tracked tree except `fixtures/snapshots/`. Follow the style of the neighbouring scripts (`survey.js`).
 
 - [ ] **Step 2: Contract test** in `tests/main/replayOps.test.ts`: run the recorder's exported `writeSnapshotFile(snapshot, path)` on a small snapshot and read it back with `decodeSnapshot`. (Export the writer from the script behind `require.main === module`.) This pins the JS writer to the TS reader.
 
