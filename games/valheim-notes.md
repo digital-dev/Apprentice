@@ -100,3 +100,9 @@ calls, vtable +0x1F0); for the local owner it returns `[this+0xAE8]`. Always Hid
 `movss xmm0, [rsi+0xAE8]` for `xorps xmm0, xmm0` + nop, so the getter returns 0 and the field is left alone (same hotkey, `num7`). Enemy AI and the HUD both ask the
 getter, so both see 0 steadily. Not run in-game: whether the eye/bar are then steadily shown or hidden depends on HUD logic I did not read in full (it shows the bar
 from the factor and two timers, `m_timeSinceTargeted` +0xadc and `m_timeSinceSensed` +0xae0).
+
+Hide the stealth HUD (2026-09-20): `Hud.UpdateStealth` reads the factor (`Player.GetStealthFactor`) and, when it is below a threshold, shows `m_hidden` (eye) and
+`m_stealthBar`, or `m_targetedAlert` / `m_targeted` if the player was sensed or targeted recently; otherwise it takes one block (`+0x280`) that sets all four inactive.
+`always-hidden-hide-hud` (a companion of Always Hidden) turns the early `jbe` at `+0x61` (`0f 86 19 02 00 00`) into `jmp +0x21a` (`e9 1a 02 00 00 90`) so every frame takes
+that block. The signature includes the exact branch distance, so a changed layout after an update makes the patch refuse. It also hides the targeted/alert icons while
+Always Hidden is on. Bytes and signature verified on a running game; not run in-game.

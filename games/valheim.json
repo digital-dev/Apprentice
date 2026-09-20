@@ -146,7 +146,10 @@
       "monoClass": "Player",
       "monoMethod": "GetStealthFactor",
       "monoSearch": true,
-      "hotkey": "num7"
+      "hotkey": "num7",
+      "companions": [
+        "always-hidden-hide-hud"
+      ]
     },
     {
       "kind": "patch",
@@ -414,6 +417,23 @@
       "moduleOffset": null,
       "monoClass": "Player",
       "monoMethod": "UpdatePlacementGhost",
+      "monoSearch": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "always-hidden-hide-hud",
+      "name": "Always Hidden: Hide Stealth HUD",
+      "internal": true,
+      "originalBytes": "0f8619020000",
+      "replacementBytes": "e91a02000090",
+      "length": 6,
+      "signature": "f3 0f 5a c9 66 0f 2f c8 0f 86 19 02 00 00 f3 0f 10 45 e0 f3 0f 5a",
+      "signatureOffset": 8,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Hud",
+      "monoMethod": "UpdateStealth",
       "monoSearch": true
     }
   ]
