@@ -298,6 +298,19 @@
         }
       ],
       "value": 700
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "palworld-no-encumbrance",
+      "name": "No Encumbrance (max weight check)",
+      "originalBytes": "f30f108188010000c3cc",
+      "replacementBytes": "b8804fc347660f6ec0c3",
+      "length": 10,
+      "signature": "f3 0f 10 81 88 01 00 00 c3 cc cc cc cc cc cc cc 48 8b 81 c0 01 00 00 c3",
+      "signatureOffset": 0,
+      "moduleName": "Palworld-Win64-Shipping.exe",
+      "moduleOffset": "0x318e4f0"
     }
   ]
 }

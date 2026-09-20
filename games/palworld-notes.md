@@ -34,3 +34,11 @@ Resolve time ~2.5 s per uncached class, then cached.
 ## Carry weight (read live with the cheat on)
 Inventory UI shows MaxInventoryWeight (+0x188), but the encumbrance check uses MaxInventoryWeight_Cached (+0x18C, offset 396), which stayed 1150
 with NowItemWeight ~1887. The cheat now freezes both. In-game effect of the second target not yet confirmed.
+
+## Encumbrance (why the field freeze was not enough)
+Sampled read-only at ~1 ms during inventory changes: the game rewrites MaxInventoryWeight 300 -> 1150 and MaxInventoryWeight_Cached 1150 for
+30-100 ms every recompute, then our freeze restores 99999. The HUD gauge and the "weighed down" state are taken in that window.
+`GetMaxItemWeight` (RVA 0x318e4f0, `movss xmm0,[rcx+0x188]; ret`) is what the slowdown compares call (3 sites: 0x314707e, 0x316a37e,
+0x3171ad7). palworld-no-encumbrance replaces it to return 99999.0. Signature unique in this build. In-game effect NOT yet confirmed;
+if the HUD gauge still shows 1150 the delegate payload reads the field directly.
+Do not use start_write_watch here: it crashed the game.
