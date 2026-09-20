@@ -1,6 +1,6 @@
 // Record a snapshot of a running game's executable memory, for offline replay
 // of signature building and patch relocation (tests/replay).
-// usage: node recordSnapshot.js <pid> <game> <build> <out.snap> [siteId:address:length ...]
+// usage: [MODULE=<name>] node recordSnapshot.js <pid> <game> <build> <out.snap> [siteId:address:length ...]
 //
 // Read-only: it enumerates executable regions and reads them, nothing else.
 // Snapshots contain the game's code, so they must not be committed: the
@@ -79,14 +79,26 @@ function record(addon, pid, game, build, sitesArg) {
     timestamp: m.timestamp
   }))
 
+  // MODULE=<name> confines the dump to that module's own image. Reading the
+  // margins just outside a region touches memory nobody asked for, and an
+  // anti-tamper game (Elden Ring) can fault afterwards if that was a guard
+  // page. Inside the module, margins are only read where they stay in it.
+  const only = process.env.MODULE ? modules.find((m) => m.name.toLowerCase() === process.env.MODULE.toLowerCase()) : null
+  if (process.env.MODULE && !only) throw new Error(`module ${process.env.MODULE} is not loaded`)
+  const lo = only ? BigInt(only.base) : 0n
+  const hi = only ? BigInt(only.base) + BigInt(only.size) : (1n << 64n)
+
   const regions = []
   let skipped = 0
   for (const r of addon.listExecRegions(handle)) {
+    const base = BigInt(r.base)
+    if (base < lo || base + BigInt(r.size) > hi) { if (only) continue }
     const bytes = addon.readRegionBuffer(handle, r.base, r.size)
     if (!bytes) { skipped++; continue }
-    const base = BigInt(r.base)
-    const pre = addon.readRegionBuffer(handle, '0x' + (base - BigInt(PRE_MARGIN)).toString(16), PRE_MARGIN)
-    const post = addon.readRegionBuffer(handle, '0x' + (base + BigInt(r.size)).toString(16), POST_MARGIN)
+    const preAt = base - BigInt(PRE_MARGIN)
+    const postAt = base + BigInt(r.size)
+    const pre = preAt >= lo ? addon.readRegionBuffer(handle, '0x' + preAt.toString(16), PRE_MARGIN) : null
+    const post = postAt + BigInt(POST_MARGIN) <= hi ? addon.readRegionBuffer(handle, '0x' + postAt.toString(16), POST_MARGIN) : null
     regions.push({ base: r.base, bytes, ...(pre ? { pre } : {}), ...(post ? { post } : {}) })
   }
 
