@@ -67,6 +67,7 @@ const ER_FLAG_NO_AMMO = flagRoot(
   'flag-no-ammo',
   '0f b6 0d ?? ?? ?? ?? e9 ?? ?? ?? ?? 40 57 48 83 ec 30 48 c7 44 24 20 fe ff ff ff 48 89 5c 24 40 48 89 6c 24 48 48 89 74 24 50 49 8b d9'
 )
+const ER_FLAG_NO_GOODS = flagRoot('flag-no-goods', '0f b6 0d ?? ?? ?? ?? e9 ?? ?? ?? ?? e8 ?? ?? ?? ?? 90 e9 ?? ?? ?? ?? 90 49 8d 77 30')
 const ER_FLAG_NO_ASH_COST = flagRoot('flag-no-ash-cost', '0f b6 0d ?? ?? ?? ?? e9 ?? ?? ?? ?? eb 89')
 
 // WorldChrMan -> +0x10EF8 (player) -> +0 -> +0x190 (module bag) -> +0 (stats).
@@ -77,7 +78,7 @@ export const NATIVE_GAMES: NativeGame[] = [
   {
     id: 'elden-ring',
     name: 'Elden Ring',
-    roots: [ER_WORLD_CHR_MAN, ER_GAME_DATA_MAN, ER_FLAG_ONE_SHOT, ER_FLAG_NO_AMMO, ER_FLAG_NO_ASH_COST],
+    roots: [ER_WORLD_CHR_MAN, ER_GAME_DATA_MAN, ER_FLAG_ONE_SHOT, ER_FLAG_NO_AMMO, ER_FLAG_NO_ASH_COST, ER_FLAG_NO_GOODS],
     cheats: [
       {
         category: 'health',
@@ -144,6 +145,36 @@ export const NATIVE_GAMES: NativeGame[] = [
         plausible: [0, 255],
         offValue: 0,
         lookFor: 'Sprint and attack: the stamina bar does not drain.'
+      },
+      {
+        category: 'nodamage',
+        name: 'No Damage (immunity)',
+        root: 'WorldChrMan',
+        chains: [stat('0x19b')],
+        dataType: 'int8',
+        bitIndex: 1,
+        mode: 'freeze',
+        value: 1,
+        plausible: [0, 255],
+        offValue: 0,
+        // Static analysis only. The getter for this bit (test [ChrData+0x19b],2 || debug flag ab)
+        // guards the damage-application routine at RVA 0x44845a: when true it skips the HP arithmetic.
+        lookFor: 'Inferred from code, not run in-game: enemy hits stop reducing HP.'
+      },
+      {
+        category: 'nogoods',
+        name: 'No Item Consumption',
+        root: 'flag-no-goods',
+        chains: [[]],
+        dataType: 'int8',
+        mode: 'freeze',
+        value: 1,
+        plausible: [0, 255],
+        offValue: 0,
+        // Static analysis only. Debug flag a3 sits between exterminate (a2) and stamina (a4) in the
+        // engine's usual debug-flag order, and is passed as the "don't consume" argument of the
+        // item-use routine at RVA 0x653367.
+        lookFor: 'Inferred from code and flag order, not run in-game: using a consumable does not use it up.'
       },
       {
         category: 'oneshot',

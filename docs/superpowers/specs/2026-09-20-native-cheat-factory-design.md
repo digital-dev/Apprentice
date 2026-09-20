@@ -31,3 +31,15 @@ stays a hand-authored profile entry: the factory drafts value cheats only.
 Elden Ring build 2.6.2.0: both root signatures unique and resolving to `0x3d65f88` (WorldChrMan) and `0x3d5df38`
 (GameDataMan); the four drafted cheats' chains equal the ones in `games/start_protected_game.json` and read
 plausible live values. Not yet toggled in-game through Tamper.
+
+## Finding more cheats offline (Elden Ring)
+
+Record a module-only snapshot (`MODULE=<exe> node mcp-server/scripts/recordSnapshot.js ...`; a full dump crashed the game),
+then work offline with `mcp-server/scripts/`: `mineRoots.js` / `mineChains.js` (who loads a root, which offsets follow),
+`flagXrefs.js` (which byte flags the code reads), `findFieldAccess.js` (who touches `[reg+disp]`), `findCallersSnap.js`,
+`traceSnap.js` (disassembles through the obfuscator's `jmp` chains), `deriveFlagRoot.js` (unique signature for a flag).
+
+What a flag means comes from its consumers: a getter that tests a `ChrData+0x19b` bit or a debug flag, and what its callers do.
+Findings: bit 0x02 guards damage application (`No Damage`); bit 0x01 is a hit/target filter (not shipped, meaning unclear);
+debug flags follow the engine's usual order (a2 exterminate, a4 stamina, a5 FP, a6 ammo anchored), so a3 is item consumption.
+Cheats resting on this alone say so in their `lookFor`.
