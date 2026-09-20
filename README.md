@@ -97,6 +97,21 @@ The installer is not code-signed, so Windows SmartScreen will warn on first run.
 toolchain pins (Windows 2022 image, Python 3.11, Node 22 to build the addon and Node 26 to
 run the tests) each exist for a specific reason, recorded as comments in the workflow.
 
+### The game library
+
+Opening Apprentice shows your installed Steam games as cover tiles, with the ones
+it has cheats for first. Pick a game to see its cheats; if it is not running, Play
+starts it through Steam and Apprentice attaches by itself when it opens. Nothing is
+changed in a game until you switch a cheat on.
+
+Steam is found automatically, wherever it is installed: the registry entry first,
+then the usual folders, then every library folder Steam lists (so a second drive
+such as `D:SteamLibrary` is picked up with no setup). Cover art comes from Steam's
+own on-disk cache, so the library works offline and Apprentice makes no network
+requests for it; a game with no cached art gets a coloured placeholder. Games from
+other launchers are not listed, but any running process can still be attached from
+**Tools -> Attach to process**.
+
 ### Fixture replay: testing signatures against real games offline
 
 Signature building and patch relocation are where real games broke things the

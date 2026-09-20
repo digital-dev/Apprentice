@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, globalShortcut } from 'electron'
+import { ipcMain, BrowserWindow, dialog, globalShortcut, shell } from 'electron'
 import fs from 'node:fs'
 import { nativeAddon, Candidate } from './nativeAddon'
 import {
@@ -44,8 +44,11 @@ import {
   recordModuleFingerprint,
   verifiedModules,
   fingerprintOf,
-  profileFileExists
+  profileFileExists,
+  listProfiles
 } from './profile'
+import { buildLibrary, artDataUrl, LibraryScanner } from './library'
+import { realSteamDeps, type ArtKind } from './steamLibrary'
 import { CheatRuntime } from './cheatRuntime'
 import { HotkeyManager, HotkeyDeps } from './hotkeys'
 import {
@@ -964,6 +967,10 @@ export async function releaseTarget(): Promise<void> {
   }
 }
 
+const ART_KINDS: readonly ArtKind[] = ['portrait', 'hero', 'header', 'logo']
+const steamDeps = realSteamDeps()
+const libraryScanner = new LibraryScanner(steamDeps)
+
 export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   hotkeyManager.onFired((cheatId, outcome, error) => {
     pushToWindow(getWindow, 'hotkey:fired', { cheatId, outcome, error })
@@ -997,6 +1004,47 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   })
 
   ipcMain.handle('process:list', () => nativeAddon.listProcesses())
+
+  // ---- Game library (docs/superpowers/specs/2026-09-20-game-library-design.md) ----
+  // Installed Steam games with their cheat profile and running state. Read-only:
+  // it lists files and processes and never touches a game.
+  ipcMain.handle('library:list', (_e, force?: unknown) => {
+    const { games } = libraryScanner.scan(force === true)
+    const running = new Set(nativeAddon.listProcesses().map((p) => p.name.toLowerCase()))
+    return buildLibrary(games, listProfiles(), running)
+  })
+
+  // One cover image as a data URL, or null. Only the four known kinds, and the
+  // app id is checked again inside findArtFile before it becomes part of a path.
+  ipcMain.handle('library:art', (_e, appId: unknown, kind: unknown) => {
+    if (typeof appId !== 'string' || !ART_KINDS.includes(kind as ArtKind)) return null
+    const { root } = libraryScanner.scan()
+    return root === null ? null : artDataUrl(steamDeps, root, appId, kind as ArtKind)
+  })
+
+  // Starts the game through Steam. The id must be all digits: it goes into a URL
+  // handed to the shell, so nothing else is allowed anywhere near it.
+  ipcMain.handle('library:launch', async (_e, appId: unknown) => {
+    if (typeof appId !== 'string' || !/^d+$/.test(appId)) return false
+    try {
+      await shell.openExternal(`steam://rungameid/${appId}`)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  // Attaches to a running game by its profile's exe, through the same path the
+  // process picker uses. Returns the process name to use as the exe, or null when
+  // the game is not running. Attaching only reads; arming stays a user action.
+  ipcMain.handle('library:attach', async (_e, exe: unknown) => {
+    if (typeof exe !== 'string' || exe === '') return null
+    const stem = (n: string): string => n.replace(/.exe$/i, '').toLowerCase()
+    const proc = nativeAddon.listProcesses().find((p) => stem(p.name) === stem(exe))
+    if (!proc) return null
+    await attachTo(proc.pid, proc.name)
+    return proc.name
+  })
 
   ipcMain.handle('process:attach', (_e, pid: number) => {
     // The renderer only passes the pid; look the name up from the same

@@ -1324,7 +1324,7 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
   }
 
   return (
-    <div>
+    <div className="cheat-list">
       <h2>{exeName}</h2>
       {changedModules.length > 0 && (
         <div className="banner">

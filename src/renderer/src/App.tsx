@@ -1,7 +1,11 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './theme.css'
 import Sidebar from './components/Sidebar'
 import ProcessPicker from './screens/ProcessPicker'
+import Library from './screens/Library'
+import GamePage from './screens/GamePage'
+import { clearArtCache } from './gameArt'
+import { gameForExe, type LibraryGame } from './library'
 import CheatList from './screens/CheatList'
 import Scanner from './screens/Scanner'
 import MonoExplorer from './screens/MonoExplorer'
@@ -9,7 +13,15 @@ import UEExplorer from './screens/UEExplorer'
 import MemoryViewer from './screens/MemoryViewer'
 import ErrorBoundary from './components/ErrorBoundary'
 
-export type Screen = 'picker' | 'cheats' | 'scanner' | 'mono' | 'ue' | 'memory'
+export type Screen = 'library' | 'picker' | 'cheats' | 'scanner' | 'mono' | 'ue' | 'memory'
+
+// Screens that work on an attached process; with nothing attached there is
+// nothing for them to show.
+const NEEDS_ATTACH: readonly Screen[] = ['scanner', 'mono', 'ue', 'memory']
+
+// How often the library re-reads running state, so a game that was just
+// launched (or closed) shows up without a manual refresh.
+const LIBRARY_POLL_MS = 4000
 
 // A resolved Mono Explorer selection, handed from that screen to the cheat
 // list's creation forms. There is no routing/context layer in this
@@ -32,12 +44,52 @@ export type PendingUeSelection = { className: string; fieldName: string }
 
 export default function App() {
   const [exeName, setExeName] = useState<string | null>(null)
-  const [screen, setScreen] = useState<Screen>('picker')
+  const [screen, setScreen] = useState<Screen>('library')
+  const [games, setGames] = useState<LibraryGame[]>([])
+  const [libraryLoaded, setLibraryLoaded] = useState(false)
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(null)
   const [pendingMonoSelection, setPendingMonoSelection] = useState<PendingMonoSelection | null>(
     null
   )
   const [pendingUeSelection, setPendingUeSelection] = useState<PendingUeSelection | null>(null)
   const [jumpToAddress, setJumpToAddress] = useState<string | null>(null)
+
+  const refreshLibrary = useCallback(async (force = false) => {
+    try {
+      if (force) clearArtCache()
+      setGames(await window.tamper.listLibrary(force))
+    } catch {
+      // a failed scan leaves the last list on screen
+    } finally {
+      setLibraryLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshLibrary()
+    const timer = setInterval(() => refreshLibrary(), LIBRARY_POLL_MS)
+    return () => clearInterval(timer)
+  }, [refreshLibrary])
+
+  // The main process attaches on its own when a game with cheats starts and
+  // detaches when it closes; follow it, and pick up whatever is already attached.
+  useEffect(() => {
+    window.tamper.currentGame().then((s) => setExeName(s.exe))
+    window.tamper.onGameState((s) => setExeName(s.exe))
+  }, [])
+
+  // A tool screen with nothing attached has nothing to show: go home.
+  useEffect(() => {
+    if (!exeName && NEEDS_ATTACH.includes(screen)) setScreen('library')
+  }, [exeName, screen])
+
+  const selectedGame =
+    games.find((g) => g.appId === selectedAppId) ?? gameForExe(games, exeName)
+
+  function selectGame(game: LibraryGame) {
+    setSelectedAppId(game.appId)
+    setScreen('cheats')
+  }
 
   function onViewInMemory(address: string) {
     setJumpToAddress(address)
@@ -46,17 +98,34 @@ export default function App() {
 
   return (
     <div className="layout">
-      <Sidebar screen={screen} exeName={exeName} onNavigate={setScreen} />
+      <Sidebar
+        screen={screen}
+        exeName={exeName}
+        games={games}
+        selectedAppId={selectedGame?.appId ?? null}
+        onNavigate={setScreen}
+        onSelectGame={selectGame}
+      />
       <div className="main">
         {/* Keyed by screen: this boundary intentionally remounts on every
             navigation, so a crash on one screen auto-recovers the moment the
             user picks a different one from the sidebar, with no extra click
             needed on the fallback's "Try again" button. */}
         <ErrorBoundary key={screen}>
+          {screen === 'library' && (
+            <Library
+              games={games}
+              loaded={libraryLoaded}
+              onSelectGame={selectGame}
+              onRefresh={() => refreshLibrary(true)}
+            />
+          )}
           {screen === 'picker' && (
             <ProcessPicker
               onAttached={(name) => {
                 setExeName(name)
+                // Show the game that was attached, not one picked earlier.
+                setSelectedAppId(null)
                 setScreen('cheats')
               }}
             />
@@ -64,15 +133,19 @@ export default function App() {
           {/* The cheat list is mounted per visit on purpose: mounting is what
               reloads the saved cheats and re-checks every patch's status
               against the running game. */}
-          {screen === 'cheats' && exeName && (
-            <CheatList
-              exeName={exeName}
-              pendingMonoSelection={pendingMonoSelection}
-              onConsumePendingMonoSelection={() => setPendingMonoSelection(null)}
-              pendingUeSelection={pendingUeSelection}
-              onConsumePendingUeSelection={() => setPendingUeSelection(null)}
-              onViewInMemory={onViewInMemory}
-            />
+          {screen === 'cheats' && (selectedGame !== null || exeName) && (
+            <GamePage game={selectedGame} exeName={exeName} onAttached={setExeName}>
+              {exeName && (
+                <CheatList
+                  exeName={exeName}
+                  pendingMonoSelection={pendingMonoSelection}
+                  onConsumePendingMonoSelection={() => setPendingMonoSelection(null)}
+                  pendingUeSelection={pendingUeSelection}
+                  onConsumePendingUeSelection={() => setPendingUeSelection(null)}
+                  onViewInMemory={onViewInMemory}
+                />
+              )}
+            </GamePage>
           )}
           {screen === 'mono' && exeName && (
             <MonoExplorer

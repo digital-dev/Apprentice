@@ -56,6 +56,12 @@ contextBridge.exposeInMainWorld('tamper', {
   onGameState: (cb: (payload: { exe: string | null; pid: number | null; changedModules: string[] }) => void) =>
     ipcRenderer.on('game:state', (_e, payload) => cb(payload)),
   currentGame: () => ipcRenderer.invoke('game:current'),
+  // Game library: installed Steam games, their art, launching and attaching.
+  listLibrary: (force?: boolean) => ipcRenderer.invoke('library:list', force),
+  libraryArt: (appId: string, kind: 'portrait' | 'hero' | 'header' | 'logo') =>
+    ipcRenderer.invoke('library:art', appId, kind),
+  launchGame: (appId: string) => ipcRenderer.invoke('library:launch', appId),
+  attachToGame: (exe: string) => ipcRenderer.invoke('library:attach', exe),
   monoResolveClass: (namespaceName: string, className: string) =>
     ipcRenderer.invoke('mono:resolveClass', namespaceName, className),
   monoListFields: (classHandle: string) => ipcRenderer.invoke('mono:listFields', classHandle),

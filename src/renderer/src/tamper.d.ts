@@ -169,6 +169,25 @@ declare global {
         cb: (payload: { exe: string | null; pid: number | null; changedModules: string[] }) => void
       ) => void
       currentGame: () => Promise<{ exe: string | null; pid: number | null; changedModules: string[] }>
+      // Installed Steam games with the cheat profile each uses (exe null when
+      // Apprentice has none), the cheats it offers, and whether it is running.
+      listLibrary: (force?: boolean) => Promise<
+        {
+          appId: string
+          name: string
+          exe: string | null
+          cheatCount: number
+          running: boolean
+        }[]
+      >
+      // One cover image as a data URL, or null when Steam has none cached.
+      libraryArt: (
+        appId: string,
+        kind: 'portrait' | 'hero' | 'header' | 'logo'
+      ) => Promise<string | null>
+      launchGame: (appId: string) => Promise<boolean>
+      // The running process name for a profile exe (attached), or null.
+      attachToGame: (exe: string) => Promise<string | null>
       // Mono Explorer's read side. Resolve returns a class handle (an
       // opaque address, encoded as a hex string) or null when the class
       // isn't loaded yet / the runtime isn't attached; the two list calls

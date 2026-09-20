@@ -84,6 +84,8 @@ patch_ops) still call Win32 directly; porting them is a separate sub-project.
 
 ## src/main — decisions, all testable against a fake process
 
+**Game library** — `steamLibrary.ts` (finds Steam from the registry/default folders, reads `libraryfolders.vdf` and each `appmanifest_*.acf`, collects executables, locates cached cover art; registry and file system injected) and `library.ts` (ties games to cheat profiles via `profile.ts`'s `listProfiles`, running state, art as data URLs, a short-lived scan cache). Exposed as `library:*` IPC. Renderer: `screens/Library.tsx` (cover grid), `screens/GamePage.tsx` (header plus the cheat list, with the attach/waiting/unsupported states from `library.ts`'s `gamePageState`), `components/Sidebar.tsx` (My Games list, tools), `gameArt.ts` (lazy art cache, placeholders). See `docs/superpowers/specs/2026-09-20-game-library-design.md`.
+
 **`replay/`** — `snapshotFile.ts` (the `.snap` format: gzip of header JSON + region bytes with margins) and `replayOps.ts` (`ReplayOps`, a read-only `PatchOps` over a snapshot so the real `PatchEngine.locate()` runs against recorded game code). See `docs/superpowers/specs/2026-09-19-fixture-replay-design.md`. Tests: `tests/main/replay.synthetic.test.ts` (always; hand-assembled traps), `tests/replay/` (recorder, manifest suite, and the real tier that runs against local snapshots).
 
 | File | Lines | Responsibility |
