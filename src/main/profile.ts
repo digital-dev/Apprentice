@@ -74,6 +74,43 @@ function emptyProfile(exeName: string): GameProfile {
   return { schema: 2, exe: exeName.replace(/\.exe$/i, ''), modules: {}, cheats: [] }
 }
 
+export interface ProfileSummary {
+  exe: string
+  // Cheats a user sees: the internal capture patches that anchor other cheats are
+  // implementation detail and not counted.
+  cheatCount: number
+}
+
+// Every shipped profile in the games folder, for the game library to match
+// installed games against. Drafts (*.draft.json) are work in progress and not
+// listed; a file that will not parse is skipped rather than failing the list.
+export function listProfiles(): ProfileSummary[] {
+  let files: string[]
+  try {
+    files = fs.readdirSync(gamesDir)
+  } catch {
+    return []
+  }
+  const out: ProfileSummary[] = []
+  for (const file of files) {
+    if (!/\.json$/i.test(file) || /\.draft\.json$/i.test(file)) continue
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(gamesDir, file), 'utf-8')) as {
+        exe?: unknown
+        cheats?: { internal?: boolean }[]
+      }
+      if (!Array.isArray(parsed.cheats)) continue
+      out.push({
+        exe: typeof parsed.exe === 'string' ? parsed.exe : file.replace(/\.json$/i, ''),
+        cheatCount: parsed.cheats.filter((c) => !c.internal).length
+      })
+    } catch {
+      // unreadable or not JSON: not a profile
+    }
+  }
+  return out
+}
+
 export function loadProfile(exeName: string): GameProfile {
   const file = filePathFor(exeName)
   if (!fs.existsSync(file)) return emptyProfile(exeName)
