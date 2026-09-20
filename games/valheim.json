@@ -265,6 +265,38 @@
       "sourceRegister": "xmm2",
       "value": 10000,
       "dataType": "float"
+    },
+    {
+      "id": "mono-auto-pickup-range",
+      "name": "Longer Auto Pickup Range",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_autoPickupRange"
+        }
+      ],
+      "value": 8,
+      "offValue": 2
+    },
+    {
+      "id": "mono-max-place-distance",
+      "name": "Longer Build/Remove Reach",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_maxPlaceDistance"
+        }
+      ],
+      "value": 30,
+      "offValue": 8
     }
   ]
 }
