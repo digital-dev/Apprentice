@@ -110,7 +110,7 @@
     },
     {
       "id": "mono-no-placement-cost",
-      "name": "No Placement Cost",
+      "name": "Easy Build",
       "dataType": "int8",
       "mode": "freeze",
       "targets": [
@@ -127,7 +127,8 @@
         "cheat-tag-pieces-1",
         "cheat-tag-pieces-2",
         "cheat-tag-drops-1",
-        "cheat-tag-drops-2"
+        "cheat-tag-drops-2",
+        "easy-build-no-station-extension"
       ]
     },
     {
@@ -395,6 +396,23 @@
       "moduleOffset": null,
       "monoClass": "Piece",
       "monoMethod": "DropResources",
+      "monoSearch": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "easy-build-no-station-extension",
+      "name": "Easy Build: Station Extensions",
+      "internal": true,
+      "originalBytes": "c787c809000007000000",
+      "replacementBytes": "c787c809000000000000",
+      "length": 10,
+      "signature": "c7 87 c8 09 00 00 07 00 00 00 f3 41 0f 10 86 cc 00 00 00",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Player",
+      "monoMethod": "UpdatePlacementGhost",
       "monoSearch": true
     }
   ]

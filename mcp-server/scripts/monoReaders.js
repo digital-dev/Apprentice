@@ -8,6 +8,11 @@ const raw = require(path.resolve(__dirname, '../../native/build/Release/memory_a
 const { classifyEngine } = require(root + '/engineFingerprint.js')
 const [pid, re, offs] = process.argv.slice(2)
 const classRe = new RegExp(re)
+// Compiling methods in bulk has crashed Valheim and Aviassembly (0xe0000001 in KERNELBASE, four times). Name the methods, or say FORCE=1.
+if (!process.env.METHODS && !process.env.FORCE) {
+  console.error('refusing to compile a whole class: set METHODS=<regex of method names> (or FORCE=1 if you accept the crash risk)')
+  process.exit(2)
+}
 const needles = offs.split(',').map((o) => '+0x' + o.replace(/^0x/, '').toUpperCase() + ']')
 const { handle } = addon.attach(Number(pid))
 const mono = classifyEngine(addon.listModules(handle)).monoDllBase
@@ -28,12 +33,12 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
         try { addr = await raw.monoCompileMethod(handle, mono, c.classHandle, m) } catch { continue }
         if (!addr || addr === '0x0') continue
         let hex = ''
-        for (let o = 0; o < 0x800; o += 0x400) { const h = addon.tryReadBytes(handle, '0x' + (BigInt(addr) + BigInt(o)).toString(16), 0x400); if (!h) break; hex += h }
+        for (let o = 0; o < 0x6000; o += 0x400) { const h = addon.tryReadBytes(handle, '0x' + (BigInt(addr) + BigInt(o)).toString(16), 0x400); if (!h) break; hex += h }
         let body = Buffer.from(hex, 'hex')
         // Methods end at int3 padding or, for tiny packed accessors, a run of zero bytes.
-        const pads = [body.indexOf(Buffer.from('cccccc', 'hex')), body.indexOf(Buffer.alloc(8))].filter((i) => i > 0)
+        const pads = [body.indexOf(Buffer.from('cccccc', 'hex')), body.indexOf(Buffer.alloc(16))].filter((i) => i > 0)
         if (pads.length) body = body.subarray(0, Math.min(...pads))
-        let rows = addon.disassembleBuffer(body, addr, 400)
+        let rows = addon.disassembleBuffer(body, addr, 4000)
         // Small accessors are packed back to back without padding: end the method at a ret that is followed by a new prologue.
         const cut = rows.findIndex((r, i) => i > 0 && /^ret/.test(rows[i - 1].text) && /^(sub rsp|push r|mov \[rsp\])/.test(r.text))
         if (cut > 0) rows = rows.slice(0, cut)

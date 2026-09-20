@@ -202,3 +202,9 @@ is where to look next.
 only, so it returns the first; a lift patch needs the overload picked by signature.
 
 Decision (2026-09-20): Extra Lift is dropped as moot. Low Plane Mass and Weightless Cargo already remove the weight the lift would have to carry. Low Gravity stays dropped for the reason above.
+
+### Correction (2026-09-20)
+
+Every "no reader found" result above (fog, races, gravity, lift, unbreakable's missing `ExplodePlane` caller) came from `monoReaders.js` while it read only
+the first 2 KB of each method. For large methods those searches were incomplete, so treat them as inconclusive, not negative. The positive findings
+(fuel weight, drag multiplier, cargo capacity, cargo mass, the explode call sites) stand, since a hit is a hit.

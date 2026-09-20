@@ -15,7 +15,7 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
       let hex = ''
       for (let o = 0; o < 0x1000; o += 0x400) { const h = addon.tryReadBytes(handle, '0x' + (BigInt(addr) + BigInt(o)).toString(16), 0x400); if (!h) break; hex += h }
       let full = Buffer.from(hex, 'hex')
-      const pads = [full.indexOf(Buffer.from('cccccc', 'hex')), full.indexOf(Buffer.alloc(8))].filter((i) => i > 0)
+      const pads = [full.indexOf(Buffer.from('cccccc', 'hex')), full.indexOf(Buffer.alloc(16))].filter((i) => i > 0)
       if (pads.length) full = full.subarray(0, Math.min(...pads))
       let rows = addon.disassembleBuffer(full, addr, 600)
       const cut = rows.findIndex((r, i) => i > 3 && /^ret/.test(rows[i - 1].text) && /^(sub rsp|push r|mov \[rsp\])/.test(r.text))

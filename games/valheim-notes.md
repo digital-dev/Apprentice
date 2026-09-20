@@ -76,3 +76,18 @@ earlier searches of about a dozen methods were fine. Do not compile methods in V
 Verified live (2026-09-20, after the user turned on No Placement Cost and placed and dismantled a piece): all four patches applied, each matching exactly
 once in patched form and zero times in original form, so `monoSearch` works end to end in the app. The inventory afterwards showed no newly flagged items
 (only the `ironnails` stack from before stayed flagged). Not shown: a piece that was tagged BEFORE the patches, dismantled with the drop patches on.
+
+### Correction: the reader searches were capped (2026-09-20)
+
+`monoReaders.js` read only the first 2 KB of each method until this date, so any search of a large method looked at its start only. Re-running the
+`ItemData.m_cheated` (+0x61) writer search with the cap fixed: the crafting, placement and pickup batch is still empty, but `CharacterDrop.DropItems`
+also stores to it (`mov [rax+0x61], sil`, `sil` being the caller's fourth argument), so creature loot can flag items too. Who passes that argument, and
+whether one of our cheats influences it, is not yet known; the earlier statement that `Piece.DropResources` is the only writer was too strong.
+The anti-tag companions cover `Piece.DropResources` only.
+
+### Easy Build (was No Placement Cost)
+
+Renamed. It now carries a companion, `easy-build-no-station-extension`: in `Player.UpdatePlacementGhost` the game sets `m_placementStatus = 7`
+(`$msg_extensionmissingstation`, "needs to be placed near the appropriate crafting station") when a station extension has no station in range; the patch
+writes `0` (Valid) at that one store (`+0xb3b`, `monoSearch`, signature verified unique). NOT covered: the ordinary "requires a workbench" rule for regular
+pieces, which lives in the second `Player.HaveRequirements` overload; overloads cannot be selected by name in this engine or my tools.
