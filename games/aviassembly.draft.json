@@ -4,74 +4,6 @@
   "modules": {},
   "cheats": [
     {
-      "id": "avi-no-fog-of-war",
-      "name": "No Fog of War",
-      "dataType": "int8",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "mono",
-          "className": "Map",
-          "staticFieldName": "m_Instance",
-          "instanceFieldName": "useFogOfWar"
-        }
-      ],
-      "value": 0,
-      "offValue": 1,
-      "note": "Map.useFogOfWar is 1 (bool) in a normal game. From the field name and default only; not run in-game."
-    },
-    {
-      "id": "avi-unlock-races",
-      "name": "Unlock Races",
-      "dataType": "int8",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "mono",
-          "className": "GameManager",
-          "staticFieldName": "m_Instance",
-          "instanceFieldName": "unlockRaces"
-        }
-      ],
-      "value": 1,
-      "offValue": 0,
-      "note": "GameManager.unlockRaces is 0 by default. From the field name only; not run in-game."
-    },
-    {
-      "id": "avi-low-gravity",
-      "name": "Low Gravity",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "mono",
-          "className": "PlaneContainer",
-          "staticFieldName": "m_Instance",
-          "instanceFieldName": "planeGravityMultiplier"
-        }
-      ],
-      "value": 0.5,
-      "offValue": 1.5,
-      "note": "PlaneContainer.planeGravityMultiplier reads 1.5 (helicopterGravityMultiplier too). Name and default only; not run in-game."
-    },
-    {
-      "id": "avi-extra-lift",
-      "name": "Extra Lift x1.5",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "mono",
-          "className": "PlaneContainer",
-          "staticFieldName": "m_Instance",
-          "instanceFieldName": "liftMultiplier"
-        }
-      ],
-      "value": 1.5,
-      "offValue": 1,
-      "note": "PlaneContainer.liftMultiplier reads exactly 1.0. Name and default only; not run in-game."
-    },
-    {
       "id": "avi-weightless-fuel",
       "name": "Weightless Fuel",
       "dataType": "float",
@@ -86,7 +18,7 @@
       ],
       "value": 0,
       "offValue": 0.4,
-      "note": "PlaneContainer.fuelWeight reads 0.4 (mass added per unit of fuel). Name and default only; not run in-game."
+      "note": "Code-supported: FuelTank.UpdatePart and FuelTank.GetPartStats both read [container+0x80] (fuelWeight) from the PlaneContainer singleton. Field resolves live at 0.4. Not run in-game."
     },
     {
       "id": "avi-low-drag",
@@ -103,7 +35,7 @@
       ],
       "value": 0.5,
       "offValue": 1.2,
-      "note": "DragSimulator.dragMultiplier reads 1.2. Name and default only; not run in-game."
+      "note": "Code-supported: DragSimulator.CalculateDragFactor multiplies its result by this+0x4C (dragMultiplier). Field resolves live at 1.2. Not run in-game."
     }
   ]
 }

@@ -119,19 +119,27 @@ onto direct mono resolution.
 
 `mcp-server/scripts/surveyMono.js` lists every game class with a live `Singleton<T>` instance (32 in a loaded save) with
 field offsets and current values. `author_cheats` now also finds these roots (inherited `m_Instance`), so it drafts
-`Unlimited Money` on its own. It has no plane-game categories, so the rest came from the survey:
+`Unlimited Money` on its own. It has no plane-game categories, so the rest came from the survey, then
+`scripts/monoReaders.js` (compiles a class's methods, prints who touches an offset, with context) checked the code.
 
-| Draft | Field | Live default |
+**Code-supported, drafted in `aviassembly.draft.json` (not run in-game):**
+
+| Draft | Field | Evidence |
 |---|---|---|
-| No Fog of War | `Map.useFogOfWar` | 1 |
-| Unlock Races | `GameManager.unlockRaces` | 0 |
-| Low Gravity | `PlaneContainer.planeGravityMultiplier` | 1.5 |
-| Extra Lift x1.5 | `PlaneContainer.liftMultiplier` | 1.0 |
-| Weightless Fuel | `PlaneContainer.fuelWeight` | 0.4 |
-| Low Drag | `DragSimulator.dragMultiplier` | 1.2 |
+| Weightless Fuel | `PlaneContainer.fuelWeight` (0.4) | `FuelTank.UpdatePart` and `GetPartStats` read `[container+0x80]` from the container singleton |
+| Low Drag | `DragSimulator.dragMultiplier` (1.2) | `DragSimulator.CalculateDragFactor` multiplies its result by `this+0x4C` |
 
-Meaning rests on the managed field names and their default values only. Not yet checked against the JIT'd readers
-(`scripts/monoReaders.js` does that, but compiles methods inside the game, see below) and not run in-game.
+**Leads with no reader found (not drafted):**
 
-Stability: the game crashed (`0xe0000001` in KERNELBASE) shortly after the survey, the same signature as the early
-crashes above. The survey makes a few hundred injected Mono calls, so treat heavy passes as a possible trigger.
+| Field | What the search showed |
+|---|---|
+| `PlaneContainer.liftMultiplier` (1.0, +0x74) | written in `Awake`, read in `GetLiniarDamping`. The lift force path, `Wing.GetMaxLiftForce`, reads its own `this+0x74`, so an effect on lift is not shown |
+| `PlaneContainer.planeGravityMultiplier` (1.5, +0x6c) | no reader in PlaneContainer, PlaneController, FuelTank, PlaneStats, Wing, Engine, Airbreak, Balloon, Fuselage, PartDrag, AirTurbine |
+| `Map.useFogOfWar` (1, +0xb8) | no reader in Map, FogOfWar, MapBackground, MapIcon, AirportMapIcon, MapInspector |
+| `GameManager.unlockRaces` (0, +0x64) | only hit is `GameManager.Load` using +0x64 as an int counter, which contradicts a bool |
+
+Also seen: `PlaneContainer.ApplyAngularDrag` reads `yawDrag`/`pitchDrag`, another drag knob.
+
+Stability: the game crashed (`0xe0000001` in KERNELBASE) shortly after the first survey, the same signature as the early
+crashes above; it survived the light check and eight `monoReaders` runs over the classes named here. Treat heavy passes as a
+possible trigger.

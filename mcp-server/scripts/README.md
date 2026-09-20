@@ -44,3 +44,10 @@ per Unity version, so re-verify on another game.
 
 `node authorNativeLive.js <pid> <profilePath> <category,...>` runs the native (non-Unity) `author_cheats` path against an
 attached game without the MCP server. Needs `npm run build` first. Known games are in `src/factory/nativeGames.ts`.
+
+## Mono scripts
+
+`surveyMono.js <pid> <out> [classRegex]` lists game classes with a live singleton, their fields, offsets and current values.
+`monoReaders.js <pid> "<classRegex>" <offset,...>` compiles those classes' methods inside the game and prints instructions that
+touch the offsets (`CONTEXT=n` adds preceding instructions so you can see where the base register came from). Offsets collide
+across objects, so read the context before crediting a hit to a field. `authorMonoLive.js` runs `author_cheats` without the MCP server.

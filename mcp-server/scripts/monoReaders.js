@@ -26,8 +26,13 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
         let body = Buffer.from(hex, 'hex')
         const pad = body.indexOf(Buffer.from('cccccc', 'hex'))
         if (pad > 0) body = body.subarray(0, pad)
-        const hits = addon.disassembleBuffer(body, addr, 400).filter((r) => needles.some((n) => r.text.includes(n)))
-        if (hits.length) { console.log(`${c.className}.${m}  @${addr}`); for (const h of hits) console.log('    ', h.text) }
+        const rows = addon.disassembleBuffer(body, addr, 400)
+        const ctx = Number(process.env.CONTEXT || 0)
+        const idx = rows.map((r, i) => (needles.some((n) => r.text.includes(n)) ? i : -1)).filter((i) => i >= 0)
+        if (idx.length) {
+          console.log(`${c.className}.${m}  @${addr}`)
+          for (const i of idx) { for (let k = Math.max(0, i - ctx); k < i; k++) console.log('       ', rows[k].text); console.log('    >>', rows[i].text) }
+        }
       }
     }
   }
