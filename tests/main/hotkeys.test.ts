@@ -59,11 +59,19 @@ class FakeDeps implements HotkeyDeps {
   isFreezeEnabled(cheatId: string): boolean {
     return this.freezeEnabled.has(cheatId)
   }
-  enableFreeze(cheat: CheatDefinition): void {
+  enabled: string[] = []
+  disabled: string[] = []
+  // Held open by a test to keep a toggle in flight.
+  gate: Promise<void> | null = null
+  async enableFreeze(cheat: CheatDefinition): Promise<void> {
+    if (this.gate) await this.gate
     this.freezeEnabled.add(cheat.id)
+    this.enabled.push(cheat.id)
   }
-  disableFreeze(cheatId: string): void {
-    this.freezeEnabled.delete(cheatId)
+  async disableFreeze(cheat: CheatDefinition): Promise<void> {
+    if (this.gate) await this.gate
+    this.freezeEnabled.delete(cheat.id)
+    this.disabled.push(cheat.id)
   }
   async oneShot(): Promise<boolean> {
     return this.oneShotResult
@@ -113,18 +121,45 @@ describe('HotkeyManager', () => {
     expect(deps.registered).toHaveLength(3)
   })
 
-  it('toggles a freeze cheat on, then off, on successive fires', () => {
+  it('toggles a freeze cheat on, then off, on successive fires', async () => {
     manager.registerAll('game.exe')
     const outcomes: HotkeyOutcome[] = []
     manager.onFired((_id, outcome) => outcomes.push(outcome))
+    const settle = () => new Promise((r) => setTimeout(r, 0))
 
     deps.registered.find((r) => r.accelerator === 'F1')?.callback()
+    await settle()
     expect(deps.freezeEnabled.has('freeze1')).toBe(true)
     expect(outcomes).toEqual(['on'])
 
     deps.registered.find((r) => r.accelerator === 'F1')?.callback()
+    await settle()
     expect(deps.freezeEnabled.has('freeze1')).toBe(false)
     expect(outcomes).toEqual(['on', 'off'])
+  })
+
+  it('goes through the shared disable path, so a hotkey toggle-off can restore the value', async () => {
+    manager.registerAll('game.exe')
+    const settle = () => new Promise((r) => setTimeout(r, 0))
+    deps.registered.find((r) => r.accelerator === 'F1')?.callback()
+    await settle()
+    deps.registered.find((r) => r.accelerator === 'F1')?.callback()
+    await settle()
+    expect(deps.enabled).toEqual(['freeze1'])
+    expect(deps.disabled).toEqual(['freeze1'])
+  })
+
+  it('ignores a second press while the first toggle is still in flight', async () => {
+    manager.registerAll('game.exe')
+    let release!: () => void
+    deps.gate = new Promise<void>((r) => (release = r))
+    const fire = () => deps.registered.find((r) => r.accelerator === 'F1')?.callback()
+    fire()
+    fire() // would race the first (capturing the value) if it were let through
+    release()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(deps.enabled).toEqual(['freeze1'])
+    expect(deps.disabled).toEqual([])
   })
 
   it('always reports a one-shot as applied, never on/off', async () => {

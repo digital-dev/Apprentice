@@ -199,6 +199,9 @@ export interface CheatDefinition {
   // cheat that causes it instead of being a second toggle. A companion patch shared by several cheats stays armed until
   // the last of them is turned off (see companions.ts).
   companions?: string[]
+  // Leave the value as it is when this freeze cheat is turned off. By default disabling restores what the targets held when it was
+  // enabled (or offValue, when set); see restorePolicy.ts. Only for a cheat where keeping the value is the point.
+  keepOnDisable?: boolean
   // Written once, to every target, the moment this cheat is disabled — see
   // freezeLoop.ts's disable()/FreezeLoop.disable doc. A freeze cheat's
   // disable has always meant "stop re-asserting `value`," never "put it

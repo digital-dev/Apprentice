@@ -10,8 +10,9 @@ import {
 export interface HotkeyDeps {
   loadCheats(exeName: string): StoredCheat[]
   isFreezeEnabled(cheatId: string): boolean
-  enableFreeze(cheat: CheatDefinition): void
-  disableFreeze(cheatId: string): void
+  // Async because enabling captures the value to restore and disabling writes it back (see restorePolicy.ts).
+  enableFreeze(cheat: CheatDefinition): Promise<void>
+  disableFreeze(cheat: CheatDefinition): Promise<void>
   oneShot(cheat: CheatDefinition): Promise<boolean>
   isPatchArmed(patchId: string): boolean
   armPatch(patch: PatchCheat): void
@@ -48,6 +49,8 @@ export class HotkeyManager {
   // already ran — e.g. the renderer mounting after process:attach's
   // synchronous registerAll — can still pull whatever it missed.
   private lastConflicts: { name: string; hotkey: string }[] = []
+  // A second press while a toggle is still capturing or restoring would race it.
+  private toggling = new Set<string>()
 
   constructor(deps: HotkeyDeps) {
     this.deps = deps
@@ -131,13 +134,14 @@ export class HotkeyManager {
       return
     }
     // freeze mode: toggle.
-    if (this.deps.isFreezeEnabled(cheat.id)) {
-      this.deps.disableFreeze(cheat.id)
-      this.firedCb?.(cheat.id, 'off')
-    } else {
-      this.deps.enableFreeze(cheat)
-      this.firedCb?.(cheat.id, 'on')
-    }
+    if (this.toggling.has(cheat.id)) return
+    this.toggling.add(cheat.id)
+    const wasEnabled = this.deps.isFreezeEnabled(cheat.id)
+    const action = wasEnabled ? this.deps.disableFreeze(cheat) : this.deps.enableFreeze(cheat)
+    void action
+      .then(() => this.firedCb?.(cheat.id, wasEnabled ? 'off' : 'on'))
+      .catch((err) => this.firedCb?.(cheat.id, 'error', err instanceof Error ? err.message : 'Toggle failed.'))
+      .finally(() => this.toggling.delete(cheat.id))
   }
 
   private firePatch(patch: PatchCheat): void {

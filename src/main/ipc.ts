@@ -51,6 +51,7 @@ import { buildLibrary, artDataUrl, LibraryScanner } from './library'
 import { realSteamDeps, type ArtKind } from './steamLibrary'
 import { CheatRuntime } from './cheatRuntime'
 import { CompanionTracker } from './companions'
+import { restoreKind } from './restorePolicy'
 import { HotkeyManager, HotkeyDeps } from './hotkeys'
 import {
   ScriptRuntime,
@@ -733,6 +734,34 @@ const companions = new CompanionTracker({
   disarm: (patch) => cheatRuntime.disarm(patch.id, patch)
 })
 
+// Writes back what turning a freeze cheat off should leave behind (restorePolicy.ts): the reading captured when it was enabled, or its fixed
+// offValue. Every disable path goes through this: a click, a hotkey, a delete and the quit or process-switch sweep.
+async function restoreFrozen(handle: number | null, cheat: CheatDefinition): Promise<void> {
+  const kind = restoreKind(cheat)
+  if (kind === 'capture') await restoreCapturedCheat(handle, cheat)
+  else if (kind === 'value' && handle !== null) await writeCheat(handle, { ...cheat, value: cheat.offValue as number })
+}
+
+// The one place a freeze cheat is switched on or off, shared by the UI toggle and the hotkey. The reading is captured BEFORE the loop starts
+// overwriting the field, and restored AFTER it has stopped, so the last write cannot land on top of the restore.
+async function startFreeze(cheat: CheatDefinition): Promise<void> {
+  if (restoreKind(cheat) === 'capture' && attachedHandle !== null) {
+    const statuses = await verifyCheat(attachedHandle, cheat, null)
+    captureStore.capture(
+      cheat.id,
+      statuses.map((s) => s.value)
+    )
+  }
+  freezeLoop.enable(cheat)
+  companions.enable(cheat.id, cheat.companions)
+}
+
+async function stopFreeze(cheat: CheatDefinition): Promise<void> {
+  freezeLoop.disable(cheat.id)
+  await restoreFrozen(attachedHandle, cheat)
+  companions.disable(cheat.id)
+}
+
 // Real HotkeyDeps: wraps the electron globalShortcut module and this
 // file's own freezeLoop/patchEngine/cheatRuntime/loadCheats/writeCheat —
 // the same operations cheats:toggleFreeze/cheats:oneShot/patch:apply/
@@ -761,14 +790,8 @@ function resolveScriptAnchorsFor(cheat: ScriptCheat): Record<string, LuaValue> {
 const hotkeyDeps: HotkeyDeps = {
   loadCheats,
   isFreezeEnabled: (cheatId) => freezeLoop.isEnabled(cheatId),
-  enableFreeze: (cheat) => {
-    freezeLoop.enable(cheat)
-    companions.enable(cheat.id, cheat.companions)
-  },
-  disableFreeze: (cheatId) => {
-    freezeLoop.disable(cheatId)
-    companions.disable(cheatId)
-  },
+  enableFreeze: (cheat) => startFreeze(cheat),
+  disableFreeze: (cheat) => stopFreeze(cheat),
   oneShot: async (cheat) => (attachedHandle === null ? false : writeCheat(attachedHandle, cheat)),
   isScriptEnabled: (cheatId) => scriptRuntime.isEnabled(cheatId),
   runScriptEnable: (cheat) => scriptRuntime.enable(cheat, resolveScriptAnchorsFor(cheat)),
@@ -926,20 +949,10 @@ export function startWatching(getWindow: () => BrowserWindow): void {
 // documented "just stop writing" behavior).
 async function restoreActiveFreezeCheats(handle: number | null): Promise<void> {
   const cheats = freezeLoop.activeCheats()
-  await Promise.all(
-    cheats.map((c) => (c.captureOriginal ? restoreCapturedCheat(handle, c) : Promise.resolve()))
-  )
-  if (handle !== null) {
-    await Promise.all(
-      cheats
-        .filter((c) => !c.captureOriginal && c.offValue !== undefined)
-        .map((c) => writeCheat(handle, { ...c, value: c.offValue as number }))
-    )
-  }
-  for (const cheat of cheats) {
-    freezeLoop.disable(cheat.id)
-    companions.disable(cheat.id)
-  }
+  // Stop every write first, then put the values back (restorePolicy.ts decides what "back" is for each cheat).
+  for (const cheat of cheats) freezeLoop.disable(cheat.id)
+  await Promise.all(cheats.map((c) => restoreFrozen(handle, c)))
+  for (const cheat of cheats) companions.disable(cheat.id)
 }
 
 // Called on app quit (from index.ts) so Tamper never leaves a game's code
@@ -1121,11 +1134,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     if (freezeLoop.isEnabled(cheatId)) {
       const stored = loadCheats(exeName).find((c) => c.id === cheatId)
       if (stored && !isPatchCheat(stored) && !isScriptCheat(stored)) {
-        if (stored.captureOriginal) {
-          await restoreCapturedCheat(attachedHandle, stored)
-        } else if (stored.offValue !== undefined && attachedHandle !== null) {
-          await writeCheat(attachedHandle, { ...stored, value: stored.offValue })
-        }
+        // Stop the loop first so its next write cannot land on top of the restore.
+        freezeLoop.disable(cheatId)
+        await restoreFrozen(attachedHandle, stored)
       }
     }
     // A capture left behind for a cheat deleted while disabled (never
@@ -1159,20 +1170,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle('cheats:toggleFreeze', async (_e, cheat: CheatDefinition, enabled: boolean) => {
     if (enabled) {
-      // Capture each target's LIVE reading before the freeze loop starts
-      // overwriting it — see CheatDefinition.captureOriginal's doc in
-      // store.ts. Must happen before freezeLoop.enable() below, or the
-      // first tick could already have written the cheat's value by the time
-      // this reads "current".
-      if (cheat.captureOriginal && attachedHandle !== null) {
-        const statuses = await verifyCheat(attachedHandle, cheat, null)
-        captureStore.capture(
-          cheat.id,
-          statuses.map((s) => s.value)
-        )
-      }
-      freezeLoop.enable(cheat)
-      companions.enable(cheat.id, cheat.companions)
+      // Captures each target's LIVE reading first (see startFreeze), so a disable can put it back.
+      await startFreeze(cheat)
       return
     }
     // captureOriginal takes priority over offValue — see
