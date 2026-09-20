@@ -200,3 +200,5 @@ is where to look next.
 
 `monoReaders.js` `CALLEE=` now takes several addresses. `GetLiftForce` has two overloads and `monoCompileMethod` resolves by name
 only, so it returns the first; a lift patch needs the overload picked by signature.
+
+Decision (2026-09-20): Extra Lift is dropped as moot. Low Plane Mass and Weightless Cargo already remove the weight the lift would have to carry. Low Gravity stays dropped for the reason above.
