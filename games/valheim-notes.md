@@ -72,3 +72,7 @@ the app (it compiles the method in the game), and `cheat-tag-pieces-1` matching 
 
 Stability: compiling about 60 methods across `Player`, `Piece` and neighbours crashed the game a third time (16:08, the same KERNELBASE fault);
 earlier searches of about a dozen methods were fine. Do not compile methods in Valheim without an explicit go-ahead; signature scans are safe.
+
+Verified live (2026-09-20, after the user turned on No Placement Cost and placed and dismantled a piece): all four patches applied, each matching exactly
+once in patched form and zero times in original form, so `monoSearch` works end to end in the app. The inventory afterwards showed no newly flagged items
+(only the `ironnails` stack from before stayed flagged). Not shown: a piece that was tagged BEFORE the patches, dismantled with the drop patches on.
