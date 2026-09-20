@@ -50,6 +50,8 @@ and it is read-only (no write/patch/inject tools).
 | `thread_ops.cc` | 78 | `listThreads`/`getThreadRegisters` JS-facing wrappers over the platform layer. |
 | `memory_ops.cc` | 98 | `readValue` / `writeValue` through an offset chain, generalized over every `DataType` width. |
 | `addon.cc` | 113 | N-API export table (36 exports — see below). |
+| `sigbuild.cc` | 283 | **The AOB signature builder**, extracted from `write_watch.cc`: `BuildSignature(SigMemory&, insnAddr, insnBytes)` covers the caught instruction plus its method (lead-in back to the method start or region edge, forward to `ret`/48 bytes), wildcarding RIP-relative displacements and imm64s. Reads code only through the `SigMemory` interface (`sigbuild.h`), which has a live-process implementation (`write_watch.cc`) and a snapshot one (`snapshot_ops.cc`). `aob.h` holds the shared `PatternByte`/`ParseSignature`. |
+| `snapshot_ops.cc` | 236 | **Replay support.** `listExecRegions`, `readRegionBuffer` (bulk read for the recorder) and the `snapshot*` exports (`snapshotBuildSignature`, `snapshotScanAob`, `snapshotDecodeRun`) that run the builder, the AOB scan and `decodeRun` over recorded regions instead of a process. Snapshot reads are all-or-nothing across a region plus its recorded margins, mirroring live `ReadProcessMemory`; margins are never scanned. |
 | `module_info.cc` | 37 | `listModules`: every module loaded in the target (name, base, `SizeOfImage`, `TimeDateStamp`, version string) — the PE fields a build fingerprint is made of. Returns `[]` rather than throwing on a protected/exiting process. |
 | `chain_walk.h` | 55 | Shared forward pointer-walk helper, hoisted out of `mono_bridge.cc`/`pointer.cc` duplication. |
 | `protected_write.h` | 161 | Shared protect → write → restore → flush helper every write path (patch, Lua, UI byte edit) routes through, so a failed write is reported rather than silently dropped or left unprotected. |
@@ -81,6 +83,8 @@ patch_ops) still call Win32 directly; porting them is a separate sub-project.
 ---
 
 ## src/main — decisions, all testable against a fake process
+
+**`replay/`** — `snapshotFile.ts` (the `.snap` format: gzip of header JSON + region bytes with margins) and `replayOps.ts` (`ReplayOps`, a read-only `PatchOps` over a snapshot so the real `PatchEngine.locate()` runs against recorded game code). See `docs/superpowers/specs/2026-09-19-fixture-replay-design.md`. Tests: `tests/main/replay.synthetic.test.ts` (always; hand-assembled traps), `tests/replay/` (recorder, manifest suite, and the real tier that runs against local snapshots).
 
 | File | Lines | Responsibility |
 |---|---|---|

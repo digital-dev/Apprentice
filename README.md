@@ -97,6 +97,26 @@ The installer is not code-signed, so Windows SmartScreen will warn on first run.
 toolchain pins (Windows 2022 image, Python 3.11, Node 22 to build the addon and Node 26 to
 run the tests) each exist for a specific reason, recorded as comments in the workflow.
 
+### Fixture replay: testing signatures against real games offline
+
+Signature building and patch relocation are where real games broke things the
+harness never could (identical JIT copies, code near a region edge). Fixture
+replay records a game's executable memory once, then re-runs the real signature
+builder and `PatchEngine.locate()` against that recording on any machine.
+
+```bash
+# with the game running
+node mcp-server/scripts/recordSnapshot.js <pid> valheim <build-label> fixtures/snapshots/valheim-<build>.snap      <patchId>:<address>:<length>
+```
+
+Add the site to `tests/fixtures/manifest.json` (signature, offset, original
+bytes, snapshot SHA-256), then `npx vitest run tests/replay`. Snapshots contain
+the game's code, so they stay local (`fixtures/snapshots/` is gitignored and the
+recorder refuses to write elsewhere in the repo); a site whose snapshot is not on
+your machine is skipped, and CI runs only the synthetic tier
+(`tests/main/replay.synthetic.test.ts`). A snapshot is a best-effort copy of a
+running process, so record with the game idle at a menu, not mid-load.
+
 ### The native test harness
 
 `tests/native/*.test.ts` don't touch a real game — they drive

@@ -21,6 +21,7 @@ name (no namespace). They assume Unity IL2CPP with the layout in
 | `makeReplace.js` | Build a persistent patch entry for an instruction span (`MINLEN`, `BYTES`, `ROWS` env vars; `AT=<address>` to pick an exact instruction). Grows the signature until it matches exactly once. Emits `replace` mode; change `mode` to `scale` and add `sourceRegister` and `value` for a scale patch. |
 | `makeCapture.js` | Build a `capture` patch on a class's best hook site, as the factory would. |
 | `watchBehaviours.js` | Example live watcher: poll fields while the game does something and log only changes. Written for one NPC class; adapt the class and offsets. |
+| `recordSnapshot.js` | Record a game's executable memory (plus the readable margins around each region) to a local `.snap` for offline replay: `node recordSnapshot.js <pid> <game> <build> <out.snap> [id:address:length ...]`. Read-only; refuses to write game code inside the repo except `fixtures/snapshots/`. See "Fixture replay" in the top-level README. Loads the addon directly, so no `npm run build` needed. |
 | `authorLive.js` | Run `author_cheats` for a category list without the MCP server attached. |
 
 ## Method (what these are for)

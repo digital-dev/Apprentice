@@ -18,14 +18,14 @@ export const TWIN_STORE_LEN = 5
 // launches), then the store we care about at +21:
 //   push rbp; mov rbp,rsp; lea rax,[rip+disp32]; movabs r11,imm64;
 //   mov [rcx+0x18],eax; pop rbp; ret
-export function relocBody(disp32: number, imm64: bigint): Buffer {
+export function relocBody(disp32: number, imm64: bigint, storeDisp = 0x18): Buffer {
   const lea = Buffer.alloc(7)
   lea.set([0x48, 0x8d, 0x05], 0)
   lea.writeInt32LE(disp32, 3)
   const movabs = Buffer.alloc(10)
   movabs.set([0x49, 0xbb], 0)
   movabs.writeBigUInt64LE(imm64, 2)
-  return Buffer.concat([b(0x55, 0x48, 0x89, 0xe5), lea, movabs, b(0x89, 0x41, 0x18, 0x5d, 0xc3)])
+  return Buffer.concat([b(0x55, 0x48, 0x89, 0xe5), lea, movabs, b(0x89, 0x41, storeDisp, 0x5d, 0xc3)])
 }
 export const RELOC_STORE_OFFSET = 21
 export const RELOC_STORE_LEN = 3
@@ -49,6 +49,9 @@ export interface SynthOptions {
   // Base of the main region. The edge region sits 1MB above it.
   base?: bigint
   imm64?: bigint
+  // Displacement of the store in the relocatable method: another value models
+  // a game update that changed the code.
+  relocStoreDisp?: number
   // Whether the bytes just before the edge region were readable when
   // "recorded": true records a pre margin, false records none.
   edgePre?: boolean
@@ -87,7 +90,7 @@ export function buildSynthSnapshot(opts: SynthOptions = {}): { snapshot: Snapsho
   // same at any base. Vary it with the base to model a moved image anyway.
   const relocAt = cursor
   const disp32 = Number(0x800n + (base & 0xffffn))
-  place(relocBody(disp32, imm64))
+  place(relocBody(disp32, imm64, opts.relocStoreDisp))
   place(int3(32))
 
   const edgeBase = base + 0x100000n
