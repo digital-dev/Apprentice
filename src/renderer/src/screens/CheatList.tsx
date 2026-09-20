@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { changedCapturePointers, cheatsAnchoredTo } from '../anchorStatus'
 import type {
   CheatDefinition,
   StoredCheat,
@@ -199,6 +200,9 @@ export default function CheatList({
   const [degraded, setDegraded] = useState<Set<string>>(new Set())
   // Per-cheat revalidation result, index-aligned with each cheat's targets.
   const [statuses, setStatuses] = useState<Map<string, TargetStatus[]>>(new Map())
+  // Last captured pointer seen per capture patch (the capture poll reads the
+  // cheat list through cheatsRef above, as that effect does not re-run on changes).
+  const lastCapturePointers = useRef(new Map<string, string | null>())
   // Which cheat's verify panel is expanded, and the value typed into it.
   const [verifyOpen, setVerifyOpen] = useState<string | null>(null)
   const [verifyValue, setVerifyValue] = useState('')
@@ -649,10 +653,13 @@ export default function CheatList({
     let cancelled = false
 
     async function refresh(): Promise<void> {
+      const seen = new Map<string, { pointer: string | null }>()
       for (const patch of captures) {
         try {
           const info = await window.tamper.patchSlot(patch.id)
           if (cancelled) return
+          if (info) seen.set(patch.id, info)
+          else lastCapturePointers.current.delete(patch.id)
           setPatchSlots((prev) => {
             const next = new Map(prev)
             if (info) next.set(patch.id, info)
@@ -662,6 +669,22 @@ export default function CheatList({
         } catch {
           // not attached, or the patch went away mid-poll — the next tick
           // picks it up if it comes back
+        }
+      }
+
+      // The "N/M live" readout was computed at attach, before any capture had
+      // fired, so an anchored cheat reads 0/M and shows as failed while it is
+      // working. Re-verify the cheats riding on a patch the moment its captured
+      // pointer appears or changes; nothing else about them is touched.
+      const changed = changedCapturePointers(lastCapturePointers.current, seen)
+      for (const [patchId, info] of seen) lastCapturePointers.current.set(patchId, info.pointer)
+      for (const cheat of cheatsAnchoredTo(cheatsRef.current, changed)) {
+        try {
+          const result = await window.tamper.verifyCheat(cheat, null)
+          if (cancelled) return
+          setStatuses((prev) => new Map(prev).set(cheat.id, result))
+        } catch {
+          // not attached — the next capture change tries again
         }
       }
     }
