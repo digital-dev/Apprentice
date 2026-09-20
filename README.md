@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="App%20Icon/Apprentice.png" alt="Apprentice" width="220">
+</p>
+
 # Apprentice
 
 A free, open-source Windows game trainer — an offline memory editor and
