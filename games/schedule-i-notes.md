@@ -57,16 +57,20 @@ snapshot proves is that the bytes and signatures are right; whether each
 | Invisible: NPCs never notice anything | `VisionCone.UpdateVision` entry: `ret` | General noticing (customers, crimes) runs here | **Least certain**: assumed void (large tick prologue, no return value seen). If NPCs freeze or behave oddly, turn this one off first |
 | No Arrest | `PlayerCrimeData.SetArrestProgress` entry: `scale` `xmm1` by 0 | The arrest fires from this function's own compare (`Player.Arrest_Server`) once the incoming progress passes the threshold; scaling the *stored* value would not stop it. `PursuitBehaviour.UpdateArrest` only accumulates a local timer and calls this | Dying still routes through `OnDie` -> arrest, deliberately left alone |
 | Max Relationship | `NPCRelationData.get_NormalizedRelationDelta`: returns 1.0 | Customer deal logic (`OnMinPass`, counteroffers, rejections) and the UI read it. Sole owner of that code (no folding). It changes what is read, not the saved relationship | Deals accepted more readily; the UI bar shows full |
-| Fast Time x10 / x60 | `TimeManager.TimeSpeedMultiplier` `0x13c`, freeze; off restores 1 | `TimeManager.Update` multiplies frame time by it. Pots, ovens, mixing stations, cauldrons and chemistry all advance on the game's minute tick, so this speeds every timer with no per-machine patch | The game may clamp minutes per frame, so x60 may not be 6x faster than x10. Use one at a time. Sleeping may interact |
+| Instant Ovens | `OvenCookOperation.IsComplete` entry: `mov al,1; ret` | `LabOven.OnUncappedMinPass`/`OnTimePass` and the oven employee behaviours all ask this. Shares code with `IsReady` in the same class | A loaded oven finishes on the next game-minute tick |
+| Instant Chemistry | `ChemistryStation.OnTimePass`: `cmp edi,[recipe+0x50]` becomes `cmp edi,edi` | The station compares the operation's `CurrentTime` with the recipe's `CookTime` and jumps to its completion code when it is not less. Making the compare always equal takes that jump | A running chemistry job completes on the next tick |
+| Instant Cauldron | `Cauldron.OnTimePass`: `sub eax,edi` becomes `xor eax,eax` | That instruction subtracts the elapsed minutes from `RemainingCookTime` (`+0x338`); the loop keeps cooking while it is positive. Zero falls through to the finish path | A running cook completes on the next tick |
+| Instant Mixing | `MixingStation.OnTimePass`: `cmp [rbx+0x220],ecx` becomes `cmp ecx,ecx` | The check `CurrentMixTime >= quantity x MixTimePerItem` only runs while `CurrentMixOperation` (`+0x218`) is set, so an idle station is unaffected | A running mix completes on the next tick |
+| Instant Plant Growth | `Plant.MinPass`: `scale` `xmm6` x 100000 at `mulss xmm6,[pot+0x3a8]` | Scales the growth step. `SetNormalizedGrowthProgress` clamps progress to 0..1 and then runs the normal `GrowthDone` path, so harvestables spawn as usual. Water and temperature rules still apply | Watered plants reach full growth on the next tick |
 
 | Clone Items (3 patches: drag all / drag partial / shift-click) | `ItemUIManager.EndDrag` (`neg edx`; `mov edx,-1`) and `SlotClicked` (`neg ebp`) | Moving items ends in `ItemSlot.ChangeQuantity(sourceSlot, -amountMoved)` after the target has already received them (`draggedSlot` `0x80`, `draggedAmount` `0x90`, `HoveredSlot` `0x30`). Each patch makes that subtraction 0, so the target gets the items and the source keeps them | Drag a stack onto another slot and shift-click an item: the source should stay full. Enable all three. Cash dragging is a separate path and is not covered. Untested: what a drop back onto the same slot does |
 
 | Double Hovered Stack (Lua script, hotkey) | Chain `ItemUIManager.HoveredSlot` (`+0x30`) -> `ItemSlotUI.assignedSlot` (`+0x28`) -> `ItemSlot.ItemInstance` (`+0x10`) -> `Quantity` (`+0x10`, int32; from `ItemSlot.get_Quantity`), reached through a capture on `ItemUIManager.Update` | The three Clone patches above copy items into a *target* slot and respect its max stack. This writes the hovered slot's own quantity, so a 40 stack becomes 80 regardless of the max. Assign a hotkey in Tamper, hover a slot, press it: every press doubles (enable and disable run the same script) | Not a click: hover and press. The chain is proven against a synthetic copy in `tests/native/cloneStackScript.test.ts`, not against the live game. The displayed number may not refresh until the slot updates. Avoid cash slots. Quantity is clamped to plausible values (1 to 1,000,000) so a wrong offset does not corrupt memory |
 
 Known limits: the three invisibility patches stack (enable together for full
-effect). Fast Time replaces the earlier idea of an "advance one hour" write:
-writing `CurrentTime` directly would skip the `onTimeSet`/`onMinutePass` events
-NPC schedules run on.
+effect). "Instant" here means the next game-minute tick, not the same frame:
+the game only counts these timers when the clock ticks. These replace the earlier
+Fast Time cheats (a faster clock), which sped up everything indiscriminately.
 
 ## Not drafted, and why
 
@@ -74,8 +78,6 @@ NPC schedules run on.
   rank-up is decided in the game's own add-XP path, so writing them would not
   rank you up. It needs a call to that method, which is not something a field
   or patch cheat can do.
-- **Per-station instant timers, instant plant growth**: replaced by Fast Time
-  above, which drives all of them from the shared clock.
 
 ## Not drafted: needs a method-level patch
 

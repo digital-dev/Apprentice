@@ -371,38 +371,6 @@
       "moduleOffset": "0x8dcea0"
     },
     {
-      "id": "factory-fasttime-10",
-      "name": "Fast Time x10 (grow, cook, mix, chemistry)",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "anchor",
-          "patchId": "factory-capture-TimeManager",
-          "offset": "0x13c",
-          "dataType": "float"
-        }
-      ],
-      "value": 10,
-      "offValue": 1
-    },
-    {
-      "id": "factory-fasttime-60",
-      "name": "Fast Time x60",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "anchor",
-          "patchId": "factory-capture-TimeManager",
-          "offset": "0x13c",
-          "dataType": "float"
-        }
-      ],
-      "value": 60,
-      "offValue": 1
-    },
-    {
       "kind": "patch",
       "mode": "replace",
       "id": "factory-clone-drag-all",
@@ -467,6 +435,73 @@
           "patchId": "factory-capture-ItemUIManager"
         }
       ]
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-instant-chemistry",
+      "name": "Instant Chemistry (stations finish on the next tick)",
+      "originalBytes": "3b7850",
+      "length": 3,
+      "replacementBytes": "39ff90",
+      "signature": "48 8b 89 28 02 00 00 33 d2 8b 79 38 e8 ?? ?? ?? ?? 48 85 c0 0f 84 ?? ?? ?? ?? 3b 78 50 0f 8d ?? ?? ?? ?? 48 8b 8b 28 02 00 00 48 85 c9 0f 84 ?? ?? ?? ??",
+      "signatureOffset": 26,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x83c445"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-instant-cauldron",
+      "name": "Instant Cauldron (cooks finish on the next tick)",
+      "originalBytes": "2bc7",
+      "length": 2,
+      "replacementBytes": "31c0",
+      "signature": "48 85 c9 0f 84 ?? ?? ?? ?? 45 33 c0 b2 01 e8 ?? ?? ?? ?? 8b 83 38 03 00 00 2b c7 89 83 38 03 00 00 85 c0 0f 8f ?? ?? ?? ?? 33 c9",
+      "signatureOffset": 25,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x8341c3"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-instant-mixing",
+      "name": "Instant Mixing (mixes finish on the next tick)",
+      "originalBytes": "398b20020000",
+      "length": 6,
+      "replacementBytes": "39c990909090",
+      "signature": "0f 84 ?? ?? ?? ?? 48 83 bb 18 02 00 00 00 0f 84 ?? ?? ?? ?? 48 8b 83 18 02 00 00 8b 48 28 0f af 8b 90 02 00 00 39 8b 20 02 00 00 0f 8c ?? ?? ?? ?? 48 8b 8b d8 02 00 00 48 85 c9 0f 84 ?? ?? ?? ??",
+      "signatureOffset": 37,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x85c4d1"
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-instant-oven",
+      "name": "Instant Ovens (cooks report complete)",
+      "originalBytes": "48895c2408",
+      "length": 5,
+      "replacementBytes": "b001c39090",
+      "signature": "48 89 5c 24 08 57 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b d9 8b 79 40 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ??",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x862270"
+    },
+    {
+      "kind": "patch",
+      "mode": "scale",
+      "id": "factory-instant-growth",
+      "name": "Instant Plant Growth (plants finish on the next tick)",
+      "originalBytes": "f30f59b0a8030000",
+      "length": 8,
+      "signature": "48 85 c0 0f 84 ?? ?? ?? ?? f3 0f 59 f7 33 c9 f3 41 0f 59 f1 f3 0f 59 f0 f3 0f 59 b0 a8 03 00 00 f3 0f 59 74 24 70 e8 ?? ?? ?? ?? 84 c0 74 ??",
+      "signatureOffset": 24,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x7d9cd2",
+      "sourceRegister": "xmm6",
+      "value": 100000,
+      "dataType": "float"
     }
   ]
 }
