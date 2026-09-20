@@ -43,3 +43,11 @@ What a flag means comes from its consumers: a getter that tests a `ChrData+0x19b
 Findings: bit 0x02 guards damage application (`No Damage`); bit 0x01 is a hit/target filter (not shipped, meaning unclear);
 debug flags follow the engine's usual order (a2 exterminate, a4 stamina, a5 FP, a6 ammo anchored), so a3 is item consumption.
 Cheats resting on this alone say so in their `lookFor`.
+
+### Naming flags from the game's own strings
+
+The exe carries a UTF-16 debug-flag name table (`GameData.PlayerNoDead`, `PlayerExterminate`, `PlayerNoGoodsConsume`, `AllNoDamage`,
+`AllNoStaminaConsume`, `AllNoMpConsume`, `IsNoArtsPointConsume`, ...). `scripts/nameFlags.js` maps flag to thunk to name where the
+obfuscator's jumps allow (aa = AllNoDead, ae = AllNoMove); the rest follow the declaration order (a0 PlayerNoDead, a1 PlayerHorseNoDead,
+a2 PlayerExterminate, a3 PlayerNoGoodsConsume, aa..ae the All* flags) and cross-checks: getter 0x437470 is IsNoDead (bit 0, aa, player+a0),
+a3 and b2 feed the same item-consume argument, a2/a4/a5/a6/b1 match the user-verified cheats. Unmapped: a7, af, b0, b3-b5, c5-cf.

@@ -159,7 +159,23 @@ export const NATIVE_GAMES: NativeGame[] = [
         offValue: 0,
         // Static analysis only. The getter for this bit (test [ChrData+0x19b],2 || debug flag ab)
         // guards the damage-application routine at RVA 0x44845a: when true it skips the HP arithmetic.
+        // ab is the game's AllNoDamage flag (name table, declaration order).
         lookFor: 'Inferred from code, not run in-game: enemy hits stop reducing HP.'
+      },
+      {
+        category: 'nodeath',
+        name: 'No Death',
+        root: 'WorldChrMan',
+        chains: [stat('0x19b')],
+        dataType: 'int8',
+        bitIndex: 0,
+        mode: 'freeze',
+        value: 1,
+        plausible: [0, 255],
+        offValue: 0,
+        // Static analysis only. The getter for this bit (RVA 0x437470) is the game's IsNoDead:
+        // bit 0 || debug flag aa (AllNoDead) || (player && debug flag a0, PlayerNoDead).
+        lookFor: 'Inferred from code, not run in-game: HP no longer reaches zero.'
       },
       {
         category: 'nogoods',
@@ -171,10 +187,10 @@ export const NATIVE_GAMES: NativeGame[] = [
         value: 1,
         plausible: [0, 255],
         offValue: 0,
-        // Static analysis only. Debug flag a3 sits between exterminate (a2) and stamina (a4) in the
-        // engine's usual debug-flag order, and is passed as the "don't consume" argument of the
-        // item-use routine at RVA 0x653367.
-        lookFor: 'Inferred from code and flag order, not run in-game: using a consumable does not use it up.'
+        // Static analysis only. a3 is PlayerNoGoodsConsume: it and b2 (AllNoGoodsConsume, both names are in
+        // the game's debug-flag table) each feed the "don't consume" argument of the item-use call at
+        // RVA 0x246d60 (sites 0x653367 and 0x65332b).
+        lookFor: 'Inferred from code, not run in-game: using a consumable does not use it up.'
       },
       {
         category: 'oneshot',
