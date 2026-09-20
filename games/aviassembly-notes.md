@@ -114,3 +114,24 @@ Aviassembly crashed repeatedly early in this investigation — faults inside
 (read-only, skips `PAGE_GUARD`, no writes) — more likely this build is just
 unstable on its own. Didn't recur once the session moved off blind scanning
 onto direct mono resolution.
+
+## Survey of live singletons (2026-09-20) and drafted candidates
+
+`mcp-server/scripts/surveyMono.js` lists every game class with a live `Singleton<T>` instance (32 in a loaded save) with
+field offsets and current values. `author_cheats` now also finds these roots (inherited `m_Instance`), so it drafts
+`Unlimited Money` on its own. It has no plane-game categories, so the rest came from the survey:
+
+| Draft | Field | Live default |
+|---|---|---|
+| No Fog of War | `Map.useFogOfWar` | 1 |
+| Unlock Races | `GameManager.unlockRaces` | 0 |
+| Low Gravity | `PlaneContainer.planeGravityMultiplier` | 1.5 |
+| Extra Lift x1.5 | `PlaneContainer.liftMultiplier` | 1.0 |
+| Weightless Fuel | `PlaneContainer.fuelWeight` | 0.4 |
+| Low Drag | `DragSimulator.dragMultiplier` | 1.2 |
+
+Meaning rests on the managed field names and their default values only. Not yet checked against the JIT'd readers
+(`scripts/monoReaders.js` does that, but compiles methods inside the game, see below) and not run in-game.
+
+Stability: the game crashed (`0xe0000001` in KERNELBASE) shortly after the survey, the same signature as the early
+crashes above. The survey makes a few hundred injected Mono calls, so treat heavy passes as a possible trigger.

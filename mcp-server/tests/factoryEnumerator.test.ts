@@ -57,7 +57,11 @@ describe('enumerateMono', () => {
   it('only probes static storage for singleton-looking names', async () => {
     const ops = fakeOps()
     await enumerateMono(ops, HINTS)
-    expect(ops.staticCalls).toEqual(['0xa.m_localPlayer'])
+    // Player has a declared root, so it is probed once. Character has none, so only the
+    // conventional inherited singleton names are tried on it; no ordinary field is.
+    expect(ops.staticCalls).toContain('0xa.m_localPlayer')
+    expect(ops.staticCalls.filter((c) => c.startsWith('0xa.'))).toEqual(['0xa.m_localPlayer'])
+    for (const call of ops.staticCalls) expect(call).toMatch(/\.(m_localPlayer|m_Instance|_instance|instance|s_Instance|Instance|_Instance)$/)
   })
 
   it('reports a null-pointer root as dead, not live', async () => {
@@ -75,5 +79,26 @@ describe('enumerateMono', () => {
     })
     const result = await enumerateMono(ops, HINTS)
     expect(result.classesScanned).toBe(2)
+  })
+})
+
+describe('enumerateMono inherited singletons', () => {
+  it('finds a Singleton<T> root that the class does not declare itself', async () => {
+    const ops = fakeOps({
+      listFieldNames: async (h) => (h === '0xa' ? ['m_stamina'] : []),
+      staticFieldAddress: async (h, f) => (h === '0xa' && f === 'm_Instance' ? '0x2000' : null)
+    })
+    const result = await enumerateMono(ops, HINTS)
+    expect(result.roots).toEqual([{ className: 'Player', staticFieldName: 'm_Instance' }])
+  })
+  it('reports an inherited root that is still null as dead', async () => {
+    const ops = fakeOps({
+      listFieldNames: async () => [],
+      staticFieldAddress: async (h, f) => (h === '0xa' && f === 'm_Instance' ? '0x2000' : null),
+      readBytes: () => NULL_PTR
+    })
+    const result = await enumerateMono(ops, HINTS)
+    expect(result.roots).toEqual([])
+    expect(result.deadRoots).toEqual([{ className: 'Player', staticFieldName: 'm_Instance' }])
   })
 })

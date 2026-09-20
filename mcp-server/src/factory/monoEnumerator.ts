@@ -29,6 +29,10 @@ const SYSTEM_ASSEMBLY = /^(mscorlib|System|Unity|Mono\.|netstandard|Newtonsoft)/
 // Names that look like a singleton handle to the live instance.
 const ROOT_NAME = /^(m_|_|s_)?(instance|local|localplayer|player|current|main|singleton)$/i
 const NULL_POINTER = '0000000000000000'
+// A manager that inherits `Singleton<T>` declares no static of its own, so the
+// field list never shows the handle. The addon's resolver walks the hierarchy, so
+// these conventional names are asked for directly (see games/aviassembly-notes.md).
+const INHERITED_ROOT_NAMES = ['m_Instance', '_instance', 'instance', 's_Instance', 'Instance', '_Instance']
 
 export async function enumerateMono(ops: MonoEnumOps, classHints: RegExp[]): Promise<Enumeration> {
   const assemblies = await ops.listAssemblyNames()
@@ -48,16 +52,27 @@ export async function enumerateMono(ops: MonoEnumOps, classHints: RegExp[]): Pro
       if (!classHints.some((h) => h.test(cls.className))) continue
       classesScanned++
       const names = await ops.listFieldNames(cls.classHandle)
-      for (const fieldName of names) {
-        fields.push({ className: cls.className, fieldName })
-        if (!ROOT_NAME.test(fieldName)) continue
+      let foundRoot = false
+      const tryRoot = async (fieldName: string): Promise<void> => {
         const address = await ops.staticFieldAddress(cls.classHandle, fieldName)
-        if (address === null) continue
+        if (address === null) return
         const pointer = ops.readBytes(address, 8)
-        if (pointer === null) continue
+        if (pointer === null) return
         const root = { className: cls.className, staticFieldName: fieldName }
         if (pointer === NULL_POINTER) deadRoots.push(root)
         else roots.push(root)
+        foundRoot = true
+      }
+      for (const fieldName of names) {
+        fields.push({ className: cls.className, fieldName })
+        if (ROOT_NAME.test(fieldName)) await tryRoot(fieldName)
+      }
+      if (!foundRoot) {
+        for (const fieldName of INHERITED_ROOT_NAMES) {
+          if (names.includes(fieldName)) continue
+          await tryRoot(fieldName)
+          if (foundRoot) break
+        }
       }
     }
   }
