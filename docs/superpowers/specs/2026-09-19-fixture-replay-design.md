@@ -9,8 +9,9 @@ Nearly every real defect (Valheim, 2026-07-25) was invisible to `harness.exe`:
 signatures built from one instruction matched hundreds of places, and `locate`
 verified bytes at the wrong copy of identical JIT'd code. Signature building
 lives inline in the hardware-breakpoint handler (`native/src/write_watch.cc`,
-~L528-770) and checks uniqueness against the live process, so it cannot run on
-recorded bytes.
+~L528-770) and reads the live process directly, so it cannot run on recorded
+bytes. (Uniqueness is not checked at build time; it is checked later by
+`scanAob` at locate time, which is why replay needs a snapshot scan too.)
 
 ## Non-goals
 
