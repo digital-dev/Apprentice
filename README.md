@@ -28,10 +28,10 @@ Ships with cheat sets for five games, one profile each in `games/`:
 
 | Game | Cheats | Engine / notes |
 |---|---|---|
-| Valheim | 15 | Mono JIT (`valheim.json`) |
-| Elden Ring | 13 | Native, pointer-chain value cheats (`start_protected_game.json`, named for its EAC-protected executable) |
+| Valheim | 18 | Mono JIT (`valheim.json`) |
+| Elden Ring | 14 | Native, pointer-chain value cheats (`start_protected_game.json`, named for its EAC-protected executable) |
 | Palworld | 8 | Unreal (`Palworld-Win64-Shipping.json`) |
-| Aviassembly | 8 | Unity/Mono (`aviassembly.json`) |
+| Aviassembly | 12 | Unity/Mono (`aviassembly.json`) |
 | Schedule I | 26 | Unity IL2CPP (`Schedule I.json`) — see `games/schedule-i-notes.md` for how each was found |
 
 The newest Schedule I cheats (invisibility, no arrest, clone items, the instant
@@ -260,11 +260,12 @@ detail live in `mcp-server/README.md`.
 
 ### Using the cheat factory (`author_cheats`)
 
-For a **Unity Mono or Unity IL2CPP** game, `author_cheats` turns a wishlist of
-categories into draft cheats and an in-game checklist, instead of a reverse-engineering
-session per cheat. It is an MCP tool, so you drive it through an AI agent (Claude Code
-picks up the `game-memory` server from `.mcp.json` when you work in this repo), or with a
-script for IL2CPP games.
+For a **Unity Mono or Unity IL2CPP** game, or a **native game that has an entry in
+`mcp-server/src/factory/nativeGames.ts`** (currently Elden Ring), `author_cheats` turns a
+wishlist of categories into draft cheats and an in-game checklist, instead of a
+reverse-engineering session per cheat. It is an MCP tool, so you drive it through an AI agent
+(Claude Code picks up the `game-memory` server from `.mcp.json` when you work in this repo), or
+with a script (below).
 
 **Before you start:** build the native addon and the MCP server (see Setup above), start
 the game, and **load into a save or world**. The factory reads live objects, and a game
@@ -276,18 +277,20 @@ stamina and bank cheats"*. It calls, in order:
 ```
 list_processes                       -> find the game's pid
 attach(pid)                          -> a handle
-fingerprint_process(handle)          -> must report unity-mono or unity-il2cpp
+fingerprint_process(handle)          -> unity-mono, unity-il2cpp, or native-unknown (native games in nativeGames.ts only)
 author_cheats(handle, ["health","stamina","bank"], "games/<Game>.json")
 ```
 
 `profilePath` is where the *live* profile is (or will be); the output goes beside it as
-`<Game>.draft.json`. For an IL2CPP game you can skip the agent:
+`<Game>.draft.json`. You can skip the agent with the script for the game's engine:
 
 ```bash
-node mcp-server/scripts/authorLive.js <pid> "games/<Game>.json" health,stamina,bank
+node mcp-server/scripts/authorLive.js       <pid> "games/<Game>.json" health,stamina,bank   # Unity IL2CPP
+node mcp-server/scripts/authorMonoLive.js   <pid> "games/<Game>.json" health,stamina,money   # Unity Mono
+node mcp-server/scripts/authorNativeLive.js <pid> "games/<Game>.json" health,mana,money      # known native game
 ```
 
-That script needs `cd mcp-server && npm run build` first, and writes
+These scripts need `cd mcp-server && npm run build` first, and write
 `<Game>.draft.json` even if you never wrote a profile. Note that it **replaces** the
 whole draft file each run, so write to a different `profilePath` if you want to keep an
 earlier draft.
@@ -324,13 +327,34 @@ file: name and class regexes, the data types to try, freeze or one-shot, the val
 and a `plausible` range for the live read. Give a category a `manualReview` message when
 its obvious mechanism is a known trap.
 
-**What the factory cannot do:** code patches (instant timers, invisibility, item cloning),
-Lua script cheats, and any game that is not Unity. Those take the analysis scripts below.
+**What the factory cannot do:**
+
+- **Code patches** (instant timers, invisibility, item cloning, no-damage guards) and **Lua script
+  cheats.** It drafts value cheats only. Those take the analysis scripts below.
+- **Games it has not been taught.** Unity Mono and IL2CPP work generically. Any other engine only
+  works if someone has written that game's entry in `nativeGames.ts` by hand: the signatures that
+  find its static roots and the offset chain from each root to each stat. The factory then
+  verifies them live and drafts the cheats. Writing the entry is the real work; see
+  `docs/superpowers/specs/2026-09-20-native-cheat-factory-design.md`. A native game with no entry
+  gets an error saying so; Unreal and other engines get an error pointing at that engine's playbook.
+- **Tell a plausible field from the right one.** A draft is chosen by field name and a live value in
+  a sane range, and `verified` only means that read succeeded. It can still be the wrong field:
+  the factory once drafted a Valheim jump's stamina *cost* as stamina, and its Valheim health and
+  water picks are doubtful (health is not a plain field there; there is no watering). Read the
+  `lookFor` line and the field name, and check each cheat before trusting it.
+- **Overloaded methods.** A Mono patch names a method, not a signature, so the app and the analysis
+  scripts can only reach the first overload of a name.
 
 What it does under the hood:
 
-- **Mono:** enumerates classes and fields, ranks them by name, finds the live
-  singleton root, and keeps the first candidate whose live read is plausible.
+- **Mono:** enumerates classes and fields in every game assembly (`Assembly-CSharp` and the
+  `assembly_*` family, since Valheim keeps its code in `assembly_valheim`), ranks them by name,
+  finds the live singleton root (including a `Singleton<T>` root inherited from a base class, as
+  Aviassembly uses), and keeps the first candidate whose live read is plausible. An exact stat name
+  outranks a variant that only contains it, and fields that name what an action *costs* are skipped.
+- **Native (known games):** finds each static root by a unique signature on the instruction that loads
+  it (`mov reg,[rip+rel32]`), walks the offset chain to each stat, reads it live, and drafts a chain
+  cheat by RVA. Bit flags and flag bytes are supported.
 - **IL2CPP:** reads the runtime's class, field and method structs directly
   (no per-item remote call), ranks fields by name *and* type, verifies through
   a live singleton or a filtered instance scan, and emits the same pair Tamper
@@ -346,14 +370,22 @@ What it does under the hood:
   isn't.
 
 When a cheat does nothing, or a mechanism isn't obvious, `mcp-server/scripts/`
-has read-only live-analysis scripts (survey classes, disassemble a method, list
+has live-analysis scripts (survey classes, disassemble a method, list
 callers and inlined field readers, watch a field change while the game does
-something, generate a `replace`/`capture` patch with a unique signature). The
-method they support is written up in
+something, generate a `replace`/`capture` patch with a unique signature). Beyond the
+IL2CPP set shown below there are Mono ones (`surveyMono.js`, `monoDisasm.js`,
+`monoReaders.js`, and `checkPatches.js`, which re-checks a profile's patches after a game
+update) and, for native games, offline ones that work on a recorded snapshot of the game's code
+(`recordSnapshot.js`, `mineRoots.js`, `flagXrefs.js`, `traceSnap.js`, `deriveFlagRoot.js`).
+
+Two cautions. **Compiling many Mono methods at once has crashed Valheim and Aviassembly**, so
+`monoReaders.js` refuses to run unless you name the methods (`METHODS=<regex>`); keep the set small.
+And for an anti-tamper game, record snapshots with `MODULE=<game exe>` so only the game's own
+module is read (a full-process dump crashed Elden Ring). The method they support is written up in
 `.claude/skills/authoring-tamper-cheats/SKILL.md` and
 `mcp-server/scripts/README.md`.
 
-**A typical hunt for a code patch** (all IL2CPP; run `cd mcp-server && npm run build`
+**A typical hunt for a code patch** (this one is IL2CPP; run `cd mcp-server && npm run build`
 first; every script takes the game's pid first and only reads):
 
 ```bash
@@ -374,8 +406,9 @@ function every route shares over one per route, and check that a getter you want
 patch actually has callers (IL2CPP inlines trivial ones).
 
 Design docs:
-`docs/superpowers/specs/2026-09-19-cheat-factory-design.md` and
-`docs/superpowers/specs/2026-09-19-il2cpp-cheat-factory-design.md`.
+`docs/superpowers/specs/2026-09-19-cheat-factory-design.md`,
+`docs/superpowers/specs/2026-09-19-il2cpp-cheat-factory-design.md` and
+`docs/superpowers/specs/2026-09-20-native-cheat-factory-design.md`.
 
 ---
 
@@ -445,8 +478,8 @@ through updates without needing any of this.
 ## Safety notes
 
 When Apprentice exits normally it puts the game back: code patches are restored when
-you disable a cheat, when the game closes, and when you quit; frozen values get their
-"off" value written back; and a hardware write-watch breakpoint is cleared. **That
+you disable a cheat, when the game closes, and when you quit; frozen values are put back to
+what they held when you turned the cheat on (or to the cheat's own off value, where it sets one); and a hardware write-watch breakpoint is cleared. **That
 cleanup only runs while Apprentice is running.** If Apprentice itself is force-closed
 (Task Manager, a crash, a power cut), nothing can restore the game: any patch or frozen
 value you had switched on stays in it until you re-attach and switch it off, or restart
