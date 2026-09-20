@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawnHarness } from '../helpers/spawnHarness'
 import fs from 'node:fs'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
@@ -42,7 +43,7 @@ function build(quantity: number) {
 const run = () => a.runScript(handle, script, { mgr: hex(base + BigInt(MGR)) })
 
 beforeAll(async () => {
-  harness = spawn(path.resolve('test-harness/harness.exe'))
+  harness = spawnHarness()
   await new Promise((r) => harness.stdout.once('data', r))
   handle = a.attach(harness.pid).handle
   const cave = a.allocateCave(handle, a.getModuleBase(handle, 'harness.exe') ?? '0x10000')

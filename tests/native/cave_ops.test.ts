@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawnHarness } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -29,7 +30,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 let forceAddress: string
 
 beforeAll(async () => {
-  harness = spawn(path.resolve('test-harness/harness.exe'))
+  harness = spawnHarness()
   await new Promise((r) => harness.stdout.once('data', r))
   handle = (addon as any).attach(harness.pid).handle
 
