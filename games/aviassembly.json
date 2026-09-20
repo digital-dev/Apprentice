@@ -145,7 +145,7 @@
           "instanceFieldName": "mass"
         }
       ],
-      "value": 0.01,
+      "value": 1,
       "captureOriginal": true,
       "hotkey": "num8"
     },
@@ -180,6 +180,22 @@
       ],
       "value": 0.5,
       "offValue": 1.2
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "mono-weightless-cargo",
+      "name": "Weightless Cargo",
+      "originalBytes": "f30f5ac8",
+      "replacementBytes": "660f57c9",
+      "length": 4,
+      "signature": "f3 0f 5a c8 48 8b 45 b0 f2 0f 10 45 a8",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "PlaneContainer",
+      "monoMethod": "ReInitializePlane",
+      "monoMethodOffset": "0x19b"
     }
   ]
 }

@@ -155,3 +155,12 @@ a `force` patch (`monoClass CargoInventory`, `monoMethod Update`, `monoMethodOff
 
 Lesson: a field that reads a plausible number is not a lever. Find its readers (`scripts/monoReaders.js`, `CALLEE=` for
 callers) before shipping a freeze. `Unlimited Fuel`, `Unlimited Electricity` and `Low Plane Mass` were not re-checked this way.
+
+## Weightless Cargo (2026-09-20)
+
+`CargoInventory.GetCargoMass` sums `CargoType.weight * count` over `currentCargo`. Its only caller is
+`PlaneContainer.ReInitializePlane`, which sets the rigidbody mass to `rb.mass + GetCargoMass() / K`. The `replace` patch
+`mono-weightless-cargo` swaps the 4-byte `cvtss2sd xmm1, xmm0` at `ReInitializePlane+0x19b` (the instruction that takes the cargo
+mass) for `xorpd xmm1, xmm1`, so the cargo term is zero and nothing else changes. Bytes at the site verified live; not run in-game.
+Because it acts inside `ReInitializePlane`, it takes effect the next time the plane is re-initialised (loading in, or whatever
+triggers that call), not instantly mid-flight. Which events call `ReInitializePlane` was not traced.

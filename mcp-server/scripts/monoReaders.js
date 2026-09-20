@@ -24,8 +24,9 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
         let hex = ''
         for (let o = 0; o < 0x800; o += 0x400) { const h = addon.tryReadBytes(handle, '0x' + (BigInt(addr) + BigInt(o)).toString(16), 0x400); if (!h) break; hex += h }
         let body = Buffer.from(hex, 'hex')
-        const pad = body.indexOf(Buffer.from('cccccc', 'hex'))
-        if (pad > 0) body = body.subarray(0, pad)
+        // Methods end at int3 padding or, for tiny packed accessors, a run of zero bytes.
+        const pads = [body.indexOf(Buffer.from('cccccc', 'hex')), body.indexOf(Buffer.alloc(8))].filter((i) => i > 0)
+        if (pads.length) body = body.subarray(0, Math.min(...pads))
         let rows = addon.disassembleBuffer(body, addr, 400)
         // Small accessors are packed back to back without padding: end the method at a ret that is followed by a new prologue.
         const cut = rows.findIndex((r, i) => i > 0 && /^ret/.test(rows[i - 1].text) && /^(sub rsp|push r|mov \[rsp\])/.test(r.text))
