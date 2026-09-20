@@ -12,7 +12,7 @@ const needles = offs.split(',').map((o) => '+0x' + o.replace(/^0x/, '').toUpperC
 const { handle } = addon.attach(Number(pid))
 const mono = classifyEngine(addon.listModules(handle)).monoDllBase
 ;(async () => {
-  const images = (await addon.monoListAssemblyNames(handle, mono)).filter((a) => /^Assembly-CSharp/i.test(a.name))
+  const images = (await addon.monoListAssemblyNames(handle, mono)).filter((a) => /^(Assembly-CSharp|assembly_)/i.test(a.name))
   for (const image of images) {
     for (const c of await addon.monoListClassesInImage(handle, mono, image.image)) {
       if (c.namespaceName !== '' || !classRe.test(c.className)) continue

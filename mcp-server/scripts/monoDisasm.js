@@ -8,7 +8,7 @@ const [pid, cls, method, maxArg = '120'] = process.argv.slice(2)
 const { handle } = addon.attach(Number(pid))
 const mono = classifyEngine(addon.listModules(handle)).monoDllBase
 ;(async () => {
-  for (const image of (await addon.monoListAssemblyNames(handle, mono)).filter((a) => /^Assembly-CSharp/i.test(a.name))) {
+  for (const image of (await addon.monoListAssemblyNames(handle, mono)).filter((a) => /^(Assembly-CSharp|assembly_)/i.test(a.name))) {
     for (const c of await addon.monoListClassesInImage(handle, mono, image.image)) {
       if (c.namespaceName !== '' || c.className !== cls) continue
       const addr = await raw.monoCompileMethod(handle, mono, c.classHandle, method)

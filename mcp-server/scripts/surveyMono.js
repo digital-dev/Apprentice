@@ -13,7 +13,7 @@ const mono = cls.monoDllBase
 const ROOTS = ['m_Instance', '_instance', 'instance', 's_Instance', 'Instance', '_Instance', 'm_instance']
 const u64 = (hex) => Buffer.from(hex, 'hex').readBigUInt64LE(0)
 ;(async () => {
-  const images = (await addon.monoListAssemblyNames(handle, mono)).filter((a) => /^Assembly-CSharp/i.test(a.name))
+  const images = (await addon.monoListAssemblyNames(handle, mono)).filter((a) => /^(Assembly-CSharp|assembly_)/i.test(a.name))
   const lines = []
   let n = 0
   for (const image of images) {
