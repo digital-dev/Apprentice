@@ -144,6 +144,38 @@
       "value": 0.01,
       "captureOriginal": true,
       "hotkey": "num8"
+    },
+    {
+      "id": "mono-weightless-fuel",
+      "name": "Weightless Fuel",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlaneContainer",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "fuelWeight"
+        }
+      ],
+      "value": 0,
+      "offValue": 0.4
+    },
+    {
+      "id": "mono-low-drag",
+      "name": "Low Drag",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "DragSimulator",
+          "staticFieldName": "m_Instance",
+          "instanceFieldName": "dragMultiplier"
+        }
+      ],
+      "value": 0.5,
+      "offValue": 1.2
     }
   ]
 }

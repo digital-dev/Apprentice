@@ -137,7 +137,11 @@
       "baseRegister": "rcx",
       "armPointerModuleName": "start_protected_game.exe",
       "armPointerBaseOffset": "0x3d65f88",
-      "armPointerOffsets": ["0x10ef8", "0x0", "0x190"],
+      "armPointerOffsets": [
+        "0x10ef8",
+        "0x0",
+        "0x190"
+      ],
       "armValue": "0x7ff42d9556f0",
       "hotkey": "num6"
     },
@@ -1201,6 +1205,21 @@
       "signatureOffset": 0,
       "moduleName": "start_protected_game.exe",
       "moduleOffset": "0x784aea"
+    },
+    {
+      "id": "er-no-goods-consume",
+      "name": "No Item Consumption",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "moduleName": "start_protected_game.exe",
+          "baseOffset": "0x3d661a3",
+          "offsets": []
+        }
+      ],
+      "value": 1,
+      "offValue": 0
     }
   ]
 }
