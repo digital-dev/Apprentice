@@ -287,6 +287,21 @@
       "sourceRegister": "xmm6",
       "value": 2,
       "dataType": "float"
+    },
+    {
+      "id": "factory-stamina",
+      "name": "Infinite Stamina",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-PlayerMovement",
+          "offset": "0x4c",
+          "dataType": "float"
+        }
+      ],
+      "value": 999
     }
   ]
 }
