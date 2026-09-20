@@ -91,3 +91,12 @@ Renamed. It now carries a companion, `easy-build-no-station-extension`: in `Play
 (`$msg_extensionmissingstation`, "needs to be placed near the appropriate crafting station") when a station extension has no station in range; the patch
 writes `0` (Valid) at that one store (`+0xb3b`, `monoSearch`, signature verified unique). NOT covered: the ordinary "requires a workbench" rule for regular
 pieces, which lives in the second `Player.HaveRequirements` overload; overloads cannot be selected by name in this engine or my tools.
+
+### Always Hidden flicker (2026-09-20)
+
+The old cheat froze `Player.m_stealthFactor` (+0xae8) at 0 every 100 ms while the game rewrites it every frame, so the value alternated and the HUD's eye and
+stealth bar (`Hud.UpdateStealth`, driven by `Player.GetStealthFactor`) flickered. The game reads the field through `Player.GetStealthFactor` (the virtual the HUD
+calls, vtable +0x1F0); for the local owner it returns `[this+0xAE8]`. Always Hidden is now a `replace` patch (`monoSearch`, signature unique) that swaps that
+`movss xmm0, [rsi+0xAE8]` for `xorps xmm0, xmm0` + nop, so the getter returns 0 and the field is left alone (same hotkey, `num7`). Enemy AI and the HUD both ask the
+getter, so both see 0 steadily. Not run in-game: whether the eye/bar are then steadily shown or hidden depends on HUD logic I did not read in full (it shows the bar
+from the factor and two timers, `m_timeSinceTargeted` +0xadc and `m_timeSinceSensed` +0xae0).

@@ -13,7 +13,7 @@ const mono = classifyEngine(addon.listModules(handle)).monoDllBase
       if (c.namespaceName !== '' || c.className !== cls) continue
       const addr = await raw.monoCompileMethod(handle, mono, c.classHandle, method)
       let hex = ''
-      for (let o = 0; o < 0x1000; o += 0x400) { const h = addon.tryReadBytes(handle, '0x' + (BigInt(addr) + BigInt(o)).toString(16), 0x400); if (!h) break; hex += h }
+      for (let o = 0; o < 0x4000; o += 0x400) { const h = addon.tryReadBytes(handle, '0x' + (BigInt(addr) + BigInt(o)).toString(16), 0x400); if (!h) break; hex += h }
       let full = Buffer.from(hex, 'hex')
       const pads = [full.indexOf(Buffer.from('cccccc', 'hex')), full.indexOf(Buffer.alloc(16))].filter((i) => i > 0)
       if (pads.length) full = full.subarray(0, Math.min(...pads))

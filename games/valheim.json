@@ -132,19 +132,20 @@
       ]
     },
     {
+      "kind": "patch",
+      "mode": "replace",
       "id": "mono-always-hidden",
       "name": "Always Hidden (Stealth)",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "mono",
-          "className": "Player",
-          "staticFieldName": "m_localPlayer",
-          "instanceFieldName": "m_stealthFactor"
-        }
-      ],
-      "value": 0,
+      "originalBytes": "f30f1086e80a0000",
+      "replacementBytes": "0f57c00f1f440000",
+      "length": 8,
+      "signature": "85 c0 74 ?? f3 0f 10 86 e8 0a 00 00 f3 0f 5a c0",
+      "signatureOffset": 4,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Player",
+      "monoMethod": "GetStealthFactor",
+      "monoSearch": true,
       "hotkey": "num7"
     },
     {
