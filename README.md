@@ -84,9 +84,10 @@ whole test suite (native-harness tests included) on a Windows runner.
 **To publish a release, bump `version` in `package.json` and push it to `master`.** If
 there is no release for that version yet, CI builds the installer, creates the tag
 `v<version>` and a GitHub Release (a prerelease when the version has a `-`, like
-`0.1.2-beta`), attaches `Apprentice-Setup-<version>.exe` plus a `SHA256SUMS.txt`, and
-generates the notes from the commits since the previous release. A push that doesn't
-change the version publishes nothing.
+`0.1.2-beta`), attaches `Apprentice-Setup-<version>.exe` plus a `SHA256SUMS.txt`, and lets
+GitHub generate the notes. Those list the merged pull requests since the previous release
+and link the full comparison, so work pushed straight to `master` shows up only as that
+comparison link. A push that doesn't change the version publishes nothing.
 
 To check that a build works without publishing, run **Actions → CI → Run workflow** on
 any branch other than `master`: it builds the installer and attaches it to the run as an
