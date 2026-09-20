@@ -17,11 +17,20 @@ above action-cost variants (it drafted `m_jumpStaminaUsage`, the price of a jump
 `m_eitr` and `m_godMode`, identical to the hand-built profile. Its `Player.m_health` draft is doubtful (current health is not a plain
 field in Valheim) and `water` matches a swim-depth field, so both are ignored.
 
+## Promoted (2026-09-20, Player fields)
+
+`Longer Auto Pickup Range` (`m_autoPickupRange`, read by `Player.AutoPickup`), `Longer Build/Remove Reach` (`m_maxPlaceDistance`, read by
+`Player.CopyPiece` / `RemovePiece`) and `Longer Interact Reach` (`m_maxInteractDistance`, read by `Player.FindHoverObject`). Not run in-game.
+
 ## Drafted, not promoted (`valheim.draft.json`)
 
-`Longer Auto Pickup Range` (`m_autoPickupRange`, read by `Player.AutoPickup`) and `Longer Build/Remove Reach` (`m_maxPlaceDistance`,
-read by `Player.CopyPiece` and `RemovePiece`). Seen in a compile pass that then crashed the game, so the rest of `Player` (`m_debugFly`,
-`m_ghostMode`, `m_maxInteractDistance`, `m_placeDelay`, `m_removeDelay`) was not checked. Not run in-game.
+- `Fly Mode` (`m_debugFly`, +0x978): `Player.IsDebugFlying` returns it for the local owner (`m_nview.IsOwner()`), otherwise it reads a synced
+  `"debugFly"` ZDO bool; there is no cheat gate. `Character.UpdateDebugFly` consumes it through a virtual call that was not traced.
+- `Ghost Mode` (`m_ghostMode`, +0x97A): `Player.InGhostMode` returns it. No direct caller among the BaseAI/MonsterAI targeting methods
+  (virtual dispatch), so that enemies really ignore it is not shown from code.
+
+Not checked: `m_placeDelay`, `m_dodgeAdrenaline` and the rest of `Player`.
 
 Stability: compiling all of `Player` (300+ methods) in one burst crashed the game (`0xe0000001` in KERNELBASE, offset `0xc41ca`, the same
-fault as Aviassembly). `monoReaders.js` now caps and paces the pass; use `METHODS=<regex>`.
+fault as Aviassembly). `monoReaders.js` now caps and paces the pass; use `METHODS=<regex>`. The targeted searches above (about a dozen
+methods each) were fine.

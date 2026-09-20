@@ -297,6 +297,22 @@
       ],
       "value": 30,
       "offValue": 8
+    },
+    {
+      "id": "mono-max-interact-distance",
+      "name": "Longer Interact Reach",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_maxInteractDistance"
+        }
+      ],
+      "value": 10,
+      "offValue": 3.5
     }
   ]
 }

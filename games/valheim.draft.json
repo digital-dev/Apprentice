@@ -1,0 +1,41 @@
+{
+  "schema": 2,
+  "exe": "valheim",
+  "modules": {},
+  "cheats": [
+    {
+      "id": "mono-fly-mode",
+      "name": "Fly Mode",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_debugFly"
+        }
+      ],
+      "value": 1,
+      "offValue": 0,
+      "note": "Player.IsDebugFlying returns m_debugFly (+0x978) for the local owner with no cheat gate; Player.InDebugFlyMode returns it directly. Character.UpdateDebugFly consumes it through a virtual call, not traced. Not run in-game."
+    },
+    {
+      "id": "mono-ghost-mode",
+      "name": "Ghost Mode (enemies ignore you)",
+      "dataType": "int8",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "m_localPlayer",
+          "instanceFieldName": "m_ghostMode"
+        }
+      ],
+      "value": 1,
+      "offValue": 0,
+      "note": "Player.InGhostMode returns m_ghostMode (+0x97A). The enemy AI is expected to call it through a virtual call; no direct caller found in BaseAI/MonsterAI targeting methods. Not run in-game."
+    }
+  ]
+}
