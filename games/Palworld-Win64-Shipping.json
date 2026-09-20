@@ -311,6 +311,22 @@
       "signatureOffset": 0,
       "moduleName": "Palworld-Win64-Shipping.exe",
       "moduleOffset": "0x318e4f0"
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "palworld-max-weight-recompute",
+      "name": "Max Weight: game recompute (HUD and overweight state)",
+      "originalBytes": "f30f118788010000",
+      "length": 8,
+      "signature": "f3 0f 10 8f 88 01 00 00 41 b1 01 41 b0 42 48 8b c8 e8 ?? ?? ?? ?? 0f 28 c8 f3 0f 5c 8f 88 01 00 00 f3 0f 11 87 88 01 00 00 f3 0f 11 8f 98 01 00 00 eb 0a c7 87 98 01 00 00 00 00 00",
+      "signatureOffset": 33,
+      "moduleName": "Palworld-Win64-Shipping.exe",
+      "moduleOffset": "0x31af878",
+      "baseRegister": "rdi",
+      "fieldOffset": "0x188",
+      "value": 99999,
+      "dataType": "float"
     }
   ]
 }

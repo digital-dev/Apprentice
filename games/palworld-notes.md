@@ -42,3 +42,9 @@ Sampled read-only at ~1 ms during inventory changes: the game rewrites MaxInvent
 0x3171ad7). palworld-no-encumbrance replaces it to return 99999.0. Signature unique in this build. In-game effect NOT yet confirmed;
 if the HUD gauge still shows 1150 the delegate payload reads the field directly.
 Do not use start_write_watch here: it crashed the game.
+
+## Max weight recompute (the HUD gauge / "weighed down" message)
+Function at RVA ~0x31af7xx builds max in [rdi+0x188] (300 + points*perPoint, then buff), stores the final value at 0x31af878, then broadcasts
+OnUpdateMaxWeight (delegate +0x80) with the field as payload and compares NowItemWeight against it to fire OnOverWeight (+0x90).
+palworld-max-weight-recompute forces that final store to 99999.0 (force mode, base rdi, offset 0x188). Unverified in-game.
+palworld-no-encumbrance (GetMaxItemWeight returns 99999) was confirmed by the user to remove the slowdown.
