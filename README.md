@@ -20,15 +20,23 @@ Two ways to cheat:
   itself never puts the old value back. NOP it out, replace it, force a
   fixed result, or skip a method entirely for one object.
 
-Ships with two ready-made cheat sets: **Valheim** (Mono JIT — 15 cheats,
-`games/valheim.json`) and **Elden Ring** (native, pointer-chain value
-cheats — 14 cheats, `games/start_protected_game.json`, named for Elden
-Ring's EAC-protected executable). The engine underneath isn't tied to
-either game — see [Sharing cheats](#sharing-cheats) below for adding your
-own. `games/` also holds profiles for Palworld (Unreal) and Aviassembly
-(Unity/Mono), and a work-in-progress one for **Schedule I** (Unity IL2CPP):
-its cheats are still being verified in-game, so treat that one as a starting
-point, not a finished set.
+Ships with cheat sets for five games, one profile each in `games/`:
+
+| Game | Cheats | Engine / notes |
+|---|---|---|
+| Valheim | 15 | Mono JIT (`valheim.json`) |
+| Elden Ring | 13 | Native, pointer-chain value cheats (`start_protected_game.json`, named for its EAC-protected executable) |
+| Palworld | 8 | Unreal (`Palworld-Win64-Shipping.json`) |
+| Aviassembly | 8 | Unity/Mono (`aviassembly.json`) |
+| Schedule I | 26 | Unity IL2CPP (`Schedule I.json`) — see `games/schedule-i-notes.md` for how each was found |
+
+The newest Schedule I cheats (invisibility, no arrest, clone items, the instant
+timers and others) were built from the game's code and checked against a recording
+of the game build, but not every one has been confirmed in-game yet; treat any you
+have not tried as unproven. The engine isn't tied to any of these games — see
+[Sharing cheats](#sharing-cheats) for adding your own, or
+[Using the cheat factory](#using-the-cheat-factory-author_cheats) to have an AI
+agent draft a Unity game's cheat list for you.
 
 > Windows only. The native addon's injection path is Win32; Linux is stubbed
 > out but not implemented (see `native/src/platform/platform_linux.cc`).
@@ -44,17 +52,21 @@ Prefer to build it yourself, or want to hack on it? Keep reading.
 ## Building from source
 
 Requirements: Node.js 26 to run the tests (they load a TypeScript worker and the compiled
-`.node` addon natively), Node.js 22 to *build* the addon (the pinned node-gyp can't yet
-drive the toolset Node 24+ headers use; the addon is N-API, so a build made under 22 loads
-fine under 26), a recent `npm`, and the
+`.node` addon natively), a recent `npm`, and the
 [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
-(C++ workload) for compiling the native addon.
+(C++ workload) for compiling the native addon. The addon builds under Node 22 (what CI uses)
+and, with the current node-gyp 13, under Node 26 as well; it is N-API, so a build from either
+loads under both.
 
 ```bash
-npm install                                    # electron postinstall may need approving
+npm install
 cd native && npx node-gyp configure && npx node-gyp build && cd ..
 npm run build
 ```
+
+`package.json`'s `allowScripts` lists the exact package versions whose install scripts may
+run (Electron's binary download and esbuild). **When you upgrade Electron or esbuild, update
+that entry too**, or `npm` skips the script and the binary is never downloaded.
 
 Run it with `Apprentice.cmd` at the repo root, or package a real installer:
 
@@ -94,8 +106,10 @@ any branch other than `master`: it builds the installer and attaches it to the r
 artifact (kept for 3 days) instead of releasing it.
 
 The installer is not code-signed, so Windows SmartScreen will warn on first run. The
-toolchain pins (Windows 2022 image, Python 3.11, Node 22 to build the addon and Node 26 to
-run the tests) each exist for a specific reason, recorded as comments in the workflow.
+workflow builds the addon on the Windows 2022 image with Python 3.11 and Node 22, and runs
+the tests on Node 26. Those pins were chosen for the old node-gyp 9; the comments in the
+workflow explain why. node-gyp is now 13, so some may no longer be needed, but that has not
+been tried in CI, so they are left as they are.
 
 ### The game library
 
@@ -106,7 +120,7 @@ changed in a game until you switch a cheat on.
 
 Steam is found automatically, wherever it is installed: the registry entry first,
 then the usual folders, then every library folder Steam lists (so a second drive
-such as `D:SteamLibrary` is picked up with no setup). Cover art comes from Steam's
+such as `D:\SteamLibrary` is picked up with no setup). Cover art comes from Steam's
 own on-disk cache, so the library works offline and Apprentice makes no network
 requests for it; a game with no cached art gets a coloured placeholder. Games from
 other launchers are not listed, but any running process can still be attached from
@@ -120,8 +134,9 @@ replay records a game's executable memory once, then re-runs the real signature
 builder and `PatchEngine.locate()` against that recording on any machine.
 
 ```bash
-# with the game running
-node mcp-server/scripts/recordSnapshot.js <pid> valheim <build-label> fixtures/snapshots/valheim-<build>.snap      <patchId>:<address>:<length>
+# with the game running; each trailing argument is one patch site to test
+node mcp-server/scripts/recordSnapshot.js <pid> valheim <build-label> \
+    fixtures/snapshots/valheim-<build>.snap <patchId>:<address>:<length>
 ```
 
 Add the site to `tests/fixtures/manifest.json` (signature, offset, original
@@ -181,7 +196,7 @@ game's Mono/IL2CPP layout.
 
 1. Fork, branch off `master`.
 2. Read [`CODEBASE_MAP.md`](CODEBASE_MAP.md) first. It's written for someone
-   picking this up cold — the layer map, the four patch modes, the
+   picking this up cold — the layer map, the eight patch modes, the
    non-negotiable safety rules (never displace a RIP-relative instruction,
    never guess on an ambiguous signature, always restore on quit), and *why*
    each of those rules exists, are all there. Read it before touching
@@ -239,12 +254,76 @@ automatically. Full tool list, dependency-pinning notes (there's a real
 reason `@modelcontextprotocol/sdk` is pinned exactly, not ranged), and more
 detail live in `mcp-server/README.md`.
 
-### Drafting a game's whole cheat list: `author_cheats`
+### Using the cheat factory (`author_cheats`)
 
 For a **Unity Mono or Unity IL2CPP** game, `author_cheats` turns a wishlist of
-categories (health, stamina, mana, money, bank, cash, water, curfew, time
-freeze, godmode…) into draft cheats and one in-game checklist, instead of a
-reverse-engineering session per cheat:
+categories into draft cheats and an in-game checklist, instead of a reverse-engineering
+session per cheat. It is an MCP tool, so you drive it through an AI agent (Claude Code
+picks up the `game-memory` server from `.mcp.json` when you work in this repo), or with a
+script for IL2CPP games.
+
+**Before you start:** build the native addon and the MCP server (see Setup above), start
+the game, and **load into a save or world**. The factory reads live objects, and a game
+sitting at its main menu has none yet. Leave the game idle rather than mid-load.
+
+**1. Run it.** Ask the agent something like *"attach to Schedule I and draft health,
+stamina and bank cheats"*. It calls, in order:
+
+```
+list_processes                       -> find the game's pid
+attach(pid)                          -> a handle
+fingerprint_process(handle)          -> must report unity-mono or unity-il2cpp
+author_cheats(handle, ["health","stamina","bank"], "games/<Game>.json")
+```
+
+`profilePath` is where the *live* profile is (or will be); the output goes beside it as
+`<Game>.draft.json`. For an IL2CPP game you can skip the agent:
+
+```bash
+node mcp-server/scripts/authorLive.js <pid> "games/<Game>.json" health,stamina,bank
+```
+
+That script needs `cd mcp-server && npm run build` first, and writes
+`<Game>.draft.json` even if you never wrote a profile. Note that it **replaces** the
+whole draft file each run, so write to a different `profilePath` if you want to keep an
+earlier draft.
+
+**2. Read the result.** Every drafted cheat has an entry in `checklist`:
+
+| Field | Meaning |
+|---|---|
+| `verified` | A live instance was read and gave a plausible value (not zero, not garbage). `false` means only the in-game test can confirm it. |
+| `liveValue` | What was read, e.g. 100 for a full health bar. Something odd here (a huge or microscopic number) usually means the wrong object. |
+| `multiInstanceRisk` | Several objects of that class exist and the capture records whichever runs last. |
+| `lookFor` | What to do in the game to see it work. |
+
+Three more lists explain what did not become a cheat: `unresolved` (matched a field but
+found no plausible value or no hookable method), `notFound` (no field matched — fall back
+to the analysis scripts below), and `manual` (see the table).
+
+**3. Try each one in the game, then promote it.** A draft is never loaded by the app.
+To use one, copy its entry from `<Game>.draft.json` into the `cheats` array of the live
+`<Game>.json` — **together with the capture patch it names** (the `patchId` in its
+`anchor` target; those entries have `"internal": true`) — then **restart Apprentice**: it
+can overwrite a profile you edited while it was running the next time it saves. Toggle it, do what `lookFor` says, and delete the
+ones that don't work. An anchored cheat reads `0/1 live` until its capture patch has
+caught the object; it changes to `1/1 live` by itself once the game has used it.
+
+**Categories** (`mcp-server/src/factory/categories.ts`):
+
+| Drafted automatically | Reported as *manual*, with the reason |
+|---|---|
+| `health`, `stamina`, `mana`, `money`, `bank`, `water`, `curfew`, `freezetime`, `godmode` | `cash` (an item object: reach it from the inventory that holds it with an anchor `derefOffset`), `runspeed` and `speed` (rate multipliers: zeroing or freezing them breaks other systems), `nosearch` (the police decision is per-officer, not a player flag), `hunger` (a decaying stat loses a freeze race) |
+
+To teach it a new game's naming, add a category (or extra `nameHints` / `classHints`) in that
+file: name and class regexes, the data types to try, freeze or one-shot, the value to write,
+and a `plausible` range for the live read. Give a category a `manualReview` message when
+its obvious mechanism is a known trap.
+
+**What the factory cannot do:** code patches (instant timers, invisibility, item cloning),
+Lua script cheats, and any game that is not Unity. Those take the analysis scripts below.
+
+What it does under the hood:
 
 - **Mono:** enumerates classes and fields, ranks them by name, finds the live
   singleton root, and keeps the first candidate whose live read is plausible.
@@ -268,7 +347,29 @@ callers and inlined field readers, watch a field change while the game does
 something, generate a `replace`/`capture` patch with a unique signature). The
 method they support is written up in
 `.claude/skills/authoring-tamper-cheats/SKILL.md` and
-`mcp-server/scripts/README.md`. Design docs:
+`mcp-server/scripts/README.md`.
+
+**A typical hunt for a code patch** (all IL2CPP; run `cd mcp-server && npm run build`
+first; every script takes the game's pid first and only reads):
+
+```bash
+cd mcp-server/scripts
+node survey.js <pid> out.txt "^PlayerCrimeData$"                # fields and methods of a class
+node findCallers.js <pid> "^(?!.*Network).*$" Cls.method        # who calls it? (empty = inlined)
+node findFieldReaders.js <pid> "^Cls$" "+0x148]"                # who touches this field offset?
+CLASSES="^Cls$" ROWS=60 BYTES=400 node disasm.js <pid> Cls.method   # what does it do?
+node callTree.js <pid> "^Cls$" Cls.method                       # what does it call?
+# once you know the exact instruction, emit a patch with a signature that matches once:
+MINLEN=2 AT=0x<address> ROWS=900 BYTES=4000 node makeReplace.js <pid> "^Cls$" method "." 31c0 my-id "My cheat"
+```
+
+The output of `makeReplace.js` is a ready-to-paste `patch` entry. Two things that
+trip people up: `CLASSES` takes one class per call, and a long method needs `ROWS` and
+`BYTES` raised or the script reports "instruction not found". Prefer a patch at the
+function every route shares over one per route, and check that a getter you want to
+patch actually has callers (IL2CPP inlines trivial ones).
+
+Design docs:
 `docs/superpowers/specs/2026-09-19-cheat-factory-design.md` and
 `docs/superpowers/specs/2026-09-19-il2cpp-cheat-factory-design.md`.
 
@@ -339,16 +440,21 @@ through updates without needing any of this.
 
 ## Safety notes
 
-Apprentice never leaves a game modified after it closes: patches are
-restored on cheat disable, on detach, and on app quit, and a hardware
-write-watch breakpoint is always cleared before Apprentice exits — this is
-also true if the process closes unexpectedly, e.g. via Task Manager. If you
-see something patched that shouldn't be, that's a bug — please report it
-with repro steps.
+When Apprentice exits normally it puts the game back: code patches are restored when
+you disable a cheat, when the game closes, and when you quit; frozen values get their
+"off" value written back; and a hardware write-watch breakpoint is cleared. **That
+cleanup only runs while Apprentice is running.** If Apprentice itself is force-closed
+(Task Manager, a crash, a power cut), nothing can restore the game: any patch or frozen
+value you had switched on stays in it until you re-attach and switch it off, or restart
+the game (re-attaching adopts patches left behind this way). A find-what-writes capture
+in progress uses a hardware breakpoint, and if Apprentice is killed mid-capture the game
+can crash. So quit Apprentice from its window rather than ending the process. If you see
+something still patched after a normal quit, that's a bug — please report it with repro
+steps.
 
-This tool touches only the process you explicitly attach it to, and does
-nothing without you turning a cheat on. It has no network calls of its own
-beyond an optional Cheat Table search/import feature you invoke by hand.
+This tool touches only the process you explicitly attach it to, and does nothing to a
+game until you turn a cheat on (attaching and browsing the game library only read). The app makes no network requests of its own: Cheat Table import and export read
+and write a file you choose, and the game library reads Steam's files on disk.
 
 ---
 
