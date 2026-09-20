@@ -20,7 +20,7 @@
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
     "@vitejs/plugin-react": "^5.2.0",
-    "electron": "^33.0.0",
+    "electron": "^44.4.3",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "node-addon-api": "^7.0.0",
@@ -30,7 +30,7 @@
     "vitest": "^4.1.11"
   },
   "allowScripts": {
-    "electron@33.4.11": true,
+    "electron@44.4.3": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
     "electron-winstaller@5.4.0": true
