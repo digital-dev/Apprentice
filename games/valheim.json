@@ -344,7 +344,10 @@
       "signature": "48 ba 60 21 da f6 ff ff ff ff 41 b8 01 00 00 00 83 38 00 48 8d 64 24 00",
       "signatureOffset": 10,
       "moduleName": null,
-      "moduleOffset": null
+      "moduleOffset": null,
+      "monoClass": "Player",
+      "monoMethod": "PlacePiece",
+      "monoSearch": true
     },
     {
       "kind": "patch",
@@ -372,7 +375,10 @@
       "signature": "48 8b 85 38 fe ff ff c6 40 61 01 41 83 3f 00",
       "signatureOffset": 7,
       "moduleName": null,
-      "moduleOffset": null
+      "moduleOffset": null,
+      "monoClass": "Piece",
+      "monoMethod": "DropResources",
+      "monoSearch": true
     },
     {
       "kind": "patch",
@@ -386,7 +392,10 @@
       "signature": "48 8b 40 20 c6 40 61 01 48 63 85 40 fe ff ff",
       "signatureOffset": 4,
       "moduleName": null,
-      "moduleOffset": null
+      "moduleOffset": null,
+      "monoClass": "Piece",
+      "monoMethod": "DropResources",
+      "monoSearch": true
     }
   ]
 }

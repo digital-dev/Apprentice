@@ -69,6 +69,10 @@ export interface LoadedModule {
   size: number
 }
 
+// How far past a compiled Mono method's entry a monoSearch signature is looked for. Larger than any method seen (~4KB), small
+// enough that the next method's code is rarely inside it; a signature that also matches there is refused as ambiguous.
+export const MONO_METHOD_SPAN = 0x8000n
+
 function addHex(address: string, delta: bigint): string {
   return '0x' + (BigInt(address) + delta).toString(16)
 }
@@ -118,6 +122,25 @@ export async function resolvePatchAddress(
     // carry a monoMethodOffset that isn't valid hex. BigInt() throws on
     // that rather than failing gracefully, same hazard moduleOffset already
     // guards against elsewhere in this file.
+    if (patch.monoSearch === true && patch.signature) {
+      let hits: string[]
+      try {
+        hits = await ops.scanAob(patch.signature, methodStart, addHex(methodStart, MONO_METHOD_SPAN))
+      } catch {
+        return { address: null, matchCount: null, reason: 'not-yet-compiled', relearnedOffset: null, scanned: true }
+      }
+      if (hits.length === 0) return { address: null, matchCount: 0, reason: 'no-match', relearnedOffset: null, scanned: true }
+      if (hits.length > 1) {
+        return { address: null, matchCount: hits.length, reason: 'ambiguous', relearnedOffset: null, scanned: true }
+      }
+      return {
+        address: addHex(hits[0], BigInt(patch.signatureOffset ?? 0)),
+        matchCount: 1,
+        reason: null,
+        relearnedOffset: null,
+        scanned: true
+      }
+    }
     let address: string
     try {
       address = patch.monoMethodOffset === undefined ? methodStart : addHex(methodStart, BigInt(patch.monoMethodOffset))

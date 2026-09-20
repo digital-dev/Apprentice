@@ -1809,3 +1809,59 @@ describe('PatchEngine — strip injection', () => {
     expect(ops.memory.get('0x400100')).toBe(ORIGINAL)
   })
 })
+
+describe('PatchEngine — monoSearch (a Mono method patch found by signature, byte-verified)', () => {
+  const ORIG = 'c6406101'
+  const NOP4 = '0f1f4000'
+  const searchPatch: PatchCheat = {
+    kind: 'patch',
+    mode: 'replace',
+    id: 'mono-search-replace',
+    name: 'Mono search',
+    originalBytes: ORIG,
+    replacementBytes: NOP4,
+    length: 4,
+    signature: '48 8b 40 20 c6 40 61 01',
+    signatureOffset: 4,
+    moduleName: null,
+    moduleOffset: null,
+    monoClass: 'Piece',
+    monoMethod: 'DropResources',
+    monoSearch: true
+  }
+
+  function arm(hits: string[]): void {
+    engine.setAnchorContext(new Map(), new Set())
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x400000'
+    engine.setMonoOps(monoOps as any)
+    ops.aobMatches = hits
+  }
+
+  it('patches the site the signature found and restores it', async () => {
+    ops.memory.set('0x400c26', ORIG)
+    arm(['0x400c22']) // hit + signatureOffset 4 = 0x400c26
+    const result = await engine.apply(searchPatch)
+    expect(result.ok).toBe(true)
+    expect(ops.memory.get('0x400c26')).toBe(NOP4)
+    expect(engine.restore(searchPatch)).toBe(true)
+    expect(ops.memory.get('0x400c26')).toBe(ORIG)
+  })
+
+  it('refuses, and writes nothing, when the bytes at the found site are not the ones expected', async () => {
+    ops.memory.set('0x400c26', 'deadbeef')
+    arm(['0x400c22'])
+    const result = await engine.apply(searchPatch)
+    expect(result.ok).toBe(false)
+    expect(ops.writes).toHaveLength(0)
+    expect(ops.memory.get('0x400c26')).toBe('deadbeef')
+  })
+
+  it('refuses when the signature matches more than one place in the method', async () => {
+    ops.memory.set('0x400c26', ORIG)
+    arm(['0x400c22', '0x400d22'])
+    const result = await engine.apply(searchPatch)
+    expect(result.ok).toBe(false)
+    expect(ops.writes).toHaveLength(0)
+  })
+})

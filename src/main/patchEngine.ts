@@ -438,7 +438,8 @@ export class PatchEngine {
     // NOP'd or a foreign jmp, above) is trusted as 'original' rather than
     // compared against a snapshot from a different process instance.
     const isMonoAnchored = patch.monoClass !== undefined && patch.monoMethod !== undefined
-    if (isMonoAnchored || current.toLowerCase() === patch.originalBytes.toLowerCase()) {
+    // A monoSearch patch was found by signature, so it must also hold the bytes it expects.
+    if ((isMonoAnchored && patch.monoSearch !== true) || current.toLowerCase() === patch.originalBytes.toLowerCase()) {
       return { address, state: 'original', applicable: true, matchCount }
     }
     // Something else lives there now — another trainer, an update, or a

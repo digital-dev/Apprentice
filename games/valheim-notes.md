@@ -61,11 +61,14 @@ process-exit path in `ipc.ts`). `mono-no-placement-cost` (the game's `NoCostChea
   `cmp dword [rbp+0x38], 2`). Its two signatures differ only in the nop encoding after `cmp dword [rax], 0`.
 - `cheat-tag-drops-1` / `-2`: the two `mov byte [rax+0x61], 1` stores in `Piece.DropResources` (`ItemData.m_cheated`) become a 4-byte nop.
 
-They are keyed by signature, not by method offset: the same code sat at different offsets after a game restart (`DropResources` stores moved from
+They are found by signature, never by a fixed method offset (new engine option `monoSearch`, see `PatchCheat.monoSearch`: compile the method, scan its own
+range, require exactly one match and the original bytes there). The two drop patches and `cheat-tag-pieces-1` use it (`Piece.DropResources`,
+`Player.PlacePiece`), because those methods are not compiled until first used: on a fresh game a plain signature scan finds nothing for them.
+`cheat-tag-pieces-2` is signature-only (its method is unidentified but already compiled at startup). Reason for not using offsets: the same code sat at different offsets after a game restart (`DropResources` stores moved from
 `+0x7b6`/`+0xc3a` to `+0x7c6`/`+0xc52`), which would have made a method-offset patch refuse to apply.
 
-Verified: both drop signatures matched exactly once on a running game after a restart. NOT yet verified: that the two piece signatures each match
-exactly once (the shorter form matched twice, which is how the second site was found). Not covered: items already carrying the flag.
+Verified on a running game: `cheat-tag-pieces-2` matches exactly once; the drop signatures matched once on the previous instance. NOT yet verified: `monoSearch` end to end in
+the app (it compiles the method in the game), and `cheat-tag-pieces-1` matching once inside `PlacePiece`. Not covered: items already carrying the flag.
 
 Stability: compiling about 60 methods across `Player`, `Piece` and neighbours crashed the game a third time (16:08, the same KERNELBASE fault);
 earlier searches of about a dozen methods were fine. Do not compile methods in Valheim without an explicit go-ahead; signature scans are safe.

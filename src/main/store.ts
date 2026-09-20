@@ -297,6 +297,12 @@ export interface PatchCheat {
   // session to session. Absent means the patch targets the method's start,
   // exactly as before this field existed.
   monoMethodOffset?: string
+  // Find the site by `signature` inside the compiled method instead of trusting monoMethodOffset. A fresh launch can lay a large
+  // method out differently (Valheim's Piece.DropResources moved its stores by 16 bytes), and the Mono path never byte-checks the
+  // site, so a stale offset would patch the middle of another instruction. With this set the signature must match exactly once
+  // within the method and the original bytes must match there, or the patch does not apply. signatureOffset is the distance from
+  // the signature start to the patched instruction.
+  monoSearch?: boolean
   // force, capture, guard and immune: which register held the object at
   // capture time (for immune: which register the hooked method's entry
   // point receives its "this" argument in — rcx for a Mono-JIT instance

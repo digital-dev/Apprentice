@@ -1,5 +1,5 @@
 // Read-only triage after a game update: does each patch in a profile still find its bytes?
-// usage: node checkPatches.js <pid> <profilePath>
+// usage: [SCAN_ONLY=1] node checkPatches.js <pid> <profilePath>   (SCAN_ONLY skips Mono-keyed patches, so nothing is compiled in the game)
 // Mono-keyed patches: compile the method and compare the bytes at monoMethodOffset (compiling is what the game would do anyway).
 // Signature patches: scan the signature (must match once) and compare the bytes at signatureOffset.
 const fs = require('node:fs')
@@ -22,6 +22,7 @@ const hexAt = (addr, n) => addon.tryReadBytes(handle, '0x' + BigInt(addr).toStri
     const want = (c.originalBytes || '').toLowerCase()
     let where = '', got = null, matches = ''
     try {
+      if (c.monoClass && process.env.SCAN_ONLY) { console.log('SKIPPED'.padEnd(9), c.id, '(needs a method compile; SCAN_ONLY)'); continue }
       if (c.monoClass) {
         const handles = classes.get(c.monoClass) || []
         if (!handles.length) { console.log('MISSING'.padEnd(9), c.id, `class ${c.monoClass} not found`); continue }

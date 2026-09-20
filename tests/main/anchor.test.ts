@@ -309,3 +309,56 @@ describe('resolvePatchAddress — module-missing short-circuit', () => {
     expect(ops.scanCalls).toHaveLength(0)
   })
 })
+
+describe('resolvePatchAddress — mono path with monoSearch', () => {
+  const searchPatch: PatchCheat = { ...monoPatch, id: 'p4', monoSearch: true, signatureOffset: 4, monoMethodOffset: '0x7b6' }
+
+  it('finds the site by signature inside the method, not by the stored offset', async () => {
+    const ops = new FakeOps()
+    ops.matches = ['0x700c22'] // the code moved: nothing is at method + 0x7b6 any more
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+
+    const result = await resolvePatchAddress(searchPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBe('0x700c26') // hit + signatureOffset
+    expect(result.matchCount).toBe(1)
+    expect(ops.scanCalls[0].rangeStart).toBe('0x700000')
+    expect(ops.scanCalls[0].rangeEnd).toBe('0x708000')
+  })
+
+  it('refuses when the signature is not in the method', async () => {
+    const ops = new FakeOps()
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+    const result = await resolvePatchAddress(searchPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBeNull()
+    expect(result.reason).toBe('no-match')
+  })
+
+  it('refuses when the signature matches more than once instead of guessing', async () => {
+    const ops = new FakeOps()
+    ops.matches = ['0x700100', '0x700900']
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+    const result = await resolvePatchAddress(searchPatch, modules, verified, ops, monoOps as any)
+    expect(result.address).toBeNull()
+    expect(result.reason).toBe('ambiguous')
+    expect(result.matchCount).toBe(2)
+  })
+
+  it('still waits for a method that has not compiled', async () => {
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = null
+    const result = await resolvePatchAddress(searchPatch, modules, verified, new FakeOps(), monoOps as any)
+    expect(result.reason).toBe('not-yet-compiled')
+  })
+
+  it('leaves a mono patch without monoSearch on the offset path, unchanged', async () => {
+    const ops = new FakeOps()
+    const monoOps = new FakeMonoOps()
+    monoOps.methodAddress = '0x700000'
+    const result = await resolvePatchAddress({ ...monoPatch, monoMethodOffset: '0x10' }, modules, verified, ops, monoOps as any)
+    expect(result.address).toBe('0x700010')
+    expect(ops.scanCalls).toHaveLength(0)
+  })
+})
