@@ -270,12 +270,24 @@ export function findInstanceOfClass(
   return null
 }
 
-// Cache for the expensive GUObjectArray walk: rootClass -> live instance.
-export type UeInstanceCache = Map<string, string>
+// Two caches: rootClass -> live instance (the GUObjectArray walk costs seconds), and
+// target key -> its resolved address plus the pointer links it was reached through
+// (walking the field names costs hundreds of reads, and runs every freeze tick).
+export interface UeInstanceCache {
+  roots: Map<string, string>
+  targets: Map<string, { links: { at: string; value: string }[]; final: string }>
+}
+
+export function createUeInstanceCache(): UeInstanceCache {
+  return { roots: new Map(), targets: new Map() }
+}
+
+const targetKey = (t: UeTarget): string => `${t.rootClass}/${(t.path ?? []).join('.')}/${t.fieldName}`
 
 // Resolves a root-path UeTarget: instance of rootClass, follow each `path`
-// pointer field by reflected name, then add the last field's offset. The
-// instance is cached and re-validated by its ClassPrivate on every call.
+// pointer field by reflected name, then add the last field's offset. A hit on
+// the target cache costs one read per link: each pointer must still hold the
+// value it had, and the root must still be alive (its class pointer readable).
 export function resolveUeRootTargetAddress(
   target: UeTarget,
   config: UeConfig,
@@ -285,38 +297,54 @@ export function resolveUeRootTargetAddress(
   if (target.rootClass === undefined) return null
   const classOf = (object: string): string | null => readPointer(readBytes, addHex(object, OFFSET_CLASS_PRIVATE))
 
-  let root = cache.get(target.rootClass) ?? null
-  let rootClassAddress: string | null = null
+  const key = targetKey(target)
+  const hit = cache.targets.get(key)
+  if (hit !== undefined) {
+    if (hit.links.every((link) => readPointer(readBytes, link.at) === link.value)) return hit.final
+    cache.targets.delete(key)
+  }
+
+  let root = cache.roots.get(target.rootClass) ?? null
   if (root !== null) {
-    rootClassAddress = classOf(root)
+    const rootClassAddress = classOf(root)
     const name = rootClassAddress === null ? null : readFName(readBytes, addHex(rootClassAddress, OFFSET_NAME_PRIVATE))
     const decoded = name === null ? null : decodeFName(readBytes, config.gNames, name.comparisonIndex)
-    if (decoded !== target.rootClass) {
-      cache.delete(target.rootClass)
+    // The instance may be of a Blueprint subclass, so only its liveness is checked here.
+    if (rootClassAddress === null || decoded === null) {
+      cache.roots.delete(target.rootClass)
       root = null
     }
   }
   if (root === null) {
-    rootClassAddress = resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootClass, target.maxObjectsToScan)
+    const rootClassAddress = resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootClass, target.maxObjectsToScan)
     if (rootClassAddress === null) return null
     root = findInstanceOfClass(readBytes, config.gObjectArray, config.gNames, rootClassAddress, target.maxObjectsToScan)
     if (root === null) return null
-    cache.set(target.rootClass, root)
+    cache.roots.set(target.rootClass, root)
   }
 
+  const links: { at: string; value: string }[] = [
+    { at: addHex(root, OFFSET_CLASS_PRIVATE), value: classOf(root) ?? '' }
+  ]
   let object = root
   for (const step of target.path ?? []) {
     const cls = classOf(object)
     if (cls === null) return null
     const field = resolveInheritedFieldOffset(readBytes, config.gNames, cls, step)
     if (field === null) return null
-    const next = readPointer(readBytes, addHex(object, field.offset))
+    const at = addHex(object, field.offset)
+    const next = readPointer(readBytes, at)
     if (next === null) return null
+    links.push({ at, value: next })
     object = next
   }
 
   const cls = classOf(object)
   if (cls === null) return null
   const last = resolveInheritedFieldOffset(readBytes, config.gNames, cls, target.fieldName)
-  return last === null ? null : addHex(object, last.offset)
+  if (last === null) return null
+  const final = addHex(object, last.offset)
+  links.push({ at: addHex(object, OFFSET_CLASS_PRIVATE), value: cls })
+  cache.targets.set(key, { links, final })
+  return final
 }

@@ -43,6 +43,7 @@ import {
   resolveClassAddress,
   walkProperties,
   decodeFName,
+  createUeInstanceCache,
   type UeInstanceCache
 } from './ueTargetResolve'
 import { discoverUeConfig } from './ueDiscover'
@@ -279,7 +280,7 @@ const UE_DISCOVER_RETRY_MS = 5000
 let ueDiscovered: UeConfig | null = null
 let ueDiscovering = false
 let ueDiscoverFailedAt = 0
-let ueInstanceCache: UeInstanceCache = new Map()
+let ueInstanceCache: UeInstanceCache = createUeInstanceCache()
 // The GUObjectArray walk for an instance costs seconds, so a root class with no live
 // instance yet (title screen, no world loaded) is not searched again for UE_MISS_BACKOFF_MS.
 const UE_MISS_BACKOFF_MS = 30_000
@@ -289,7 +290,7 @@ function resetUeDiscovery(): void {
   ueDiscovered = null
   ueDiscovering = false
   ueDiscoverFailedAt = 0
-  ueInstanceCache = new Map()
+  ueInstanceCache = createUeInstanceCache()
   ueRootMissAt = new Map()
 }
 
@@ -333,7 +334,7 @@ function resolveUeTarget(handle: number, target: UeTarget): string | null {
       const missedAt = ueRootMissAt.get(target.rootClass)
       if (missedAt !== undefined && Date.now() - missedAt < UE_MISS_BACKOFF_MS) return null
       const resolved = resolveUeRootTargetAddress(target, config, readBytes, ueInstanceCache)
-      if (resolved === null && !ueInstanceCache.has(target.rootClass)) ueRootMissAt.set(target.rootClass, Date.now())
+      if (resolved === null && !ueInstanceCache.roots.has(target.rootClass)) ueRootMissAt.set(target.rootClass, Date.now())
       else ueRootMissAt.delete(target.rootClass)
       return resolved
     }

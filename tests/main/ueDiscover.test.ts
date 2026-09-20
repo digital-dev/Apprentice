@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { discoverUeConfig, probeNamePool } from '../../src/main/ueDiscover'
-import { resolveUeRootTargetAddress, resolveInheritedFieldOffset, type ReadBytes } from '../../src/main/ueTargetResolve'
+import { resolveUeRootTargetAddress, resolveInheritedFieldOffset, createUeInstanceCache, type ReadBytes } from '../../src/main/ueTargetResolve'
 import type { UeConfig } from '../../src/main/profile'
 import type { UeTarget } from '../../src/main/store'
 
@@ -134,9 +134,9 @@ describe('root-path targets', () => {
   it('follows an inherited pointer field to the component and adds the field offset', () => {
     const mem = new FakeMemory()
     buildWorld(mem, buildPool(mem, NAMES))
-    const cache = new Map<string, string>()
+    const cache = createUeInstanceCache()
     expect(resolveUeRootTargetAddress(target({ path: ['Move'] }), CONFIG, mem.read, cache)).toBe(hex(A.move + 0x30n))
-    expect(cache.get('Player')).toBe(hex(A.player))
+    expect(cache.roots.get('Player')).toBe(hex(A.player))
   })
 
   it('finds an inherited field by walking SuperStruct', () => {
@@ -148,21 +148,38 @@ describe('root-path targets', () => {
   it('finds an instance of a Blueprint subclass of the root class', () => {
     const mem = new FakeMemory()
     buildWorld(mem, buildPool(mem, NAMES), { blueprintInstance: true })
-    expect(resolveUeRootTargetAddress(target({ path: ['Move'] }), CONFIG, mem.read, new Map())).toBe(hex(A.move + 0x30n))
+    expect(resolveUeRootTargetAddress(target({ path: ['Move'] }), CONFIG, mem.read, createUeInstanceCache())).toBe(hex(A.move + 0x30n))
   })
 
   it('returns null for an unknown path step', () => {
     const mem = new FakeMemory()
     buildWorld(mem, buildPool(mem, NAMES))
-    expect(resolveUeRootTargetAddress(target({ path: ['Nope'] }), CONFIG, mem.read, new Map())).toBeNull()
+    expect(resolveUeRootTargetAddress(target({ path: ['Nope'] }), CONFIG, mem.read, createUeInstanceCache())).toBeNull()
   })
 
   it('does not trust a stale cached instance and re-scans, skipping the class default object', () => {
     const mem = new FakeMemory()
     buildWorld(mem, buildPool(mem, NAMES))
-    const cache = new Map([['Player', '0xdead0000']])
+    const cache = createUeInstanceCache()
+    cache.roots.set('Player', '0xdead0000')
     expect(resolveUeRootTargetAddress(target({ path: ['Move'] }), CONFIG, mem.read, cache)).toBe(hex(A.move + 0x30n))
-    expect(cache.get('Player')).toBe(hex(A.player))
+    expect(cache.roots.get('Player')).toBe(hex(A.player))
+  })
+
+  it('serves a repeat resolve from the target cache with a handful of reads, and re-resolves when a link changes', () => {
+    const mem = new FakeMemory()
+    buildWorld(mem, buildPool(mem, NAMES))
+    const cache = createUeInstanceCache()
+    const t = target({ path: ['Move'] })
+    resolveUeRootTargetAddress(t, CONFIG, mem.read, cache)
+    let reads = 0
+    const counting: ReadBytes = (a, n) => (reads++, mem.read(a, n))
+    expect(resolveUeRootTargetAddress(t, CONFIG, counting, cache)).toBe(hex(A.move + 0x30n))
+    expect(reads).toBeLessThanOrEqual(4)
+    // the component pointer now reads differently: the cached address must not be reused
+    cache.targets.get('Player/Move/Speed')!.links[1].value = '0x1'
+    expect(resolveUeRootTargetAddress(t, CONFIG, mem.read, cache)).toBe(hex(A.move + 0x30n))
+    expect(cache.targets.get('Player/Move/Speed')!.links[1].value).toBe(hex(A.move))
   })
 })
 
