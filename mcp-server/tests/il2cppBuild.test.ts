@@ -202,6 +202,34 @@ describe('buildIl2cppFactory', () => {
     expect(r.checklist[0]).toMatchObject({ verified: false, instanceCount: 1 })
   })
 
+  it('does not accept a denormal float from a scan: tiny non-zero garbage is not a real value', async () => {
+    // Seen live on Schedule I: a stale PlayerMovement read 1.0e-42 at the stamina
+    // offset, which passed "non-zero and within range" and was reported verified.
+    const ops = scanWorld(
+      () => [OBJ],
+      (m) => {
+        m.qword(OBJ, 0x2000)
+        m.qword(OBJ + 8n, 0)
+        m.float(OBJ + 0x44n, 1.0075335958495435e-42)
+      }
+    )
+    const r = await buildIl2cppFactory(['stamina'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: false, instanceCount: 1 })
+  })
+
+  it('still accepts a small but real float from a scan', async () => {
+    const ops = scanWorld(
+      () => [OBJ],
+      (m) => {
+        m.qword(OBJ, 0x2000)
+        m.qword(OBJ + 8n, 0)
+        m.float(OBJ + 0x44n, 0.5)
+      }
+    )
+    const r = await buildIl2cppFactory(['stamina'], NOROOT, ops)
+    expect(r.checklist[0]).toMatchObject({ verified: true, liveValue: 0.5 })
+  })
+
   it('still accepts a zero read through a singleton root (authoritative)', async () => {
     const r = await buildIl2cppFactory(['money'], enumeration([MONEY]), opsWith(0))
     expect(r.checklist[0]).toMatchObject({ verified: true, liveValue: 0 })

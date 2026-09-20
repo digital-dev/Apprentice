@@ -181,6 +181,10 @@ async function scannedInstances(ops: BuildOps, classPtr: string): Promise<string
   return found
 }
 
+// Smallest magnitude a scanned float is trusted at. Below it the bits are almost
+// certainly an integer or a pointer read as a float, not a stat.
+const MIN_REAL_FLOAT = 1e-4
+
 async function verifyField(field: Il2cppField, roots: Il2cppRoot[], ops: BuildOps, cat: Category): Promise<Verification> {
   const dataType = field.dataType as DataType
   const [lo, hi] = cat.plausible
@@ -216,9 +220,13 @@ async function verifyField(field: Il2cppField, roots: Il2cppRoot[], ops: BuildOp
   if (instances.length > MAX_TRUSTED_SCAN_INSTANCES) {
     return { state: 'unverified', value: null, instanceCount: instances.length, lowRisk: false }
   }
+  // A float that is non-zero but denormal-tiny (1e-42 was seen live) is another
+  // face of the same garbage: no real stat is that small.
+  const isFloat = dataType === 'float' || dataType === 'double'
+  const meaningful = (v: number) => !isFloat || Math.abs(v) >= MIN_REAL_FLOAT
   for (const instance of instances) {
     const v = read(instance)
-    if (v !== null && v !== 0 && plausible(v)) {
+    if (v !== null && v !== 0 && plausible(v) && meaningful(v)) {
       return { state: 'verified', value: v, instanceCount: instances.length, lowRisk: instances.length === 1 }
     }
   }
