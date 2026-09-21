@@ -1,0 +1,269 @@
+{
+  "schema": 2,
+  "exe": "Subnautica2-Win64-Shipping",
+  "modules": {
+    "Subnautica2-Win64-Shipping.exe": {
+      "size": 231333888,
+      "timestamp": 1604862341,
+      "version": "5.6.1.0"
+    }
+  },
+  "cheats": [
+    {
+      "id": "sn2-infinite-health",
+      "name": "Unlimited Health",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Health",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Health",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 999
+    },
+    {
+      "id": "sn2-infinite-oxygen",
+      "name": "Unlimited Oxygen",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWESurvivalAttributeSet",
+          "rootClass": "UWESurvivalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Oxygen",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "UWESurvivalAttributeSet",
+          "rootClass": "UWESurvivalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Oxygen",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 999
+    },
+    {
+      "id": "sn2-no-hunger",
+      "name": "Never Hungry (Food held at max)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWESurvivalAttributeSet",
+          "rootClass": "UWESurvivalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Food",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "UWESurvivalAttributeSet",
+          "rootClass": "UWESurvivalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Food",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "sn2-no-thirst",
+      "name": "Never Thirsty (Water held at max)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWESurvivalAttributeSet",
+          "rootClass": "UWESurvivalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Water",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "UWESurvivalAttributeSet",
+          "rootClass": "UWESurvivalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Water",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "sn2-infinite-energy",
+      "name": "Unlimited Energy",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEMechanicalAttributeSet",
+          "rootClass": "UWEMechanicalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Energy",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMechanicalAttributeSet",
+          "rootClass": "UWEMechanicalAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Energy",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 999
+    },
+    {
+      "id": "sn2-fast-movement",
+      "name": "Fast Walk and Swim",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEMovementAttributeSet",
+          "rootClass": "UWEMovementAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "MaxWalkSpeed",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 700
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMovementAttributeSet",
+          "rootClass": "UWEMovementAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "MaxWalkSpeed",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 700
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMovementAttributeSet",
+          "rootClass": "UWEMovementAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "MaxSwimSpeed",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 900
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMovementAttributeSet",
+          "rootClass": "UWEMovementAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "MaxSwimSpeed",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 900
+        }
+      ],
+      "value": 700
+    },
+    {
+      "id": "sn2-free-dash",
+      "name": "Free Dash (no oxygen cost)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEMovementAttributeSet",
+          "rootClass": "UWEMovementAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "DashOxygenCost",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMovementAttributeSet",
+          "rootClass": "UWEMovementAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "DashOxygenCost",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 0
+    },
+    {
+      "id": "sn2-no-radiation",
+      "name": "No Radiation Buildup",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Radiation",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Radiation",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float"
+        }
+      ],
+      "value": 0
+    }
+  ]
+}
