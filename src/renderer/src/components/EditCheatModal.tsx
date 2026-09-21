@@ -200,7 +200,9 @@ export default function EditCheatModal({
   // past the slider's own 1x-20x range is legitimate (an "instant" cheat
   // wanting something far bigger), so it isn't rejected here — just shown
   // as a plain number instead of a slider that would misrepresent it.
-  const factorInSliderRange = factor !== null && factor >= 1 && factor <= 20
+  const sliderMin = cheat.sliderMin ?? 1
+  const sliderMax = cheat.sliderMax ?? 20
+  const factorInSliderRange = factor !== null && factor >= sliderMin && factor <= sliderMax
   const valid = Number.isFinite(cheat.value) && targets.length > 0 && targets.every(targetIsValid)
 
   function updateTarget(i: number, next: CheatTarget) {
@@ -283,9 +285,9 @@ export default function EditCheatModal({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
                   <input
                     type="range"
-                    min={1}
-                    max={20}
-                    step={0.5}
+                    min={sliderMin}
+                    max={sliderMax}
+                    step={sliderMin < 1 ? 0.25 : 0.5}
                     value={cheat.value / cheat.multiplierBaseline}
                     onChange={(e) =>
                       onChange({ ...cheat, value: Number(e.target.value) * (cheat.multiplierBaseline as number) })

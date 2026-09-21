@@ -362,8 +362,8 @@
       "value": 20
     },
     {
-      "id": "sn2-game-speed-fast",
-      "name": "Game Speed 2x",
+      "id": "sn2-game-speed",
+      "name": "Game Speed",
       "dataType": "float",
       "mode": "freeze",
       "targets": [
@@ -377,33 +377,13 @@
           ],
           "fieldName": "TimeDilation",
           "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 2
+          "dataType": "float"
         }
       ],
-      "value": 2
-    },
-    {
-      "id": "sn2-game-speed-slow",
-      "name": "Game Speed 0.5x",
-      "dataType": "float",
-      "mode": "freeze",
-      "targets": [
-        {
-          "kind": "ue",
-          "className": "SN2PlayerCharacter",
-          "rootClass": "SN2PlayerCharacter",
-          "path": [
-            "^Outer",
-            "WorldSettings"
-          ],
-          "fieldName": "TimeDilation",
-          "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 0.5
-        }
-      ],
-      "value": 0.5
+      "value": 2,
+      "multiplierBaseline": 1,
+      "sliderMin": 0.25,
+      "sliderMax": 8
     },
     {
       "id": "sn2-freeze-time",

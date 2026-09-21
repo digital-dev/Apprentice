@@ -11,10 +11,16 @@ import { useState } from 'react'
 // the cheat on every intermediate tick while dragging.
 export default function MultiplierSlider({
   factor,
-  onCommit
+  onCommit,
+  min = 1,
+  max = 20,
+  step = 0.5
 }: {
   factor: number
   onCommit: (factor: number) => void
+  min?: number
+  max?: number
+  step?: number
 }) {
   const [dragValue, setDragValue] = useState<number | null>(null)
   const shown = dragValue ?? factor
@@ -28,9 +34,9 @@ export default function MultiplierSlider({
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={(e) => e.stopPropagation()}>
       <input
         type="range"
-        min={1}
-        max={20}
-        step={0.5}
+        min={min}
+        max={max}
+        step={step}
         value={shown}
         onChange={(e) => setDragValue(Number(e.target.value))}
         onMouseUp={(e) => commit(Number((e.target as HTMLInputElement).value))}

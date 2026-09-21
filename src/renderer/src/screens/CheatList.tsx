@@ -939,8 +939,8 @@ export default function CheatList({
   // actually installed. Falling back to the plain toggle for an
   // out-of-range factor is honest about what the control can and can't
   // show, rather than showing a control that lies.
-  function inSliderRange(factor: number): boolean {
-    return factor >= 1 && factor <= 20
+  function inSliderRange(factor: number, min = 1, max = 20): boolean {
+    return factor >= min && factor <= max
   }
 
   // Writes a value cheat back to the profile. If it's enabled, restart the
@@ -1884,8 +1884,11 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <Toggle enabled={isEnabled} onChange={() => toggle(cheat)} />
                       {cheat.multiplierBaseline !== undefined &&
-                        inSliderRange(cheat.value / cheat.multiplierBaseline) && (
+                        inSliderRange(cheat.value / cheat.multiplierBaseline, cheat.sliderMin, cheat.sliderMax) && (
                           <MultiplierSlider
+                            min={cheat.sliderMin}
+                            max={cheat.sliderMax}
+                            step={cheat.sliderMin !== undefined && cheat.sliderMin < 1 ? 0.25 : undefined}
                             factor={cheat.value / cheat.multiplierBaseline}
                             onCommit={(factor) => void commitMultiplier(cheat, factor)}
                           />

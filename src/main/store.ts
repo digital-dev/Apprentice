@@ -203,6 +203,9 @@ export interface CheatDefinition {
   // the equivalent idea on the patch side, where the engine itself does
   // the multiplying instead of the UI.
   multiplierBaseline?: number
+  // Slider bounds when 1x-20x does not fit (game speed wants slow motion: 0.25-8). Only meaningful with multiplierBaseline.
+  sliderMin?: number
+  sliderMax?: number
   // An Electron accelerator string (e.g. "CommandOrControl+Shift+F1"),
   // captured by the renderer's "Set hotkey" control. Absent means no
   // hotkey — every cheat saved before this field existed keeps loading
