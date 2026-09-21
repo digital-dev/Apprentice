@@ -665,6 +665,211 @@
           }
         }
       ]
+    },
+    {
+      "id": "sn2-vehicle-indestructible",
+      "name": "Indestructible Vehicle (health held, no damage, no crush depth)",
+      "dataType": "float",
+      "mode": "freeze",
+      "value": 0,
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "Health",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxHealth"
+          }
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "Health",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxHealth"
+          }
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplier",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplier",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierRadiation",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierRadiation",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierElectrical",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierElectrical",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierPhysical",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierPhysical",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierCold",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierCold",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierHeat",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "DamageMultiplierHeat",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMechanicalAttributeSet",
+          "rootClass": "UWEMechanicalAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "CrushDepth",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 1000000
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMechanicalAttributeSet",
+          "rootClass": "UWEMechanicalAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "CrushDepth",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 1000000
+        }
+      ]
     }
   ]
 }

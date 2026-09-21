@@ -22,7 +22,7 @@ so the player's is picked with `rootOuterClass: "SN2PlayerCharacter"` (player pa
 | `UWEBehaviorAttributeSet` (creatures only) | Stamina 0x90, Infection 0xb0, Temper 0x60 | not on the player |
 
 ## Shipped in `games/Subnautica2-Win64-Shipping.json`
-20 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
+21 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
 sane values; none has been toggled in-game yet**, so the effect of each is unverified.
 
 | Cheat | Targets |
@@ -61,6 +61,11 @@ address is snapshotted when the cheat is enabled and written back on disable; a 
   Matched by owner class `SN2PossessableVehicle` (Tadpole chain: `BP_Tadpole_C > SN2Tadpole > SN2Submersible > SN2PossessableVehicle`), all instances,
   Energy held at each vehicle's own MaxEnergy. Only one vehicle was live to check. The base submarine (`SN2Submarine`) runs on the power grid instead,
   which the Facility Power cheat covers; it had no live instance here.
+
+- **Indestructible Vehicle**: the Tadpole owns a `UWEHealthAttributeSet` (Health 89.3/100; `DamageMultiplierPhysical` base 1, current 0.5) and
+  `CrushDepth` (base 25000, current 80000). The cheat holds Health at MaxHealth and sets the six `DamageMultiplier*` attributes to 0 and
+  `CrushDepth` to 1,000,000, base and current, on every `SN2PossessableVehicle`. Zeroing multipliers is there because a freeze is checked every
+  100 ms and one large hit could kill first; that these multipliers scale damage TAKEN is inferred from the names (a physical one at 0.5 fits an armour value).
 
 ## Not done, and why
 - **Unlock All Databank Entries.** `UWEDatabankEntry` has an `UnlockingRequirements` object pointer and `HideOnStoryGoal`; clearing a
