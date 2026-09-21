@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { discoverUeConfig, probeNamePool } from '../../src/main/ueDiscover'
-import { resolveUeRootTargetAddress, resolveInheritedFieldOffset, createUeInstanceCache, type ReadBytes } from '../../src/main/ueTargetResolve'
+import { resolveUeRootTargetAddress, resolveUeMultiTargetAddresses, resolveInheritedFieldOffset, createUeInstanceCache, type ReadBytes } from '../../src/main/ueTargetResolve'
 import type { UeConfig } from '../../src/main/profile'
 import type { UeTarget } from '../../src/main/store'
 
@@ -163,6 +163,25 @@ describe('root-path targets', () => {
     buildWorld(mem, buildPool(mem, NAMES))
     mem.ptr(A.player + 0x20n, A.cdo)
     expect(resolveUeRootTargetAddress(target({}), CONFIG, mem.read, createUeInstanceCache())).toBeNull()
+  })
+
+  it('resolves every live instance of an all-instances target and caches the instance list', () => {
+    const mem = new FakeMemory()
+    buildWorld(mem, buildPool(mem, NAMES))
+    const cache = createUeInstanceCache()
+    const t = target({ path: ['Move'], allInstances: true })
+    expect(resolveUeMultiTargetAddresses(t, CONFIG, mem.read, cache, 1000)).toEqual([hex(A.move + 0x30n)])
+    expect(cache.instances.get('Player')?.objects).toEqual([hex(A.player)])
+    // a repeat inside the TTL does not walk the object array again
+    mem.ptr(ARRAY, 0n)
+    expect(resolveUeMultiTargetAddresses(t, CONFIG, mem.read, cache, 2000)).toEqual([hex(A.move + 0x30n)])
+  })
+
+  it('returns no addresses for an all-instances target whose class is missing', () => {
+    const mem = new FakeMemory()
+    buildWorld(mem, buildPool(mem, NAMES))
+    const t = target({ rootClass: 'Nope', allInstances: true })
+    expect(resolveUeMultiTargetAddresses(t, CONFIG, mem.read, createUeInstanceCache())).toEqual([])
   })
 
   it('returns null for an unknown path step', () => {

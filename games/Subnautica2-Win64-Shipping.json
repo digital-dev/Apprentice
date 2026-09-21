@@ -380,7 +380,7 @@
           "dataType": "float"
         }
       ],
-      "value": 2,
+      "value": 1,
       "multiplierBaseline": 1,
       "sliderMin": 0.25,
       "sliderMax": 8
@@ -471,6 +471,106 @@
         }
       ],
       "value": 0
+    },
+    {
+      "id": "sn2-easy-craft-build",
+      "name": "Easy Crafting & Building (no material cost)",
+      "dataType": "int32",
+      "mode": "freeze",
+      "value": 0,
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWECraftingRecipe",
+          "rootClass": "UWECraftingRecipe",
+          "fieldName": "Requirements",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "int32",
+          "value": 0,
+          "valueOffset": 8
+        }
+      ]
+    },
+    {
+      "id": "sn2-instant-craft-build",
+      "name": "Instant Crafting & Building",
+      "dataType": "float",
+      "mode": "freeze",
+      "value": 0.05,
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWECraftingRecipe",
+          "rootClass": "UWECraftingRecipe",
+          "fieldName": "CraftingTime",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0.05
+        },
+        {
+          "kind": "ue",
+          "className": "UWECrafterComponent",
+          "rootClass": "UWECrafterComponent",
+          "fieldName": "DefaultCraftingTime",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0.05
+        }
+      ]
+    },
+    {
+      "id": "sn2-unlock-all-recipes",
+      "name": "Unlock All Recipes & Build Items",
+      "dataType": "int8",
+      "mode": "freeze",
+      "value": 1,
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWECraftingRecipe",
+          "rootClass": "UWECraftingRecipe",
+          "fieldName": "DefaultRecipeState",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "int8",
+          "value": 1
+        },
+        {
+          "kind": "ue",
+          "className": "UWECraftingRecipe",
+          "rootClass": "UWECraftingRecipe",
+          "fieldName": "UpdatedUnlockingRequirements",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "int32",
+          "value": 0,
+          "valueOffset": 8
+        },
+        {
+          "kind": "ue",
+          "className": "SN2BuilderActionData",
+          "rootClass": "SN2BuilderActionData",
+          "fieldName": "DefaultUnlockState",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "int8",
+          "value": 1
+        },
+        {
+          "kind": "ue",
+          "className": "SN2BuilderActionData",
+          "rootClass": "SN2BuilderActionData",
+          "fieldName": "UpdatedUnlockingRequirements",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "int32",
+          "value": 0,
+          "valueOffset": 8
+        }
+      ]
     }
   ]
 }

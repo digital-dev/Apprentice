@@ -40,6 +40,7 @@ import { findClassLocations } from './monoClassLocations'
 import {
   resolveUeTargetAddress,
   resolveUeRootTargetAddress,
+  resolveUeMultiTargetAddresses,
   ueRootKey,
   fieldLayoutFor,
   resolveClassAddress,
@@ -367,6 +368,44 @@ function resolveUeTarget(handle: number, target: UeTarget): string | null {
   }
 }
 
+// Every address of an allInstances target (empty when the roots are not discovered yet or nothing is live).
+function resolveUeMultiTarget(handle: number, target: UeTarget): string[] {
+  if (attachedExe === null || target.rootClass === undefined) return []
+  const config = ueConfigFor(handle, loadProfile(attachedExe).ueConfig)
+  if (config === null) return []
+  const readBytes = (address: string, length: number): string | null => nativeAddon.tryReadBytes(handle, address, length)
+  try {
+    return resolveUeMultiTargetAddresses(target, config, readBytes, ueInstanceCache)
+  } catch (err) {
+    console.warn(`[ue] multi-target resolution failed: ${String(err)}`)
+    return []
+  }
+}
+
+// Original values of every address an allInstances target covers, taken as the cheat is enabled, so disabling puts each
+// one back (captureStore holds one value per target, which cannot describe hundreds of addresses).
+const multiSnapshots = new Map<string, { address: string; dataType: DataType; value: number }[]>()
+
+function snapshotMultiTargets(handle: number, cheat: CheatDefinition): void {
+  const entries: { address: string; dataType: DataType; value: number }[] = []
+  for (const target of cheat.targets) {
+    if (!isUeTarget(target) || !target.allInstances) continue
+    const dataType = target.dataType ?? cheat.dataType
+    for (const address of resolveUeMultiTarget(handle, target)) {
+      const value = nativeAddon.tryReadValue(handle, address, [], dataType)
+      if (value !== null) entries.push({ address, dataType, value })
+    }
+  }
+  if (entries.length > 0) multiSnapshots.set(cheat.id, entries)
+}
+
+function restoreMultiSnapshot(handle: number | null, cheatId: string): void {
+  const entries = multiSnapshots.get(cheatId)
+  multiSnapshots.delete(cheatId)
+  if (entries === undefined || handle === null) return
+  for (const e of entries) nativeAddon.writeValue(handle, e.address, [], e.dataType, e.value)
+}
+
 // A cheat writes to every one of its targets on each call, not just the
 // first. Naive memory scanning sometimes resolves a chain that only looks
 // static and stops working after a few seconds even though other
@@ -444,6 +483,18 @@ async function writeCheat(
           ? writeBit(handle, resolved, [], dataType, target.bitIndex, value)
           : nativeAddon.writeValue(handle, resolved, [], dataType, value)
       if (ok) anySucceeded = true
+      continue
+    }
+    if (isUeTarget(target) && target.allInstances) {
+      // A restore value describes one address, not hundreds: the per-address snapshot restores these instead.
+      if (valuesOverride) continue
+      let reached = false
+      for (const address of resolveUeMultiTarget(handle, target)) {
+        const current = nativeAddon.tryReadValue(handle, address, [], dataType)
+        if (current === null) continue
+        if (valueMatches(current, value, dataType) || nativeAddon.writeValue(handle, address, [], dataType, value)) reached = true
+      }
+      if (reached) anySucceeded = true
       continue
     }
     if (isUeTarget(target)) {
@@ -849,11 +900,13 @@ async function restoreFrozen(handle: number | null, cheat: CheatDefinition): Pro
   const kind = restoreKind(cheat)
   if (kind === 'capture') await restoreCapturedCheat(handle, cheat)
   else if (kind === 'value' && handle !== null) await writeCheat(handle, { ...cheat, value: cheat.offValue as number })
+  restoreMultiSnapshot(handle, cheat.id)
 }
 
 // The one place a freeze cheat is switched on or off, shared by the UI toggle and the hotkey. The reading is captured BEFORE the loop starts
 // overwriting the field, and restored AFTER it has stopped, so the last write cannot land on top of the restore.
 async function startFreeze(cheat: CheatDefinition): Promise<void> {
+  if (restoreKind(cheat) !== 'none' && attachedHandle !== null) snapshotMultiTargets(attachedHandle, cheat)
   if (restoreKind(cheat) === 'capture' && attachedHandle !== null) {
     const statuses = await verifyCheat(attachedHandle, cheat, null)
     captureStore.capture(

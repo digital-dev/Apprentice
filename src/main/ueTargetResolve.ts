@@ -244,6 +244,20 @@ export function findInstanceOfClass(
   maxObjectsToScan: number,
   outerClassAddress?: string
 ): string | null {
+  return findInstancesOfClass(readBytes, arrayConfig, poolConfig, classAddress, maxObjectsToScan, outerClassAddress, 1)[0] ?? null
+}
+
+// Every live instance (same rules as findInstanceOfClass), up to `limit`.
+export function findInstancesOfClass(
+  readBytes: ReadBytes,
+  arrayConfig: UeConfig['gObjectArray'],
+  poolConfig: UeConfig['gNames'],
+  classAddress: string,
+  maxObjectsToScan: number,
+  outerClassAddress: string | undefined,
+  limit: number
+): string[] {
+  const found: string[] = []
   const { chunksArrayBase, numElementsPerChunk, itemStride, itemInitialOffset } = arrayConfig
   const derivesFrom = (target: string): ((cls: string) => boolean) => {
     const want = BigInt(target)
@@ -300,10 +314,11 @@ export function findInstanceOfClass(
         const outerClass = outer === null ? null : readPointer(readBytes, addHex(outer, OFFSET_CLASS_PRIVATE))
         if (outerClass === null || !isOuterDerived(outerClass)) continue
       }
-      return objectAddress
+      found.push(objectAddress)
+      if (found.length >= limit) return found
     }
   }
-  return null
+  return found
 }
 
 // Two caches: rootClass -> live instance (the GUObjectArray walk costs seconds), and
@@ -312,11 +327,20 @@ export function findInstanceOfClass(
 export interface UeInstanceCache {
   roots: Map<string, string>
   targets: Map<string, { links: { at: string; value: string }[]; final: string }>
+  // All-instance lists per root key: one GUObjectArray walk serves every target on that root.
+  instances: Map<string, { at: number; objects: string[] }>
+  // Addresses per all-instances target, valid for the instance list (by its timestamp) they were built from.
+  multi: Map<string, { listAt: number; addresses: string[] }>
 }
 
 export function createUeInstanceCache(): UeInstanceCache {
-  return { roots: new Map(), targets: new Map() }
+  return { roots: new Map(), targets: new Map(), instances: new Map(), multi: new Map() }
 }
+
+// A data asset set is loaded once and rarely changes; a walk costs about a second on the main thread.
+const INSTANCE_LIST_TTL_MS = 60_000
+const INSTANCE_LIST_EMPTY_TTL_MS = 15_000
+const MAX_MULTI_INSTANCES = 4096
 
 // Root-instance cache key: the same class owned by a different actor class is a different instance.
 export const ueRootKey = (t: UeTarget): string =>
@@ -396,4 +420,77 @@ export function resolveUeRootTargetAddress(
   links.push({ at: addHex(object, OFFSET_CLASS_PRIVATE), value: cls })
   cache.targets.set(key, { links, final })
   return final
+}
+
+// Every address an all-instances target covers: each live instance of rootClass (optionally owned by
+// rootOuterClass), through `path`, plus the field's offset. Empty when nothing resolves. The instance list is cached
+// (see INSTANCE_LIST_TTL_MS); the field offset is looked up once per distinct class.
+export function resolveUeMultiTargetAddresses(
+  target: UeTarget,
+  config: UeConfig,
+  readBytes: ReadBytes,
+  cache: UeInstanceCache,
+  now: number = Date.now()
+): string[] {
+  if (target.rootClass === undefined) return []
+  const layout = fieldLayoutFor(config)
+  const key = ueRootKey(target)
+  let entry = cache.instances.get(key)
+  if (entry === undefined || now - entry.at > (entry.objects.length === 0 ? INSTANCE_LIST_EMPTY_TTL_MS : INSTANCE_LIST_TTL_MS)) {
+    let objects: string[] = []
+    const rootClassAddress = resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootClass, target.maxObjectsToScan)
+    const outerClassAddress =
+      target.rootOuterClass === undefined
+        ? undefined
+        : resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootOuterClass, target.maxObjectsToScan) ?? null
+    if (rootClassAddress !== null && outerClassAddress !== null) {
+      objects = findInstancesOfClass(
+        readBytes,
+        config.gObjectArray,
+        config.gNames,
+        rootClassAddress,
+        target.maxObjectsToScan,
+        outerClassAddress,
+        MAX_MULTI_INSTANCES
+      )
+    }
+    entry = { at: now, objects }
+    cache.instances.set(key, entry)
+  }
+
+  const memoKey = targetKey(target)
+  const memo = cache.multi.get(memoKey)
+  if (memo !== undefined && memo.listAt === entry.at) return memo.addresses
+
+  const offsets = new Map<string, number | null>()
+  const offsetFor = (cls: string, field: string): number | null => {
+    const memo = `${cls}/${field}`
+    const known = offsets.get(memo)
+    if (known !== undefined) return known
+    const found = resolveInheritedFieldOffset(readBytes, config.gNames, cls, field, layout)
+    offsets.set(memo, found === null ? null : found.offset)
+    return found === null ? null : found.offset
+  }
+
+  const addresses: string[] = []
+  for (const root of entry.objects) {
+    let object: string | null = root
+    for (const step of target.path ?? []) {
+      const cls: string | null = object === null ? null : readPointer(readBytes, addHex(object, OFFSET_CLASS_PRIVATE))
+      if (object === null || cls === null) {
+        object = null
+        break
+      }
+      const stepOffset: number | null = step === PATH_OUTER ? OFFSET_OUTER_PRIVATE : offsetFor(cls, step)
+      object = stepOffset === null ? null : readPointer(readBytes, addHex(object, stepOffset))
+    }
+    if (object === null) continue
+    const cls = readPointer(readBytes, addHex(object, OFFSET_CLASS_PRIVATE))
+    if (cls === null) continue
+    const offset = offsetFor(cls, target.fieldName)
+    if (offset === null) continue
+    addresses.push(addHex(object, offset + (target.valueOffset ?? 0)))
+  }
+  cache.multi.set(memoKey, { listAt: entry.at, addresses })
+  return addresses
 }

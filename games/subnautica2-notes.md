@@ -22,7 +22,7 @@ so the player's is picked with `rootOuterClass: "SN2PlayerCharacter"` (player pa
 | `UWEBehaviorAttributeSet` (creatures only) | Stamina 0x90, Infection 0xb0, Temper 0x60 | not on the player |
 
 ## Shipped in `games/Subnautica2-Win64-Shipping.json`
-15 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
+18 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
 sane values; none has been toggled in-game yet**, so the effect of each is unverified.
 
 | Cheat | Targets |
@@ -38,15 +38,22 @@ sane values; none has been toggled in-game yet**, so the effect of each is unver
 Path notes: many `World` objects share the name `L_Main` (one per streaming cell), so the first `World` is not the live one; hang world
 targets off the player instead. `^Outer` follows `OuterPrivate`. Instance search skips default subobjects (Outer named `Default__X`).
 
+## Recipe cheats (all-instances targets)
+`allInstances` writes every live instance of a class (255 `UWECraftingRecipe` assets, 158 `SN2BuilderActionData`). The original of every
+address is snapshotted when the cheat is enabled and written back on disable; a repeat write skips addresses already at the value.
+- **Easy Crafting & Building**: recipe `Requirements` (TArray at +0xE0) length set to 0, so a recipe asks for no items. Lengths were 1-5
+  everywhere. Builder items use the same recipes (`SN2BuilderConstructActionData.Recipe`), which is why one cheat covers both.
+- **Instant Crafting & Building**: recipe `CraftingTime` (+0x108; seen 0 to 120, mostly 1.5) and `UWECrafterComponent.DefaultCraftingTime`
+  set to 0.05 (not 0, to avoid a divide). Which of the two the game uses, and whether building reads the recipe time, is unverified.
+- **Unlock All Recipes & Build Items**: recipe `DefaultRecipeState` (`ERecipeState` Locked=0/Unlocked=1; 220 locked, 35 unlocked),
+  builder `DefaultUnlockState` (`EUnlockState`, same values; 28 locked), and both `UpdatedUnlockingRequirements` array lengths set to 0.
+  Unverified: if the game already copied unlock state into the player's `SN2UnlockPlayerStateComponent.AllUnlockables`, changing the
+  defaults will not change it, and a menu reopen or reload may be needed.
+
 ## Not done, and why
-- **Instant crafting / easy crafting / easy building.** `UWECraftingRecipe` data assets (255 loaded) hold `CraftingTime` (+0x108) and
-  `Requirements` (+0xE0, array of 0x30-byte `{ItemType, NumItems @+0x28}`). Zeroing them means writing every recipe, which the target
-  model (one address per target) and the per-target restore cannot do; restoring would need per-address capture. Building cost lives in
-  `SN2ConstructableComponent` (`UnpaidCost`/`PaidCost`, `ConstructableParams`) and only exists while something is being built.
-  Code patches are the alternative: ~120 sites load a float at +0x108, unsorted.
 - **Unlimited Facility Power.** `UWEPowerStorage.CurrentCharge/MaxCharge` and `UWEPowerGeneratorComponent.BasePowerGeneration` exist but
-  no storage instance is live until a base is built, so nothing could be checked.
-- **Unlock All Blueprints / Databank.** State is in `SN2UnlockPlayerStateComponent.AllUnlockables` and `UWEDatabankWorldSubsystem`;
-  changing it properly means calling game functions (`ProcessEvent`), which the app does not have.
-- `SN2CheatManager` ships in the build and would cover item spawning and possibly unlocks, but also needs function calls.
+  no storage instance is live until a base is built, so nothing could be checked. The new all-instances targets would cover it.
+- **Unlock All Databank Entries.** `UWEDatabankEntry` has an `UnlockingRequirements` object pointer and `HideOnStoryGoal`; clearing a
+  pointer risks a null dereference in game code that was not read, so it was left out.
+- `SN2CheatManager` ships in the build and would cover item spawning and possibly unlocks, but needs function calls (`ProcessEvent`).
 - In co-op the first `SN2PlayerCharacter` found may not be the local player.

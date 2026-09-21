@@ -154,6 +154,9 @@ export interface UeTarget {
   // Bytes added after the field's own offset: reaches a member inside a struct field
   // (FGameplayAttributeData: BaseValue at +8, CurrentValue at +0xC).
   valueOffset?: number
+  // Root form: write EVERY live instance of rootClass (e.g. all loaded recipe data assets), not just the first. Restore on
+  // disable is per address (ipc.ts keeps a snapshot), and the write skips addresses that already hold the value.
+  allInstances?: boolean
   // Write the live value of another field on the same object instead of a fixed number (e.g. Oxygen held at the player's
   // own MaxOxygen, whatever upgrades raised it to). `valueOffset` there defaults to 0xC (CurrentValue of an attribute).
   valueFrom?: { fieldName: string; valueOffset?: number }
