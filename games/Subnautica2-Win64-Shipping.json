@@ -222,7 +222,7 @@
           "dataType": "float"
         }
       ],
-      "value": 700,
+      "value": 350,
       "multiplierBaseline": 350
     },
     {
@@ -263,7 +263,7 @@
           "dataType": "float"
         }
       ],
-      "value": 900,
+      "value": 450,
       "multiplierBaseline": 450
     },
     {
@@ -569,6 +569,63 @@
           "dataType": "int32",
           "value": 0,
           "valueOffset": 8
+        }
+      ]
+    },
+    {
+      "id": "sn2-unlimited-power",
+      "name": "Unlimited Facility Power (batteries full, no drain)",
+      "dataType": "float",
+      "mode": "freeze",
+      "value": 0,
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEPowerStorageSimulation",
+          "rootClass": "UWEPowerStorageSimulation",
+          "fieldName": "CurrentCharge",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0,
+          "valueFrom": {
+            "fieldName": "MaxCharge",
+            "valueOffset": 0
+          }
+        },
+        {
+          "kind": "ue",
+          "className": "UWEPowerStorage",
+          "rootClass": "UWEPowerStorage",
+          "fieldName": "CurrentCharge",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0,
+          "valueFrom": {
+            "fieldName": "MaxCharge",
+            "valueOffset": 0
+          }
+        },
+        {
+          "kind": "ue",
+          "className": "UWEPowerConsumerSimulation",
+          "rootClass": "UWEPowerConsumerSimulation",
+          "fieldName": "ContinuousPowerDrain",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
+        },
+        {
+          "kind": "ue",
+          "className": "UWEPoweredApplianceComponent",
+          "rootClass": "UWEPoweredApplianceComponent",
+          "fieldName": "ContinuousPowerDrain",
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "value": 0
         }
       ]
     }

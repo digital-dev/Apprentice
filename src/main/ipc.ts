@@ -489,10 +489,29 @@ async function writeCheat(
       // A restore value describes one address, not hundreds: the per-address snapshot restores these instead.
       if (valuesOverride) continue
       let reached = false
-      for (const address of resolveUeMultiTarget(handle, target)) {
+      const addresses = resolveUeMultiTarget(handle, target)
+      // valueFrom: each instance is held at its OWN sibling field (a capacitor at its own max). Both lists come from the
+      // same instance list in the same order, so they line up by index; a length mismatch means an instance lacked a field.
+      let sources: string[] | null = null
+      if (target.valueFrom !== undefined) {
+        sources = resolveUeMultiTarget(handle, {
+          ...target,
+          fieldName: target.valueFrom.fieldName,
+          valueOffset: target.valueFrom.valueOffset ?? 0xc,
+          valueFrom: undefined
+        })
+        if (sources.length !== addresses.length) continue
+      }
+      for (const [k, address] of addresses.entries()) {
+        let want = value
+        if (sources !== null) {
+          const live = nativeAddon.tryReadValue(handle, sources[k], [], dataType)
+          if (live === null || !(live > 0)) continue
+          want = live
+        }
         const current = nativeAddon.tryReadValue(handle, address, [], dataType)
         if (current === null) continue
-        if (valueMatches(current, value, dataType) || nativeAddon.writeValue(handle, address, [], dataType, value)) reached = true
+        if (valueMatches(current, want, dataType) || nativeAddon.writeValue(handle, address, [], dataType, want)) reached = true
       }
       if (reached) anySucceeded = true
       continue

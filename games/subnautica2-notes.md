@@ -22,7 +22,7 @@ so the player's is picked with `rootOuterClass: "SN2PlayerCharacter"` (player pa
 | `UWEBehaviorAttributeSet` (creatures only) | Stamina 0x90, Infection 0xb0, Temper 0x60 | not on the player |
 
 ## Shipped in `games/Subnautica2-Win64-Shipping.json`
-18 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
+19 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
 sane values; none has been toggled in-game yet**, so the effect of each is unverified.
 
 | Cheat | Targets |
@@ -50,9 +50,14 @@ address is snapshotted when the cheat is enabled and written back on disable; a 
   Unverified: if the game already copied unlock state into the player's `SN2UnlockPlayerStateComponent.AllUnlockables`, changing the
   defaults will not change it, and a menu reopen or reload may be needed.
 
+- **Unlimited Facility Power** (checked with a base built): power state is in simulation objects owned by `UWEGlobalSimulationSubsystem`
+  (5 `UWEPowerStorageSimulation` at 10000/10000, 55 `UWEPowerConsumerSimulation` with `ContinuousPowerDrain` 0-10, 51 generators), mirrored
+  on components (`UWEPowerStorage` +0x248, `UWEPoweredApplianceComponent.ContinuousPowerDrain` +0x234). The cheat holds each storage at its
+  own `MaxCharge` and sets every drain to 0, on both the simulations and the components. `UWEPoweredApplianceComponent.OverridePower`
+  (+0x230) exists and is probably a built-in "always powered" flag, but its meaning was not confirmed, so it is not used.
+  Instance search skips objects owned by a class default object or by a Blueprint class (component templates), so templates are not written.
+
 ## Not done, and why
-- **Unlimited Facility Power.** `UWEPowerStorage.CurrentCharge/MaxCharge` and `UWEPowerGeneratorComponent.BasePowerGeneration` exist but
-  no storage instance is live until a base is built, so nothing could be checked. The new all-instances targets would cover it.
 - **Unlock All Databank Entries.** `UWEDatabankEntry` has an `UnlockingRequirements` object pointer and `HideOnStoryGoal`; clearing a
   pointer risks a null dereference in game code that was not read, so it was left out.
 - `SN2CheatManager` ships in the build and would cover item spawning and possibly unlocks, but needs function calls (`ProcessEvent`).

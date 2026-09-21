@@ -232,6 +232,48 @@ export function resolveInheritedFieldOffset(
   return null
 }
 
+// Every object in GUObjectArray as [address, class pointer]. Items are read in slices (one read per ~170 objects, the addon
+// caps a read at 4096 bytes); the class pointer costs one more read per object, so a full pass is seconds on a big game.
+export type ObjectTable = { at: number; entries: [string, string][] }
+
+function* objectStream(
+  readBytes: ReadBytes,
+  arrayConfig: UeConfig['gObjectArray'],
+  maxObjectsToScan: number
+): Generator<[string, string]> {
+  const { chunksArrayBase, numElementsPerChunk, itemStride, itemInitialOffset } = arrayConfig
+  const sliceItems = Math.max(1, Math.floor(4000 / itemStride))
+  for (let start = 0; start < maxObjectsToScan; start += sliceItems) {
+    const blockBase = readPointer(readBytes, addHex(chunksArrayBase, Math.floor(start / numElementsPerChunk) * 8))
+    if (blockBase === null) {
+      start = (Math.floor(start / numElementsPerChunk) + 1) * numElementsPerChunk - sliceItems
+      continue
+    }
+    const inChunk = start % numElementsPerChunk
+    const count = Math.min(sliceItems, numElementsPerChunk - inChunk, maxObjectsToScan - start)
+    const raw = readBytes(addHex(blockBase, inChunk * itemStride), count * itemStride)
+    if (raw === null) continue
+    const buf = Buffer.from(raw, 'hex')
+    for (let i = 0; i < count; i++) {
+      const objectPtr = buf.readBigUInt64LE(i * itemStride + itemInitialOffset)
+      if (objectPtr === 0n) continue
+      const objectAddress = '0x' + objectPtr.toString(16)
+      const classPrivate = readPointer(readBytes, addHex(objectAddress, OFFSET_CLASS_PRIVATE))
+      if (classPrivate === null) continue
+      yield [objectAddress, classPrivate]
+    }
+  }
+}
+
+export function buildObjectTable(
+  readBytes: ReadBytes,
+  arrayConfig: UeConfig['gObjectArray'],
+  maxObjectsToScan: number,
+  now: number = Date.now()
+): ObjectTable {
+  return { at: now, entries: Array.from(objectStream(readBytes, arrayConfig, maxObjectsToScan)) }
+}
+
 // First live instance of `classAddress`: an object whose ClassPrivate is that
 // class or a subclass of it (a running game's player is usually a Blueprint
 // subclass of the C++ class), and whose name is not the class default object
@@ -255,10 +297,11 @@ export function findInstancesOfClass(
   classAddress: string,
   maxObjectsToScan: number,
   outerClassAddress: string | undefined,
-  limit: number
+  limit: number,
+  table?: ObjectTable
 ): string[] {
   const found: string[] = []
-  const { chunksArrayBase, numElementsPerChunk, itemStride, itemInitialOffset } = arrayConfig
+  const classObjectMemo = new Map<string, boolean>()
   const derivesFrom = (target: string): ((cls: string) => boolean) => {
     const want = BigInt(target)
     const derives = new Map<bigint, boolean>()
@@ -281,42 +324,35 @@ export function findInstancesOfClass(
   }
   const isDerived = derivesFrom(classAddress)
   const isOuterDerived = outerClassAddress === undefined ? null : derivesFrom(outerClassAddress)
-  // Items are read in slices (one read per ~170 objects, the addon caps a read at 4096 bytes)
-  // and only an object whose class matches costs further reads.
-  const sliceItems = Math.max(1, Math.floor(4000 / itemStride))
-  for (let start = 0; start < maxObjectsToScan; start += sliceItems) {
-    const blockBase = readPointer(readBytes, addHex(chunksArrayBase, Math.floor(start / numElementsPerChunk) * 8))
-    if (blockBase === null) {
-      start = (Math.floor(start / numElementsPerChunk) + 1) * numElementsPerChunk - sliceItems
-      continue
-    }
-    const inChunk = start % numElementsPerChunk
-    const count = Math.min(sliceItems, numElementsPerChunk - inChunk, maxObjectsToScan - start)
-    const raw = readBytes(addHex(blockBase, inChunk * itemStride), count * itemStride)
-    if (raw === null) continue
-    const buf = Buffer.from(raw, 'hex')
-    for (let i = 0; i < count; i++) {
-      const objectPtr = buf.readBigUInt64LE(i * itemStride + itemInitialOffset)
-      if (objectPtr === 0n) continue
-      const objectAddress = '0x' + objectPtr.toString(16)
-      const classPrivate = readPointer(readBytes, addHex(objectAddress, OFFSET_CLASS_PRIVATE))
-      if (classPrivate === null || !isDerived(classPrivate)) continue
-      const name = readFName(readBytes, addHex(objectAddress, OFFSET_NAME_PRIVATE))
-      const decoded = name === null ? null : decodeFName(readBytes, poolConfig, name.comparisonIndex)
-      if (decoded === null || decoded.startsWith(CDO_PREFIX)) continue
-      // A component template inside a class default object ("Default__X" is its Outer) is not a live instance.
-      const outer = readPointer(readBytes, addHex(objectAddress, OFFSET_OUTER_PRIVATE))
-      const outerName = outer === null ? null : readFName(readBytes, addHex(outer, OFFSET_NAME_PRIVATE))
-      const outerDecoded = outerName === null ? null : decodeFName(readBytes, poolConfig, outerName.comparisonIndex)
-      if (outerDecoded !== null && outerDecoded.startsWith(CDO_PREFIX)) continue
-      if (isOuterDerived !== null) {
-        // Components and attribute sets are owned by an actor (their Outer): pick the one owned by the wanted actor class.
-        const outerClass = outer === null ? null : readPointer(readBytes, addHex(outer, OFFSET_CLASS_PRIVATE))
-        if (outerClass === null || !isOuterDerived(outerClass)) continue
+  for (const [objectAddress, classPrivate] of table?.entries ?? objectStream(readBytes, arrayConfig, maxObjectsToScan)) {
+    if (!isDerived(classPrivate)) continue
+    const name = readFName(readBytes, addHex(objectAddress, OFFSET_NAME_PRIVATE))
+    const decoded = name === null ? null : decodeFName(readBytes, poolConfig, name.comparisonIndex)
+    if (decoded === null || decoded.startsWith(CDO_PREFIX)) continue
+    // A component template inside a class default object ("Default__X" is its Outer) is not a live instance.
+    const outer = readPointer(readBytes, addHex(objectAddress, OFFSET_OUTER_PRIVATE))
+    const outerName = outer === null ? null : readFName(readBytes, addHex(outer, OFFSET_NAME_PRIVATE))
+    const outerDecoded = outerName === null ? null : decodeFName(readBytes, poolConfig, outerName.comparisonIndex)
+    if (outerDecoded !== null && outerDecoded.startsWith(CDO_PREFIX)) continue
+    // Likewise a component template owned by a Blueprint class (its Outer is a BlueprintGeneratedClass, a UClass).
+    const outerClassPtr = outer === null ? null : readPointer(readBytes, addHex(outer, OFFSET_CLASS_PRIVATE))
+    if (outerClassPtr !== null) {
+      let isClassObject = classObjectMemo.get(outerClassPtr)
+      if (isClassObject === undefined) {
+        const n = readFName(readBytes, addHex(outerClassPtr, OFFSET_NAME_PRIVATE))
+        const decodedClass = n === null ? null : decodeFName(readBytes, poolConfig, n.comparisonIndex)
+        isClassObject = decodedClass !== null && decodedClass.endsWith('Class')
+        classObjectMemo.set(outerClassPtr, isClassObject)
       }
-      found.push(objectAddress)
-      if (found.length >= limit) return found
+      if (isClassObject) continue
     }
+    if (isOuterDerived !== null) {
+      // Components and attribute sets are owned by an actor (their Outer): pick the one owned by the wanted actor class.
+      const outerClass = outer === null ? null : readPointer(readBytes, addHex(outer, OFFSET_CLASS_PRIVATE))
+      if (outerClass === null || !isOuterDerived(outerClass)) continue
+    }
+    found.push(objectAddress)
+    if (found.length >= limit) return found
   }
   return found
 }
@@ -329,6 +365,8 @@ export interface UeInstanceCache {
   targets: Map<string, { links: { at: string; value: string }[]; final: string }>
   // All-instance lists per root key: one GUObjectArray walk serves every target on that root.
   instances: Map<string, { at: number; objects: string[] }>
+  // One object-array pass shared by every all-instances target (the pass, not the filtering, is the cost).
+  table?: ObjectTable
   // Addresses per all-instances target, valid for the instance list (by its timestamp) they were built from.
   multi: Map<string, { listAt: number; addresses: string[] }>
 }
@@ -338,7 +376,7 @@ export function createUeInstanceCache(): UeInstanceCache {
 }
 
 // A data asset set is loaded once and rarely changes; a walk costs about a second on the main thread.
-const INSTANCE_LIST_TTL_MS = 60_000
+const INSTANCE_LIST_TTL_MS = 180_000
 const INSTANCE_LIST_EMPTY_TTL_MS = 15_000
 const MAX_MULTI_INSTANCES = 4096
 
@@ -436,7 +474,13 @@ export function resolveUeMultiTargetAddresses(
   const layout = fieldLayoutFor(config)
   const key = ueRootKey(target)
   let entry = cache.instances.get(key)
-  if (entry === undefined || now - entry.at > (entry.objects.length === 0 ? INSTANCE_LIST_EMPTY_TTL_MS : INSTANCE_LIST_TTL_MS)) {
+  const emptyRetry = entry !== undefined && entry.objects.length === 0
+  const stale = entry === undefined || now - entry.at > (emptyRetry ? INSTANCE_LIST_EMPTY_TTL_MS : INSTANCE_LIST_TTL_MS)
+  if (stale) {
+    // One pass over GUObjectArray serves every target on every root until it ages out.
+    if (cache.table === undefined || now - cache.table.at > (emptyRetry ? INSTANCE_LIST_EMPTY_TTL_MS : INSTANCE_LIST_TTL_MS)) {
+      cache.table = buildObjectTable(readBytes, config.gObjectArray, target.maxObjectsToScan, now)
+    }
     let objects: string[] = []
     const rootClassAddress = resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootClass, target.maxObjectsToScan)
     const outerClassAddress =
@@ -451,12 +495,14 @@ export function resolveUeMultiTargetAddresses(
         rootClassAddress,
         target.maxObjectsToScan,
         outerClassAddress,
-        MAX_MULTI_INSTANCES
+        MAX_MULTI_INSTANCES,
+        cache.table
       )
     }
     entry = { at: now, objects }
     cache.instances.set(key, entry)
   }
+  if (entry === undefined) return []
 
   const memoKey = targetKey(target)
   const memo = cache.multi.get(memoKey)
