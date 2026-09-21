@@ -289,17 +289,19 @@ let ueRootMissAt = new Map<string, number>()
 function resetUeDiscovery(): void {
   ueDiscovered = null
   ueDiscovering = false
+  ueDiscoveryPending = null
   ueDiscoverFailedAt = 0
   ueInstanceCache = createUeInstanceCache()
   ueRootMissAt = new Map()
 }
 
-function ueConfigFor(handle: number, profileConfig: UeConfig | undefined): UeConfig | null {
-  if (profileConfig !== undefined) return profileConfig
-  if (ueDiscovered !== null) return ueDiscovered
-  if (ueDiscovering || Date.now() - ueDiscoverFailedAt < UE_DISCOVER_RETRY_MS) return null
+let ueDiscoveryPending: Promise<void> | null = null
+
+// Starts a discovery scan unless one is running; resolves when it has finished either way.
+function startUeDiscovery(handle: number): Promise<void> {
+  if (ueDiscoveryPending !== null) return ueDiscoveryPending
   ueDiscovering = true
-  void discoverUeConfig({
+  ueDiscoveryPending = discoverUeConfig({
     readBytes: (address, length) => nativeAddon.tryReadBytes(handle, address, length),
     scanAob: (signature) => trackScanOp(() => nativeAddon.scanAob(handle, signature))
   })
@@ -314,7 +316,16 @@ function ueConfigFor(handle: number, profileConfig: UeConfig | undefined): UeCon
     })
     .finally(() => {
       ueDiscovering = false
+      ueDiscoveryPending = null
     })
+  return ueDiscoveryPending
+}
+
+function ueConfigFor(handle: number, profileConfig: UeConfig | undefined): UeConfig | null {
+  if (profileConfig !== undefined) return profileConfig
+  if (ueDiscovered !== null) return ueDiscovered
+  if (ueDiscovering || Date.now() - ueDiscoverFailedAt < UE_DISCOVER_RETRY_MS) return null
+  void startUeDiscovery(handle)
   return null
 }
 
@@ -481,6 +492,11 @@ async function verifyCheat(
   cheat: CheatDefinition,
   expectedValue: number | null
 ): Promise<TargetStatus[]> {
+  // A readout taken right after attach would otherwise see every UE target as unresolvable,
+  // because their roots are discovered lazily; wait for that once.
+  if (cheat.targets.some(isUeTarget) && ueDiscovered === null && attachedExe !== null && loadProfile(attachedExe).ueConfig === undefined) {
+    await startUeDiscovery(handle)
+  }
   return Promise.all(
     cheat.targets.map(async (target): Promise<TargetStatus> => {
       // Per-target override — see writeCheat's matching comment.
