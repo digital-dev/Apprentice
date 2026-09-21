@@ -2,7 +2,7 @@
 // stored in a profile (see docs/superpowers/specs/2026-09-20-ue-autodiscovery-design.md).
 // Read-only: it only scans the main module and reads memory.
 import type { UeConfig } from './profile'
-import { decodeFName, resolveClassAddress, type ReadBytes } from './ueTargetResolve'
+import { decodeFName, resolveClassAddress, walkProperties, FIELD_LAYOUTS, type ReadBytes } from './ueTargetResolve'
 
 export interface UeDiscoverDeps {
   readBytes: ReadBytes
@@ -53,6 +53,25 @@ export function probeNamePool(readBytes: ReadBytes, base: string): UeConfig['gNa
   return null
 }
 
+// Picks the FField layout for this engine build: the one under which a well-known class (AActor, many
+// properties) walks to a run of names that all decode to identifiers. A wrong layout reads garbage
+// pointers and stops early or decodes junk.
+export function probeFieldLayout(
+  readBytes: ReadBytes,
+  gObjectArray: UeConfig['gObjectArray'],
+  gNames: UeConfig['gNames']
+): NonNullable<UeConfig['fieldLayout']> | null {
+  const actor = resolveClassAddress(readBytes, gObjectArray, gNames, 'Actor', MAX_OBJECTS_TO_VALIDATE)
+  if (actor === null) return null
+  for (const name of ['legacy', 'compact'] as const) {
+    const entries = walkProperties(readBytes, actor, FIELD_LAYOUTS[name])
+    if (entries.length < 8) continue
+    const identifier = /^[A-Za-z_][A-Za-z0-9_]*$/
+    if (entries.every((e) => identifier.test(decodeFName(readBytes, gNames, e.name.comparisonIndex) ?? ''))) return name
+  }
+  return null
+}
+
 export async function discoverUeConfig(deps: UeDiscoverDeps): Promise<UeConfig | null> {
   const { readBytes, scanAob } = deps
 
@@ -75,7 +94,8 @@ export async function discoverUeConfig(deps: UeDiscoverDeps): Promise<UeConfig |
     for (const itemStride of [24, 16]) {
       const gObjectArray = { chunksArrayBase, numElementsPerChunk: 65536, itemStride, itemInitialOffset: 0 }
       if (resolveClassAddress(readBytes, gObjectArray, gNames, 'Object', MAX_OBJECTS_TO_VALIDATE) !== null) {
-        return { gNames, gObjectArray }
+        const fieldLayout = probeFieldLayout(readBytes, gObjectArray, gNames)
+        return fieldLayout === null ? { gNames, gObjectArray } : { gNames, gObjectArray, fieldLayout }
       }
     }
   }

@@ -146,8 +146,14 @@ export interface UeTarget {
   // field lookups walk parent classes.
   className: string
   rootClass?: string
+  // Root form only: pick the rootClass instance whose Outer (owning actor) is of this class,
+  // e.g. the UWESurvivalAttributeSet owned by the player character, not a creature's.
+  rootOuterClass?: string
   path?: string[]
   fieldName: string
+  // Bytes added after the field's own offset: reaches a member inside a struct field
+  // (FGameplayAttributeData: BaseValue at +8, CurrentValue at +0xC).
+  valueOffset?: number
   // GUObjectArray scan is bounded -- no silent default, matching
   // ueReflect.ts's resolveClass: the profile author must say how far to
   // look, since a misconfigured UeConfig makes it easy to loop over a lot

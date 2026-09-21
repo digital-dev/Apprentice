@@ -34,6 +34,8 @@ export interface UeConfig {
     itemStride: number
     itemInitialOffset: number
   }
+  // FField member offsets (see ueTargetResolve.ts FIELD_LAYOUTS); absent means legacy (UE 5.1).
+  fieldLayout?: 'legacy' | 'compact'
 }
 
 export interface GameProfile {

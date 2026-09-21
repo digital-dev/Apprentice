@@ -40,6 +40,8 @@ import { findClassLocations } from './monoClassLocations'
 import {
   resolveUeTargetAddress,
   resolveUeRootTargetAddress,
+  ueRootKey,
+  fieldLayoutFor,
   resolveClassAddress,
   walkProperties,
   decodeFName,
@@ -342,11 +344,12 @@ function resolveUeTarget(handle: number, target: UeTarget): string | null {
 
   try {
     if (target.rootClass !== undefined) {
-      const missedAt = ueRootMissAt.get(target.rootClass)
+      const rootKey = ueRootKey(target)
+      const missedAt = ueRootMissAt.get(rootKey)
       if (missedAt !== undefined && Date.now() - missedAt < UE_MISS_BACKOFF_MS) return null
       const resolved = resolveUeRootTargetAddress(target, config, readBytes, ueInstanceCache)
-      if (resolved === null && !ueInstanceCache.roots.has(target.rootClass)) ueRootMissAt.set(target.rootClass, Date.now())
-      else ueRootMissAt.delete(target.rootClass)
+      if (resolved === null && !ueInstanceCache.roots.has(rootKey)) ueRootMissAt.set(rootKey, Date.now())
+      else ueRootMissAt.delete(rootKey)
       return resolved
     }
 
@@ -1670,7 +1673,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     const handle = attachedHandle
     const readBytes = (address: string, length: number): string | null =>
       nativeAddon.tryReadBytes(handle, address, length)
-    return walkProperties(readBytes, classAddress)
+    return walkProperties(readBytes, classAddress, fieldLayoutFor(profile.ueConfig))
       .map((entry) => decodeFName(readBytes, profile.ueConfig!.gNames, entry.name.comparisonIndex))
       .filter((name): name is string => name !== null)
   })

@@ -5,6 +5,9 @@ import {
   resolveFieldOffset,
   resolveClassAddress,
   resolveUeTargetAddress,
+  fieldLayoutFor,
+  FIELD_LAYOUTS,
+  ueRootKey,
   type ReadBytes
 } from '../../src/main/ueTargetResolve'
 import type { UeTarget } from '../../src/main/store'
@@ -203,5 +206,34 @@ describe('resolveUeTargetAddress', () => {
     const mem = new FakeMemory()
     const resolved = resolveUeTargetAddress(target, config, '0x5000', mem.read)
     expect(resolved).toBeNull()
+  })
+})
+
+describe('field layouts (UE 5.6 compact FField)', () => {
+  it('walks a compact-layout chain (Next 0x18, Name 0x20, Offset 0x44) and adds valueOffset', () => {
+    const mem = new FakeMemory()
+    const classAddress = '0x9000'
+    const field1 = '0xa000'
+    const field2 = '0xb000'
+    mem.write(addr(classAddress, 0x50), pointerBuf(field1))
+    mem.write(addr(field1, 0x20), fnameBuf(10))
+    mem.write(addr(field1, 0x44), Buffer.from([0x48, 0x00, 0x00, 0x00]))
+    mem.write(addr(field1, 0x18), pointerBuf(field2))
+    mem.write(addr(field2, 0x20), fnameBuf(30))
+    mem.write(addr(field2, 0x44), Buffer.from([0x58, 0x00, 0x00, 0x00]))
+    registerName(mem, 10, 'Oxygen')
+    registerName(mem, 30, 'MaxOxygen')
+
+    const compact = FIELD_LAYOUTS.compact
+    expect(walkProperties(mem.read, classAddress, compact)).toHaveLength(2)
+    expect(resolveFieldOffset(mem.read, POOL, classAddress, 'MaxOxygen', compact)).toEqual({ offset: 0x58 })
+    expect(fieldLayoutFor({ fieldLayout: 'compact' } as UeConfig)).toBe(compact)
+    expect(fieldLayoutFor({} as UeConfig)).toBe(FIELD_LAYOUTS.legacy)
+  })
+
+  it('root key separates the same class under different owner classes', () => {
+    const base: UeTarget = { kind: 'ue', className: 'A', rootClass: 'A', fieldName: 'F', maxObjectsToScan: 1 }
+    expect(ueRootKey(base)).toBe('A')
+    expect(ueRootKey({ ...base, rootOuterClass: 'Player' })).toBe('A@Player')
   })
 })

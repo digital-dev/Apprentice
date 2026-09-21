@@ -24,10 +24,24 @@ export interface PropertyEntry {
 
 const OFFSET_CLASS_PRIVATE = 0x10
 const OFFSET_NAME_PRIVATE = 0x18
-const OFFSET_FFIELD_NEXT = 0x20
-const OFFSET_FFIELD_NAME_PRIVATE = 0x28
-const OFFSET_FPROPERTY_OFFSET_INTERNAL = 0x4c
+const OFFSET_OUTER_PRIVATE = 0x20
 const OFFSET_USTRUCT_CHILD_PROPERTIES = 0x50
+
+// FField/FProperty member offsets differ by engine version: UE 5.1 (Palworld) keeps a 16-byte
+// FFieldVariant owner, later builds (Subnautica 2, 5.6) pack it into 8 bytes, shifting Next, Name
+// and Offset_Internal down. Discovery probes which one a game uses (see ueDiscover.ts).
+export interface FieldLayout {
+  next: number
+  name: number
+  offsetInternal: number
+}
+export const FIELD_LAYOUTS: Record<NonNullable<UeConfig['fieldLayout']>, FieldLayout> = {
+  legacy: { next: 0x20, name: 0x28, offsetInternal: 0x4c },
+  compact: { next: 0x18, name: 0x20, offsetInternal: 0x44 }
+}
+export function fieldLayoutFor(config: UeConfig): FieldLayout {
+  return FIELD_LAYOUTS[config.fieldLayout ?? 'legacy']
+}
 
 // Matches every other unbounded-walk primitive in this codebase -- a
 // corrupt/misconfigured chain must not loop forever.
@@ -94,17 +108,21 @@ export function decodeFName(
 
 // Walks a UStruct/UClass's ChildProperties -> FField.Next chain, collecting
 // each node's raw (undecoded) FName and Offset_Internal.
-export function walkProperties(readBytes: ReadBytes, classAddress: string): PropertyEntry[] {
+export function walkProperties(
+  readBytes: ReadBytes,
+  classAddress: string,
+  layout: FieldLayout = FIELD_LAYOUTS.legacy
+): PropertyEntry[] {
   const entries: PropertyEntry[] = []
   let current = readPointer(readBytes, addHex(classAddress, OFFSET_USTRUCT_CHILD_PROPERTIES))
 
   for (let i = 0; i < MAX_PROPERTY_CHAIN_LENGTH && current !== null; i++) {
-    const name = readFName(readBytes, addHex(current, OFFSET_FFIELD_NAME_PRIVATE))
-    const offsetHex = readBytes(addHex(current, OFFSET_FPROPERTY_OFFSET_INTERNAL), 4)
+    const name = readFName(readBytes, addHex(current, layout.name))
+    const offsetHex = readBytes(addHex(current, layout.offsetInternal), 4)
     if (name === null || offsetHex === null) break
     const offsetInternal = Buffer.from(offsetHex, 'hex').readInt32LE(0)
     entries.push({ fieldAddress: current, name, offsetInternal })
-    current = readPointer(readBytes, addHex(current, OFFSET_FFIELD_NEXT))
+    current = readPointer(readBytes, addHex(current, layout.next))
   }
 
   return entries
@@ -114,9 +132,10 @@ export function resolveFieldOffset(
   readBytes: ReadBytes,
   poolConfig: UeConfig['gNames'],
   classAddress: string,
-  fieldName: string
+  fieldName: string,
+  layout: FieldLayout = FIELD_LAYOUTS.legacy
 ): { offset: number } | null {
-  for (const entry of walkProperties(readBytes, classAddress)) {
+  for (const entry of walkProperties(readBytes, classAddress, layout)) {
     const decoded = decodeFName(readBytes, poolConfig, entry.name.comparisonIndex)
     if (decoded === fieldName) return { offset: entry.offsetInternal }
   }
@@ -184,10 +203,10 @@ export function resolveUeTargetAddress(
   )
   if (classAddress === null) return null
 
-  const field = resolveFieldOffset(readBytes, config.gNames, classAddress, target.fieldName)
+  const field = resolveFieldOffset(readBytes, config.gNames, classAddress, target.fieldName, fieldLayoutFor(config))
   if (field === null) return null
 
-  return addHex(instancePointer, field.offset)
+  return addHex(instancePointer, field.offset + (target.valueOffset ?? 0))
 }
 
 const OFFSET_USTRUCT_SUPER_STRUCT = 0x40
@@ -200,11 +219,12 @@ export function resolveInheritedFieldOffset(
   readBytes: ReadBytes,
   poolConfig: UeConfig['gNames'],
   classAddress: string,
-  fieldName: string
+  fieldName: string,
+  layout: FieldLayout = FIELD_LAYOUTS.legacy
 ): { offset: number } | null {
   let current: string | null = classAddress
   for (let depth = 0; depth < MAX_SUPER_DEPTH && current !== null; depth++) {
-    const found = resolveFieldOffset(readBytes, poolConfig, current, fieldName)
+    const found = resolveFieldOffset(readBytes, poolConfig, current, fieldName, layout)
     if (found !== null) return found
     current = readPointer(readBytes, addHex(current, OFFSET_USTRUCT_SUPER_STRUCT))
   }
@@ -220,27 +240,32 @@ export function findInstanceOfClass(
   arrayConfig: UeConfig['gObjectArray'],
   poolConfig: UeConfig['gNames'],
   classAddress: string,
-  maxObjectsToScan: number
+  maxObjectsToScan: number,
+  outerClassAddress?: string
 ): string | null {
   const { chunksArrayBase, numElementsPerChunk, itemStride, itemInitialOffset } = arrayConfig
-  const want = BigInt(classAddress)
-  const derives = new Map<bigint, boolean>()
-  const isDerived = (cls: string): boolean => {
-    const key = BigInt(cls)
-    const known = derives.get(key)
-    if (known !== undefined) return known
-    let found = false
-    let current: string | null = cls
-    for (let depth = 0; depth < MAX_SUPER_DEPTH && current !== null; depth++) {
-      if (BigInt(current) === want) {
-        found = true
-        break
+  const derivesFrom = (target: string): ((cls: string) => boolean) => {
+    const want = BigInt(target)
+    const derives = new Map<bigint, boolean>()
+    return (cls) => {
+      const key = BigInt(cls)
+      const known = derives.get(key)
+      if (known !== undefined) return known
+      let found = false
+      let current: string | null = cls
+      for (let depth = 0; depth < MAX_SUPER_DEPTH && current !== null; depth++) {
+        if (BigInt(current) === want) {
+          found = true
+          break
+        }
+        current = readPointer(readBytes, addHex(current, OFFSET_USTRUCT_SUPER_STRUCT))
       }
-      current = readPointer(readBytes, addHex(current, OFFSET_USTRUCT_SUPER_STRUCT))
+      derives.set(key, found)
+      return found
     }
-    derives.set(key, found)
-    return found
   }
+  const isDerived = derivesFrom(classAddress)
+  const isOuterDerived = outerClassAddress === undefined ? null : derivesFrom(outerClassAddress)
   // Items are read in slices (one read per ~170 objects, the addon caps a read at 4096 bytes)
   // and only an object whose class matches costs further reads.
   const sliceItems = Math.max(1, Math.floor(4000 / itemStride))
@@ -264,6 +289,12 @@ export function findInstanceOfClass(
       const name = readFName(readBytes, addHex(objectAddress, OFFSET_NAME_PRIVATE))
       const decoded = name === null ? null : decodeFName(readBytes, poolConfig, name.comparisonIndex)
       if (decoded === null || decoded.startsWith(CDO_PREFIX)) continue
+      if (isOuterDerived !== null) {
+        // Components and attribute sets are owned by an actor (their Outer): pick the one owned by the wanted actor class.
+        const outer = readPointer(readBytes, addHex(objectAddress, OFFSET_OUTER_PRIVATE))
+        const outerClass = outer === null ? null : readPointer(readBytes, addHex(outer, OFFSET_CLASS_PRIVATE))
+        if (outerClass === null || !isOuterDerived(outerClass)) continue
+      }
       return objectAddress
     }
   }
@@ -282,7 +313,12 @@ export function createUeInstanceCache(): UeInstanceCache {
   return { roots: new Map(), targets: new Map() }
 }
 
-const targetKey = (t: UeTarget): string => `${t.rootClass}/${(t.path ?? []).join('.')}/${t.fieldName}`
+// Root-instance cache key: the same class owned by a different actor class is a different instance.
+export const ueRootKey = (t: UeTarget): string =>
+  t.rootOuterClass === undefined ? `${t.rootClass}` : `${t.rootClass}@${t.rootOuterClass}`
+
+const targetKey = (t: UeTarget): string =>
+  `${ueRootKey(t)}/${(t.path ?? []).join('.')}/${t.fieldName}${t.valueOffset === undefined ? '' : `+${t.valueOffset}`}`
 
 // Resolves a root-path UeTarget: instance of rootClass, follow each `path`
 // pointer field by reflected name, then add the last field's offset. A hit on
@@ -297,6 +333,7 @@ export function resolveUeRootTargetAddress(
   if (target.rootClass === undefined) return null
   const classOf = (object: string): string | null => readPointer(readBytes, addHex(object, OFFSET_CLASS_PRIVATE))
 
+  const layout = fieldLayoutFor(config)
   const key = targetKey(target)
   const hit = cache.targets.get(key)
   if (hit !== undefined) {
@@ -304,23 +341,29 @@ export function resolveUeRootTargetAddress(
     cache.targets.delete(key)
   }
 
-  let root = cache.roots.get(target.rootClass) ?? null
+  let root = cache.roots.get(ueRootKey(target)) ?? null
   if (root !== null) {
     const rootClassAddress = classOf(root)
     const name = rootClassAddress === null ? null : readFName(readBytes, addHex(rootClassAddress, OFFSET_NAME_PRIVATE))
     const decoded = name === null ? null : decodeFName(readBytes, config.gNames, name.comparisonIndex)
     // The instance may be of a Blueprint subclass, so only its liveness is checked here.
     if (rootClassAddress === null || decoded === null) {
-      cache.roots.delete(target.rootClass)
+      cache.roots.delete(ueRootKey(target))
       root = null
     }
   }
   if (root === null) {
     const rootClassAddress = resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootClass, target.maxObjectsToScan)
     if (rootClassAddress === null) return null
-    root = findInstanceOfClass(readBytes, config.gObjectArray, config.gNames, rootClassAddress, target.maxObjectsToScan)
+    let outerClassAddress: string | undefined
+    if (target.rootOuterClass !== undefined) {
+      const outer = resolveClassAddress(readBytes, config.gObjectArray, config.gNames, target.rootOuterClass, target.maxObjectsToScan)
+      if (outer === null) return null
+      outerClassAddress = outer
+    }
+    root = findInstanceOfClass(readBytes, config.gObjectArray, config.gNames, rootClassAddress, target.maxObjectsToScan, outerClassAddress)
     if (root === null) return null
-    cache.roots.set(target.rootClass, root)
+    cache.roots.set(ueRootKey(target), root)
   }
 
   const links: { at: string; value: string }[] = [
@@ -330,7 +373,7 @@ export function resolveUeRootTargetAddress(
   for (const step of target.path ?? []) {
     const cls = classOf(object)
     if (cls === null) return null
-    const field = resolveInheritedFieldOffset(readBytes, config.gNames, cls, step)
+    const field = resolveInheritedFieldOffset(readBytes, config.gNames, cls, step, layout)
     if (field === null) return null
     const at = addHex(object, field.offset)
     const next = readPointer(readBytes, at)
@@ -341,9 +384,9 @@ export function resolveUeRootTargetAddress(
 
   const cls = classOf(object)
   if (cls === null) return null
-  const last = resolveInheritedFieldOffset(readBytes, config.gNames, cls, target.fieldName)
+  const last = resolveInheritedFieldOffset(readBytes, config.gNames, cls, target.fieldName, layout)
   if (last === null) return null
-  const final = addHex(object, last.offset)
+  const final = addHex(object, last.offset + (target.valueOffset ?? 0))
   links.push({ at: addHex(object, OFFSET_CLASS_PRIVATE), value: cls })
   cache.targets.set(key, { links, final })
   return final
