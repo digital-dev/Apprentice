@@ -22,7 +22,7 @@ so the player's is picked with `rootOuterClass: "SN2PlayerCharacter"` (player pa
 | `UWEBehaviorAttributeSet` (creatures only) | Stamina 0x90, Infection 0xb0, Temper 0x60 | not on the player |
 
 ## Shipped in `games/Subnautica2-Win64-Shipping.json`
-19 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
+20 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
 sane values; none has been toggled in-game yet**, so the effect of each is unverified.
 
 | Cheat | Targets |
@@ -56,6 +56,11 @@ address is snapshotted when the cheat is enabled and written back on disable; a 
   own `MaxCharge` and sets every drain to 0, on both the simulations and the components. `UWEPoweredApplianceComponent.OverridePower`
   (+0x230) exists and is probably a built-in "always powered" flag, but its meaning was not confirmed, so it is not used.
   Instance search skips objects owned by a class default object or by a Blueprint class (component templates), so templates are not written.
+
+- **Unlimited Vehicle Power**: vehicles own a `UWEMechanicalAttributeSet` like the player (Tadpole: Energy 293.7 of MaxEnergy 400, `CrushDepth` 25000).
+  Matched by owner class `SN2PossessableVehicle` (Tadpole chain: `BP_Tadpole_C > SN2Tadpole > SN2Submersible > SN2PossessableVehicle`), all instances,
+  Energy held at each vehicle's own MaxEnergy. Only one vehicle was live to check. The base submarine (`SN2Submarine`) runs on the power grid instead,
+  which the Facility Power cheat covers; it had no live instance here.
 
 ## Not done, and why
 - **Unlock All Databank Entries.** `UWEDatabankEntry` has an `UnlockingRequirements` object pointer and `HideOnStoryGoal`; clearing a

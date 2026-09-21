@@ -628,6 +628,43 @@
           "value": 0
         }
       ]
+    },
+    {
+      "id": "sn2-vehicle-power",
+      "name": "Unlimited Vehicle Power",
+      "dataType": "float",
+      "mode": "freeze",
+      "value": 0,
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEMechanicalAttributeSet",
+          "rootClass": "UWEMechanicalAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "Energy",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxEnergy"
+          }
+        },
+        {
+          "kind": "ue",
+          "className": "UWEMechanicalAttributeSet",
+          "rootClass": "UWEMechanicalAttributeSet",
+          "rootOuterClass": "SN2PossessableVehicle",
+          "fieldName": "Energy",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "allInstances": true,
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxEnergy"
+          }
+        }
+      ]
     }
   ]
 }

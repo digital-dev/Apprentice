@@ -378,6 +378,8 @@ export function createUeInstanceCache(): UeInstanceCache {
 // A data asset set is loaded once and rarely changes; a walk costs about a second on the main thread.
 const INSTANCE_LIST_TTL_MS = 180_000
 const INSTANCE_LIST_EMPTY_TTL_MS = 15_000
+// A target with nothing live yet (no vehicle spawned) retries from the shared table, and rebuilds the table this often.
+const TABLE_EMPTY_RETRY_MS = 45_000
 const MAX_MULTI_INSTANCES = 4096
 
 // Root-instance cache key: the same class owned by a different actor class is a different instance.
@@ -478,7 +480,7 @@ export function resolveUeMultiTargetAddresses(
   const stale = entry === undefined || now - entry.at > (emptyRetry ? INSTANCE_LIST_EMPTY_TTL_MS : INSTANCE_LIST_TTL_MS)
   if (stale) {
     // One pass over GUObjectArray serves every target on every root until it ages out.
-    if (cache.table === undefined || now - cache.table.at > (emptyRetry ? INSTANCE_LIST_EMPTY_TTL_MS : INSTANCE_LIST_TTL_MS)) {
+    if (cache.table === undefined || now - cache.table.at > (emptyRetry ? TABLE_EMPTY_RETRY_MS : INSTANCE_LIST_TTL_MS)) {
       cache.table = buildObjectTable(readBytes, config.gObjectArray, target.maxObjectsToScan, now)
     }
     let objects: string[] = []
