@@ -48,3 +48,8 @@ Function at RVA ~0x31af7xx builds max in [rdi+0x188] (300 + points*perPoint, the
 OnUpdateMaxWeight (delegate +0x80) with the field as payload and compares NowItemWeight against it to fire OnOverWeight (+0x90).
 palworld-max-weight-recompute forces that final store to 99999.0 (force mode, base rdi, offset 0x188). Unverified in-game.
 palworld-no-encumbrance (GetMaxItemWeight returns 99999) was confirmed by the user to remove the slowdown.
+
+## Picking the right inventory instance
+Two BP_PalPlayerInventoryData_C instances exist (the player's, and a second with max 300 and no weight); their array order changed after a
+world reload, so "first instance of the class" picked the wrong one and Huge Carry showed "Not resolving". Reach it through
+PalPlayerState -> InventoryData instead (verified live: resolves to the player's inventory).
