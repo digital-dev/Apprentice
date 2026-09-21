@@ -212,6 +212,7 @@ export function resolveUeTargetAddress(
 const OFFSET_USTRUCT_SUPER_STRUCT = 0x40
 const MAX_SUPER_DEPTH = 64
 const CDO_PREFIX = 'Default__'
+export const PATH_OUTER = '^Outer'
 
 // Like resolveFieldOffset, but keeps walking SuperStruct: members such as
 // CharacterMovement live on a parent class (ACharacter), not the game's own.
@@ -289,9 +290,13 @@ export function findInstanceOfClass(
       const name = readFName(readBytes, addHex(objectAddress, OFFSET_NAME_PRIVATE))
       const decoded = name === null ? null : decodeFName(readBytes, poolConfig, name.comparisonIndex)
       if (decoded === null || decoded.startsWith(CDO_PREFIX)) continue
+      // A component template inside a class default object ("Default__X" is its Outer) is not a live instance.
+      const outer = readPointer(readBytes, addHex(objectAddress, OFFSET_OUTER_PRIVATE))
+      const outerName = outer === null ? null : readFName(readBytes, addHex(outer, OFFSET_NAME_PRIVATE))
+      const outerDecoded = outerName === null ? null : decodeFName(readBytes, poolConfig, outerName.comparisonIndex)
+      if (outerDecoded !== null && outerDecoded.startsWith(CDO_PREFIX)) continue
       if (isOuterDerived !== null) {
         // Components and attribute sets are owned by an actor (their Outer): pick the one owned by the wanted actor class.
-        const outer = readPointer(readBytes, addHex(objectAddress, OFFSET_OUTER_PRIVATE))
         const outerClass = outer === null ? null : readPointer(readBytes, addHex(outer, OFFSET_CLASS_PRIVATE))
         if (outerClass === null || !isOuterDerived(outerClass)) continue
       }
@@ -373,9 +378,10 @@ export function resolveUeRootTargetAddress(
   for (const step of target.path ?? []) {
     const cls = classOf(object)
     if (cls === null) return null
-    const field = resolveInheritedFieldOffset(readBytes, config.gNames, cls, step, layout)
-    if (field === null) return null
-    const at = addHex(object, field.offset)
+    // '^Outer' follows UObject::OuterPrivate (not a reflected field): an actor's outer is its Level.
+    const fieldOffset = step === PATH_OUTER ? OFFSET_OUTER_PRIVATE : resolveInheritedFieldOffset(readBytes, config.gNames, cls, step, layout)?.offset
+    if (fieldOffset === undefined) return null
+    const at = addHex(object, fieldOffset)
     const next = readPointer(readBytes, at)
     if (next === null) return null
     links.push({ at, value: next })

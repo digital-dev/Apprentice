@@ -22,13 +22,31 @@ so the player's is picked with `rootOuterClass: "SN2PlayerCharacter"` (player pa
 | `UWEBehaviorAttributeSet` (creatures only) | Stamina 0x90, Infection 0xb0, Temper 0x60 | not on the player |
 
 ## Shipped in `games/Subnautica2-Win64-Shipping.json`
-All eight are `freeze` cheats writing both Base and Current. **Resolved live and value-checked; none has been toggled in-game yet**, so
-what each does to gameplay is unverified: health, oxygen, food, water, energy, fast walk/swim, free dash, no radiation.
-Worth checking when testing: a freeze may lose to the game's own tick on a drain (the Palworld hunger lesson); the `Fast Walk and Swim`
-current value may be recomputed by effects; `Free Dash` and `No Radiation` assume the attribute meaning from its name.
+15 `freeze` cheats; disabling restores what each target held when enabled (default restore policy). **All targets resolve live and read
+sane values; none has been toggled in-game yet**, so the effect of each is unverified.
 
-## Not done
-- `SN2CheatManager` ships in the build (fields `SN2StartingItems`, `EquipAll_*`, `SpawnAll_*` queues). Its console functions would give item
-  spawning, but calling them needs `ProcessEvent` (see `2026-09-17-ue-call-function-design.md`), not built.
-- Player stamina, infection and temper are on `UWEBehaviorAttributeSet`, which the player does not have.
+| Cheat | Targets |
+|---|---|
+| Unlimited Health / Oxygen / Never Hungry / Never Thirsty / Tool (suit) Energy | attribute Base+Current on the player's sets |
+| Set Player Speed (walk), Set Move Speed (swim) | movement attribute + `CharacterMovement.MaxWalkSpeed/MaxSwimSpeed` |
+| Set Jump Height, Set Gravity Strength | `CharacterMovement.JumpZVelocity` (420), `GravityScale` (1) |
+| Stable Body Temperature | Health set `InternalTemperature`, `Temperature` held at 20 (damage below 10 cold / above 100 hot) |
+| Game Speed 2x / 0.5x | `WorldSettings.TimeDilation`, reached as player -> `^Outer` (its Level) -> `WorldSettings` |
+| Freeze Time at Noon | `UWETimeOfDayComponent` on `SN2GameState`: `DayLengthMinutes` 24 -> 100000 and `InitialHour` -> 12. **Guess** from field names (`WorldTimeAtInitialValue`, `InitialHour`); the time formula was not read. |
+| Free Dash, No Radiation | `DashOxygenCost` -> 0, `Radiation` -> 0 (meaning assumed from names) |
+
+Path notes: many `World` objects share the name `L_Main` (one per streaming cell), so the first `World` is not the live one; hang world
+targets off the player instead. `^Outer` follows `OuterPrivate`. Instance search skips default subobjects (Outer named `Default__X`).
+
+## Not done, and why
+- **Instant crafting / easy crafting / easy building.** `UWECraftingRecipe` data assets (255 loaded) hold `CraftingTime` (+0x108) and
+  `Requirements` (+0xE0, array of 0x30-byte `{ItemType, NumItems @+0x28}`). Zeroing them means writing every recipe, which the target
+  model (one address per target) and the per-target restore cannot do; restoring would need per-address capture. Building cost lives in
+  `SN2ConstructableComponent` (`UnpaidCost`/`PaidCost`, `ConstructableParams`) and only exists while something is being built.
+  Code patches are the alternative: ~120 sites load a float at +0x108, unsorted.
+- **Unlimited Facility Power.** `UWEPowerStorage.CurrentCharge/MaxCharge` and `UWEPowerGeneratorComponent.BasePowerGeneration` exist but
+  no storage instance is live until a base is built, so nothing could be checked.
+- **Unlock All Blueprints / Databank.** State is in `SN2UnlockPlayerStateComponent.AllUnlockables` and `UWEDatabankWorldSubsystem`;
+  changing it properly means calling game functions (`ProcessEvent`), which the app does not have.
+- `SN2CheatManager` ships in the build and would cover item spawning and possibly unlocks, but also needs function calls.
 - In co-op the first `SN2PlayerCharacter` found may not be the local player.

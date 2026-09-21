@@ -151,6 +151,20 @@ describe('root-path targets', () => {
     expect(resolveUeRootTargetAddress(target({ path: ['Move'] }), CONFIG, mem.read, createUeInstanceCache())).toBe(hex(A.move + 0x30n))
   })
 
+  it("follows '^Outer' through OuterPrivate instead of a reflected field", () => {
+    const mem = new FakeMemory()
+    buildWorld(mem, buildPool(mem, NAMES))
+    // In this fixture the player's +0x20 slot points at the move component, so its Outer is that object.
+    expect(resolveUeRootTargetAddress(target({ path: ['^Outer'] }), CONFIG, mem.read, createUeInstanceCache())).toBe(hex(A.move + 0x30n))
+  })
+
+  it('skips an instance whose Outer is a class default object (a default subobject, not a live one)', () => {
+    const mem = new FakeMemory()
+    buildWorld(mem, buildPool(mem, NAMES))
+    mem.ptr(A.player + 0x20n, A.cdo)
+    expect(resolveUeRootTargetAddress(target({}), CONFIG, mem.read, createUeInstanceCache())).toBeNull()
+  })
+
   it('returns null for an unknown path step', () => {
     const mem = new FakeMemory()
     buildWorld(mem, buildPool(mem, NAMES))

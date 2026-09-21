@@ -127,7 +127,7 @@
     },
     {
       "id": "sn2-infinite-energy",
-      "name": "Unlimited Energy",
+      "name": "Unlimited Tool Energy (suit energy)",
       "dataType": "float",
       "mode": "freeze",
       "targets": [
@@ -155,8 +155,8 @@
       "value": 999
     },
     {
-      "id": "sn2-fast-movement",
-      "name": "Fast Walk and Swim",
+      "id": "sn2-fast-walk",
+      "name": "Set Player Speed (walk 700)",
       "dataType": "float",
       "mode": "freeze",
       "targets": [
@@ -184,6 +184,27 @@
         },
         {
           "kind": "ue",
+          "className": "SN2PlayerCharacter",
+          "rootClass": "SN2PlayerCharacter",
+          "path": [
+            "CharacterMovement"
+          ],
+          "fieldName": "MaxWalkSpeed",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 700
+        }
+      ],
+      "value": 700
+    },
+    {
+      "id": "sn2-fast-swim",
+      "name": "Set Move Speed (swim 900)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
           "className": "UWEMovementAttributeSet",
           "rootClass": "UWEMovementAttributeSet",
           "rootOuterClass": "SN2PlayerCharacter",
@@ -203,9 +224,189 @@
           "maxObjectsToScan": 400000,
           "dataType": "float",
           "value": 900
+        },
+        {
+          "kind": "ue",
+          "className": "SN2PlayerCharacter",
+          "rootClass": "SN2PlayerCharacter",
+          "path": [
+            "CharacterMovement"
+          ],
+          "fieldName": "MaxSwimSpeed",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 900
         }
       ],
-      "value": 700
+      "value": 900
+    },
+    {
+      "id": "sn2-jump-height",
+      "name": "Set Jump Height (JumpZ 800, default 420)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "SN2PlayerCharacter",
+          "rootClass": "SN2PlayerCharacter",
+          "path": [
+            "CharacterMovement"
+          ],
+          "fieldName": "JumpZVelocity",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 800
+        }
+      ],
+      "value": 800
+    },
+    {
+      "id": "sn2-low-gravity",
+      "name": "Set Gravity Strength (0.3x)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "SN2PlayerCharacter",
+          "rootClass": "SN2PlayerCharacter",
+          "path": [
+            "CharacterMovement"
+          ],
+          "fieldName": "GravityScale",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 0.3
+        }
+      ],
+      "value": 0.3
+    },
+    {
+      "id": "sn2-stable-temperature",
+      "name": "Stable Body Temperature",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "InternalTemperature",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 20
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "InternalTemperature",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 20
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Temperature",
+          "valueOffset": 8,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 20
+        },
+        {
+          "kind": "ue",
+          "className": "UWEHealthAttributeSet",
+          "rootClass": "UWEHealthAttributeSet",
+          "rootOuterClass": "SN2PlayerCharacter",
+          "fieldName": "Temperature",
+          "valueOffset": 12,
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 20
+        }
+      ],
+      "value": 20
+    },
+    {
+      "id": "sn2-game-speed-fast",
+      "name": "Game Speed 2x",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "SN2PlayerCharacter",
+          "rootClass": "SN2PlayerCharacter",
+          "path": [
+            "^Outer",
+            "WorldSettings"
+          ],
+          "fieldName": "TimeDilation",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 2.0
+        }
+      ],
+      "value": 2.0
+    },
+    {
+      "id": "sn2-game-speed-slow",
+      "name": "Game Speed 0.5x",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "SN2PlayerCharacter",
+          "rootClass": "SN2PlayerCharacter",
+          "path": [
+            "^Outer",
+            "WorldSettings"
+          ],
+          "fieldName": "TimeDilation",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 0.5
+        }
+      ],
+      "value": 0.5
+    },
+    {
+      "id": "sn2-freeze-time",
+      "name": "Freeze Time at Noon (12:00)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "ue",
+          "className": "UWETimeOfDayComponent",
+          "rootClass": "UWETimeOfDayComponent",
+          "rootOuterClass": "SN2GameState",
+          "fieldName": "DayLengthMinutes",
+          "maxObjectsToScan": 400000,
+          "dataType": "int32",
+          "value": 100000
+        },
+        {
+          "kind": "ue",
+          "className": "UWETimeOfDayComponent",
+          "rootClass": "UWETimeOfDayComponent",
+          "rootOuterClass": "SN2GameState",
+          "fieldName": "InitialHour",
+          "maxObjectsToScan": 400000,
+          "dataType": "float",
+          "value": 12
+        }
+      ],
+      "value": 12
     },
     {
       "id": "sn2-free-dash",
