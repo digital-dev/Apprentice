@@ -186,7 +186,7 @@
     },
     {
       "id": "sn2-fast-walk",
-      "name": "Set Player Speed (walk 700)",
+      "name": "Set Player Speed (walk)",
       "dataType": "float",
       "mode": "freeze",
       "targets": [
@@ -198,8 +198,7 @@
           "fieldName": "MaxWalkSpeed",
           "valueOffset": 8,
           "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 700
+          "dataType": "float"
         },
         {
           "kind": "ue",
@@ -209,8 +208,7 @@
           "fieldName": "MaxWalkSpeed",
           "valueOffset": 12,
           "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 700
+          "dataType": "float"
         },
         {
           "kind": "ue",
@@ -221,15 +219,15 @@
           ],
           "fieldName": "MaxWalkSpeed",
           "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 700
+          "dataType": "float"
         }
       ],
-      "value": 700
+      "value": 700,
+      "multiplierBaseline": 350
     },
     {
       "id": "sn2-fast-swim",
-      "name": "Set Move Speed (swim 900)",
+      "name": "Set Move Speed (swim)",
       "dataType": "float",
       "mode": "freeze",
       "targets": [
@@ -241,8 +239,7 @@
           "fieldName": "MaxSwimSpeed",
           "valueOffset": 8,
           "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 900
+          "dataType": "float"
         },
         {
           "kind": "ue",
@@ -252,8 +249,7 @@
           "fieldName": "MaxSwimSpeed",
           "valueOffset": 12,
           "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 900
+          "dataType": "float"
         },
         {
           "kind": "ue",
@@ -264,11 +260,11 @@
           ],
           "fieldName": "MaxSwimSpeed",
           "maxObjectsToScan": 400000,
-          "dataType": "float",
-          "value": 900
+          "dataType": "float"
         }
       ],
-      "value": 900
+      "value": 900,
+      "multiplierBaseline": 450
     },
     {
       "id": "sn2-jump-height",
