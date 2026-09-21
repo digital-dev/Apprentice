@@ -23,7 +23,10 @@
           "fieldName": "Health",
           "valueOffset": 8,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxHealth"
+          }
         },
         {
           "kind": "ue",
@@ -33,10 +36,13 @@
           "fieldName": "Health",
           "valueOffset": 12,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxHealth"
+          }
         }
       ],
-      "value": 999
+      "value": 100
     },
     {
       "id": "sn2-infinite-oxygen",
@@ -52,7 +58,10 @@
           "fieldName": "Oxygen",
           "valueOffset": 8,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxOxygen"
+          }
         },
         {
           "kind": "ue",
@@ -62,10 +71,13 @@
           "fieldName": "Oxygen",
           "valueOffset": 12,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxOxygen"
+          }
         }
       ],
-      "value": 999
+      "value": 255
     },
     {
       "id": "sn2-no-hunger",
@@ -81,7 +93,10 @@
           "fieldName": "Food",
           "valueOffset": 8,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxFood"
+          }
         },
         {
           "kind": "ue",
@@ -91,7 +106,10 @@
           "fieldName": "Food",
           "valueOffset": 12,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxFood"
+          }
         }
       ],
       "value": 100
@@ -110,7 +128,10 @@
           "fieldName": "Water",
           "valueOffset": 8,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxWater"
+          }
         },
         {
           "kind": "ue",
@@ -120,7 +141,10 @@
           "fieldName": "Water",
           "valueOffset": 12,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxWater"
+          }
         }
       ],
       "value": 100
@@ -139,7 +163,10 @@
           "fieldName": "Energy",
           "valueOffset": 8,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxEnergy"
+          }
         },
         {
           "kind": "ue",
@@ -149,7 +176,10 @@
           "fieldName": "Energy",
           "valueOffset": 12,
           "maxObjectsToScan": 400000,
-          "dataType": "float"
+          "dataType": "float",
+          "valueFrom": {
+            "fieldName": "MaxEnergy"
+          }
         }
       ],
       "value": 999
@@ -352,10 +382,10 @@
           "fieldName": "TimeDilation",
           "maxObjectsToScan": 400000,
           "dataType": "float",
-          "value": 2.0
+          "value": 2
         }
       ],
-      "value": 2.0
+      "value": 2
     },
     {
       "id": "sn2-game-speed-slow",

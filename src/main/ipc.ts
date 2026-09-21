@@ -449,10 +449,21 @@ async function writeCheat(
     if (isUeTarget(target)) {
       const resolved = resolveUeTarget(handle, target)
       if (resolved === null) continue
+      let toWrite = value
+      if (target.valueFrom !== undefined && !valuesOverride) {
+        const source = resolveUeTarget(handle, {
+          ...target,
+          fieldName: target.valueFrom.fieldName,
+          valueOffset: target.valueFrom.valueOffset ?? 0xc
+        })
+        const live = source === null ? null : nativeAddon.tryReadValue(handle, source, [], dataType)
+        if (live === null || !(live > 0)) continue
+        toWrite = live
+      }
       const ok =
         target.bitIndex !== undefined
-          ? writeBit(handle, resolved, [], dataType, target.bitIndex, value)
-          : nativeAddon.writeValue(handle, resolved, [], dataType, value)
+          ? writeBit(handle, resolved, [], dataType, target.bitIndex, toWrite)
+          : nativeAddon.writeValue(handle, resolved, [], dataType, toWrite)
       if (ok) anySucceeded = true
       continue
     }
@@ -536,7 +547,18 @@ async function verifyCheat(
         const raw = nativeAddon.tryReadValue(handle, resolved, [], dataType)
         if (raw === null) return { alive: false, value: null }
         const value = extract(raw)
-        const alive = expected === null ? true : valueMatches(value, expected, dataType)
+        // A valueFrom target is held at another field's live value, so that is what it is checked against.
+        let want = expected
+        if (target.valueFrom !== undefined && expected !== null) {
+          const source = resolveUeTarget(handle, {
+            ...target,
+            fieldName: target.valueFrom.fieldName,
+            valueOffset: target.valueFrom.valueOffset ?? 0xc
+          })
+          const live = source === null ? null : nativeAddon.tryReadValue(handle, source, [], dataType)
+          if (live !== null) want = live
+        }
+        const alive = want === null ? true : valueMatches(value, want, dataType)
         return { alive, value }
       }
       const moduleBase = nativeAddon.getModuleBase(handle, target.moduleName)

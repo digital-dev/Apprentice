@@ -154,6 +154,9 @@ export interface UeTarget {
   // Bytes added after the field's own offset: reaches a member inside a struct field
   // (FGameplayAttributeData: BaseValue at +8, CurrentValue at +0xC).
   valueOffset?: number
+  // Write the live value of another field on the same object instead of a fixed number (e.g. Oxygen held at the player's
+  // own MaxOxygen, whatever upgrades raised it to). `valueOffset` there defaults to 0xC (CurrentValue of an attribute).
+  valueFrom?: { fieldName: string; valueOffset?: number }
   // GUObjectArray scan is bounded -- no silent default, matching
   // ueReflect.ts's resolveClass: the profile author must say how far to
   // look, since a misconfigured UeConfig makes it easy to loop over a lot
