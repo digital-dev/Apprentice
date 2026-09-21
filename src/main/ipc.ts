@@ -1250,7 +1250,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   // Starts the game through Steam. The id must be all digits: it goes into a URL
   // handed to the shell, so nothing else is allowed anywhere near it.
   ipcMain.handle('library:launch', async (_e, appId: unknown) => {
-    if (typeof appId !== 'string' || !/^d+$/.test(appId)) return false
+    if (typeof appId !== 'string' || !/^\d+$/.test(appId)) return false
     try {
       await shell.openExternal(`steam://rungameid/${appId}`)
       return true
@@ -1264,7 +1264,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   // the game is not running. Attaching only reads; arming stays a user action.
   ipcMain.handle('library:attach', async (_e, exe: unknown) => {
     if (typeof exe !== 'string' || exe === '') return null
-    const stem = (n: string): string => n.replace(/.exe$/i, '').toLowerCase()
+    const stem = (n: string): string => n.replace(/\.exe$/i, '').toLowerCase()
     const proc = nativeAddon.listProcesses().find((p) => stem(p.name) === stem(exe))
     if (!proc) return null
     await attachTo(proc.pid, proc.name)
