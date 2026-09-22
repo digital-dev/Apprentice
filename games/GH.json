@@ -1,0 +1,271 @@
+{
+  "schema": 2,
+  "exe": "GH",
+  "modules": {},
+  "cheats": [
+    {
+      "id": "gh-health",
+      "name": "Unlimited Health",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "m_HPProp"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-stamina",
+      "name": "Unlimited Stamina",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "<m_Stamina>k__BackingField"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-energy",
+      "name": "Unlimited Energy",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "<m_Energy>k__BackingField"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-fat",
+      "name": "Unlimited Fat Nutrition",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "<m_NutritionFat>k__BackingField"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-carbo",
+      "name": "Unlimited Carbohydrate Nutrition",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "<m_NutritionCarbo>k__BackingField"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-protein",
+      "name": "Unlimited Protein Nutrition",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "<m_NutritionProteins>k__BackingField"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-oxygen",
+      "name": "Unlimited Oxygen",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "m_Oxygen"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-hydration",
+      "name": "No Thirst",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "<m_Hydration>k__BackingField"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-dirtiness",
+      "name": "No Dirtiness",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerConditionModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "<m_Dirtiness>k__BackingField"
+        }
+      ],
+      "value": 0
+    },
+    {
+      "id": "gh-sanity",
+      "name": "Unlimited Sanity",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "PlayerSanityModule",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "m_SanityProp"
+        }
+      ],
+      "value": 100
+    },
+    {
+      "id": "gh-speed",
+      "name": "Super Speed",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "Player",
+          "staticFieldName": "s_Instance",
+          "instanceFieldName": "m_SpeedMul"
+        }
+      ],
+      "value": 2.5
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "gh-noinj-injury",
+      "name": "No Injuries / Diseases",
+      "originalBytes": "554889e5",
+      "replacementBytes": "33c0c390",
+      "length": 4,
+      "signature": "",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "PlayerInjuryModule",
+      "monoMethod": "AddInjury",
+      "companions": [
+        "gh-noinj-worm",
+        "gh-noinj-rash",
+        "gh-noinj-disease"
+      ]
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "gh-noinj-worm",
+      "name": "No Worms",
+      "originalBytes": "554889e5",
+      "replacementBytes": "33c0c390",
+      "length": 4,
+      "signature": "",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "PlayerInjuryModule",
+      "monoMethod": "AddWorm",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "gh-noinj-rash",
+      "name": "No Rash",
+      "originalBytes": "554889e5",
+      "replacementBytes": "33c0c390",
+      "length": 4,
+      "signature": "",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "PlayerInjuryModule",
+      "monoMethod": "AddRash",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "gh-noinj-disease",
+      "name": "No Diseases",
+      "originalBytes": "554889e5",
+      "replacementBytes": "33c0c390",
+      "length": 4,
+      "signature": "",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "PlayerDiseasesModule",
+      "monoMethod": "RequestDisease",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "gh-durability",
+      "name": "Unlimited Items Durability",
+      "originalBytes": "f20f5ae8",
+      "replacementBytes": "0f57ed90",
+      "length": 4,
+      "signature": "f2 0f 59 c1 f2 0f 5a e8 f3 41 0f 11 6e 20 49 8d 4e 18",
+      "signatureOffset": 4,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "WeaponController",
+      "monoMethod": "Hit",
+      "monoSearch": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "gh-easybuild",
+      "name": "Easy Construction",
+      "originalBytes": "4883ec0848893424",
+      "replacementBytes": "b801000000c39090",
+      "length": 8,
+      "signature": "",
+      "signatureOffset": 0,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "ConstructionGhost",
+      "monoMethod": "IsReady"
+    }
+  ]
+}
