@@ -68,13 +68,26 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
   reading real room names ("Garage"). `LevelController.get_favouriteGhostRoom` exists
   and confirms the concept, but does a dynamic indexed-array lookup we didn't need to
   replicate since this simpler GhostInfo path already works.
-- Ghost Location (display, string) — new `factory-capture-LevelController` (hooked on
-  `get_favouriteGhostRoom`'s prologue, rcx=LevelController) → deref `+0x38` (current
-  LevelRoom) → `+0x70` (name string). `+0x38` confirmed by disassembling
-  `LevelController.SyncCurrentGhostRoom`, which reads `mov rbx,[rdi+0x38]` and compares
-  it against the room passed in — that's the method's own "is this still the current
-  room" check. Distinct field from Favourite Room's; will often agree in practice
-  since ghosts favor their favorite room, but they're independently tracked.
+- Ghost Location (display, string) — `GhostAI` capture (the same one Ghost Type and
+  Favourite Room use) → deref `+0x58` (GhostActivity) → `+0x40` (LevelController) →
+  `+0x38` (current LevelRoom) → `+0x70` (name string). `+0x38` confirmed twice by
+  disassembling both `LevelController.SyncCurrentGhostRoom` (`mov rbx,[rdi+0x38]`,
+  compared against the room passed in) and `SyncCurrentGhostRoomNetworked`
+  (`mov [rbx+0x38],rdx`) — both read/write it as "the current room."
+  **Two dedicated `LevelController` capture attempts both failed live** before landing
+  on this: `get_favouriteGhostRoom`'s prologue hooked fine but the getter apparently
+  never gets called during solo play (stayed "not captured yet" indefinitely);
+  `SyncCurrentGhostRoomNetworked`'s prologue also hooked fine but — per its own
+  name — is probably multiplayer-only, same result. Reaching `LevelController`
+  *through* `GhostAI`'s own already-reliable capture instead (chase-confirmed live: a
+  fresh `GhostAI` instance → `GhostActivity`+0x58 → `LevelController`+0x40 both resolve
+  every time) sidesteps needing any `LevelController` hook to fire at all. Confirmed
+  live reading "Utility Room", matching Favourite Room exactly (ghost was in its
+  favorite room at the time). **Lesson**: when a capture patch's hook site doesn't
+  visibly correspond to something that fires constantly (a property getter, a
+  networked-sync method), don't trust the name/uniqueness alone — check whether the
+  object is reachable through an ALREADY-confirmed-reliable capture first, before
+  building a new one.
 - **App feature added to support both of the above**: `display` mode could previously
   only show a number. Added `AnchorTarget.readAsString` (resolved address holds a
   pointer to a managed `String`, decoded via `readManagedString` in `ipc.ts` — int32

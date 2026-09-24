@@ -269,21 +269,6 @@
       "notes": "GhostAI -> +0x38 (GhostInfo) -> +0x70 (LevelRoom) -> +0x70 (name string, UTF-16LE). Confirmed live: read 'Garage' from a running contract. GhostInfo is identity-scoped data (ghost type, evidence config, set once per contract) and LevelController separately exposes a get_favouriteGhostRoom property getter confirming the concept exists -- that getter does a more complex indexed array lookup we didn't need to replicate since this simpler path already reads real room names."
     },
     {
-      "kind": "patch",
-      "mode": "capture",
-      "id": "factory-capture-LevelController",
-      "name": "Capture: LevelController.SyncCurrentGhostRoomNetworked instance",
-      "originalBytes": "48895c2408",
-      "length": 5,
-      "signature": "48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 40 80 3d ?? ?? ?? ?? 00 49 8b f0 48 63 fa 48 8b d9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 4c 8b 05 ?? ?? ?? ?? 45 33 c9 48 8b 4e 08 b2 01 e8 ?? ?? ?? ??",
-      "signatureOffset": 0,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x231ccb0",
-      "baseRegister": "rcx",
-      "internal": true,
-      "notes": "Switched from get_favouriteGhostRoom (2026-09-23): that property getter apparently never fires during normal play -- Ghost Location stayed 'not captured yet' indefinitely even after the display-arm fix, while Ghost Type and Favourite Room (same session) worked immediately. SyncCurrentGhostRoomNetworked's own body also writes +0x38 (`mov [rbx+0x38],rdx`), reconfirming that's the right field; hooked at its true entry (before `mov rbx,rcx` executes), so rcx still holds `this` at the hook point like every other capture here."
-    },
-    {
       "id": "factory-reveal-ghost-location",
       "name": "Ghost Location",
       "dataType": "int32",
@@ -291,14 +276,14 @@
       "targets": [
         {
           "kind": "anchor",
-          "patchId": "factory-capture-LevelController",
-          "derefOffsets": ["0x38"],
+          "patchId": "factory-capture-GhostAI",
+          "derefOffsets": ["0x58", "0x40", "0x38"],
           "offset": "0x70",
           "readAsString": true
         }
       ],
       "value": 0,
-      "notes": "LevelController -> +0x38 (current LevelRoom) -> +0x70 (name string). +0x38 confirmed by disassembling LevelController.SyncCurrentGhostRoom: it reads `mov rbx,[rdi+0x38]` and compares it against the room passed in to decide whether to sync -- that IS the 'current ghost room' the method's own name says it is, not a guess. Distinct from Ghost Favourite Room's field (GhostInfo, not LevelController) -- the two will very often read the same room name since ghosts favor their favorite room, but they're independently tracked and can differ."
+      "notes": "GhostAI -> +0x58 (GhostActivity) -> +0x40 (LevelController) -> +0x38 (current LevelRoom) -> +0x70 (name string). Rides the same factory-capture-GhostAI anchor as Ghost Type/Favourite Room instead of a dedicated LevelController capture -- two separate LevelController hook attempts (get_favouriteGhostRoom, then SyncCurrentGhostRoomNetworked) both stayed 'not captured yet' live, apparently never firing during solo play (the second one's own name suggests it's multiplayer-only). Reaching the SAME +0x38 field through GhostAI's own reliable capture sidesteps needing any LevelController hook at all. Confirmed live: read 'Utility Room', matching Favourite Room exactly (ghost was in its favorite room at the time) -- +0x38 itself was independently confirmed twice by disassembling both LevelController.SyncCurrentGhostRoom and SyncCurrentGhostRoomNetworked, both of which read/write it as the current room."
     }
   ]
 }
