@@ -58,7 +58,30 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
 - Set Money (oneshot, `SingleplayerProfile+0xc8` capture anchor)
 - Ghost Always Visible (replace patch, force-take the "always show" branch)
 - Ghost Type (display only) — `GhostAI` capture → deref `+0x38` (GhostInfo) → `+0x28`
-  (int32 enum, labels table included)
+  (int32 enum, labels table included). Was permanently stuck on "not captured yet"
+  until this session: `display`-mode cheats have no toggle, and the app only ever
+  installed an anchor's capture patch when a cheat's toggle turned on — since nothing
+  else shares `factory-capture-GhostAI`, it never had any install path at all. Fixed
+  in `CheatList.tsx`: display cheats now arm their anchors on attach, unconditionally.
+- Ghost Favourite Room (display, string) — `GhostAI` capture → deref `+0x38`
+  (GhostInfo) → deref `+0x70` (LevelRoom) → `+0x70` (name string). Confirmed live
+  reading real room names ("Garage"). `LevelController.get_favouriteGhostRoom` exists
+  and confirms the concept, but does a dynamic indexed-array lookup we didn't need to
+  replicate since this simpler GhostInfo path already works.
+- Ghost Location (display, string) — new `factory-capture-LevelController` (hooked on
+  `get_favouriteGhostRoom`'s prologue, rcx=LevelController) → deref `+0x38` (current
+  LevelRoom) → `+0x70` (name string). `+0x38` confirmed by disassembling
+  `LevelController.SyncCurrentGhostRoom`, which reads `mov rbx,[rdi+0x38]` and compares
+  it against the room passed in — that's the method's own "is this still the current
+  room" check. Distinct field from Favourite Room's; will often agree in practice
+  since ghosts favor their favorite room, but they're independently tracked.
+- **App feature added to support both of the above**: `display` mode could previously
+  only show a number. Added `AnchorTarget.readAsString` (resolved address holds a
+  pointer to a managed `String`, decoded via `readManagedString` in `ipc.ts` — int32
+  length at `+0x10`, UTF-16LE chars at `+0x14`) and `AnchorTarget.derefOffsets: string[]`
+  (a chain of pointer hops, generalizing the old single-hop `derefOffset` — needed
+  since Favourite Room is two hops deep). Both are real `src/main/` changes, not just
+  JSON — see `anchorResolve.ts`, `ipc.ts`, `store.ts`, `CheatList.tsx`, `tamper.d.ts`.
 
 ## Not done yet — needs more investigation, deliberately not guessed
 
@@ -79,9 +102,9 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
 - **Set Ghost Type** (force a specific ghost, vs. the existing reveal-only cheat):
   same anchor (`GhostAI`+0x38 deref +0x28) but as a `force` write — should be low risk,
   just not built yet.
-- **Reveal/Set Ghost Favorite Room**, **Reveal/Set Ghost Location**: `GhostInfo`'s
-  survey doesn't show an obvious room pointer; `GhostAI.DelayTeleportToFavouriteRoom`
-  is the method to disassemble next to find the field. Not started.
+- **Reveal Ghost Favourite Room / Location**: done, see above. **Set** versions (force
+  the ghost to a specific room) not built — would need to understand the write side
+  of `LevelController`/`GhostInfo`'s room references, not just the read side.
 - **XP Multiplier**: no `Progression`/`Experience`/`Currency` class matched a broad
   survey regex near `SingleplayerProfile`. XP is likely computed and applied
   elsewhere (post-match summary code) rather than a per-frame field — needs a
