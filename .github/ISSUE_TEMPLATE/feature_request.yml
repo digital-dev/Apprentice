@@ -1,0 +1,42 @@
+name: Feature request / new game support
+description: Request a new cheat, a new game profile, or an engine feature
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a new cheat in a game Apprentice already supports, or a new game entirely — this is also the right place. See [CODEBASE_MAP.md](../../blob/master/CODEBASE_MAP.md) for what's already built before requesting something that might already exist.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of request is this?
+      options:
+        - New cheat for a supported game
+        - New game support
+        - Engine/app feature (not tied to one game)
+    validations:
+      required: true
+
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      placeholder: "Name, and its engine if you know it (Unity Mono, IL2CPP, Unreal, other)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What do you want, and why?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I checked CODEBASE_MAP.md and this isn't already built
+          required: false

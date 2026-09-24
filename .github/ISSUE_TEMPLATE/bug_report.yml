@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in Apprentice itself isn't working right (a cheat, the UI, a build)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If this is about a specific cheat not working, the game/cheat/expected-vs-actual fields below are what maintainers need most.
+
+  - type: input
+    id: game
+    attributes:
+      label: Game (if applicable)
+      placeholder: "Valheim, Elden Ring, Phasmophobia, ..."
+    validations:
+      required: false
+
+  - type: input
+    id: cheat
+    attributes:
+      label: Cheat (if applicable)
+      placeholder: "e.g. Ghost Location, Unlimited Salt"
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      description: Exact error text if there was one. A screenshot of the cheat row helps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Apprentice version
+      description: From the app, or the installer filename you downloaded.
+    validations:
+      required: true
+
+  - type: input
+    id: game-build
+    attributes:
+      label: Game version/build (if applicable)
+      description: For a code-patch cheat that stopped working, the game's build matters — patches are captured against a specific build's bytes.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I'm on the latest release
+          required: true
+        - label: This isn't a security vulnerability (if it is, use [private reporting](../../security/advisories/new) instead)
+          required: true

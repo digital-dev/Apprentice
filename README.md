@@ -206,7 +206,7 @@ game's Mono/IL2CPP layout.
 
 1. Fork, branch off `master`.
 2. Read [`CODEBASE_MAP.md`](CODEBASE_MAP.md) first. It's written for someone
-   picking this up cold — the layer map, the eight patch modes, the
+   picking this up cold — the layer map, the nine patch modes, the
    non-negotiable safety rules (never displace a RIP-relative instruction,
    never guess on an ambiguous signature, always restore on quit), and *why*
    each of those rules exists, are all there. Read it before touching
