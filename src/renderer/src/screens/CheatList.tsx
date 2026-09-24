@@ -608,6 +608,31 @@ export default function CheatList({
           })
         }
       }
+      // 'display' cheats have no on/off toggle to drive the usual "arm the
+      // anchor's capture patch when the cheat turns on" logic (see toggle()
+      // below) — their whole point is showing whatever the game holds right
+      // now, so they should just always have their anchors armed while
+      // attached. Without this, a display cheat anchored to a capture patch
+      // that nothing else in the profile shares (e.g. Ghost Type's own
+      // factory-capture-GhostAI) never gets installed at all and permanently
+      // reads "not captured yet" regardless of how long the game runs.
+      for (const cheat of loaded.filter((c) => c.mode === 'display')) {
+        const anchors = cheat.targets.filter(
+          (t): t is { kind: 'anchor'; patchId: string; offset: string } =>
+            (t as { kind?: string }).kind === 'anchor'
+        )
+        for (const anchor of anchors) {
+          const patch = loadedPatches.find((p) => p.id === anchor.patchId)
+          if (!patch || patchEnabled.has(patch.id)) continue
+          try {
+            const result = await window.tamper.applyPatch(patch)
+            if (result.ok) setPatchEnabled((prev) => new Set(prev).add(patch.id))
+          } catch {
+            // not attached / transient — the next attach retries
+          }
+        }
+      }
+
       // Automatic readability check on (re)attach: populate a live "N of M
       // targets" health readout for each cheat, so a cheat now running on
       // only some of its targets (e.g. after a game restart shifted the
@@ -696,6 +721,38 @@ export default function CheatList({
       clearInterval(timer)
     }
   }, [patches, patchEnabled])
+
+  // 'display' cheats have no toggle to drive a refresh from, and unlike a
+  // freeze/oneshot cheat their whole purpose is showing whatever the game
+  // currently holds — so, unlike the capture-pointer-change poll above,
+  // this refreshes on a plain timer regardless of whether the anchor's
+  // captured pointer has changed (the VALUE at a stable pointer can still
+  // tick every frame, e.g. a stat, not just an enum that only changes when
+  // a new instance is captured).
+  useEffect(() => {
+    const displayCheats = cheats.filter((c) => c.mode === 'display')
+    if (displayCheats.length === 0) return
+    let cancelled = false
+
+    async function refresh(): Promise<void> {
+      for (const cheat of displayCheats) {
+        try {
+          const result = await window.tamper.verifyCheat(cheat, null)
+          if (cancelled) return
+          setStatuses((prev) => new Map(prev).set(cheat.id, result))
+        } catch {
+          // not attached — the next tick tries again
+        }
+      }
+    }
+
+    refresh()
+    const timer = setInterval(refresh, 1000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [cheats])
 
   async function toggle(cheat: CheatDefinition) {
     const next = !enabled.has(cheat.id)
@@ -1782,19 +1839,41 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
               const isCapturingHotkey = capturingHotkeyId === cheat.id
               const isVerifying = verifyOpen === cheat.id
 
-              const railState: RailState = isDegraded
-                ? 'failed'
-                : isEnabled && live === 0
-                  ? 'failed'
-                  : isEnabled
+              // 'display' cheats have no on/off state and no write path — the
+              // usual "N/M live" readout (which reads as "is the WRITE
+              // taking effect") doesn't apply; the status chip says whether
+              // there's anything to show instead.
+              const displayValue = cheat.mode === 'display' ? (result?.[0]?.value ?? null) : null
+              // A readAsString target's result carries `text`, not `value` —
+              // see TargetStatus.text (ipc.ts). Distinct from displayValue so
+              // a string result of '' (a genuinely empty room name, say)
+              // still counts as "there's something to show", not "idle".
+              const displayText = cheat.mode === 'display' ? (result?.[0]?.text ?? undefined) : undefined
+              const hasDisplayResult = displayValue !== null || displayText !== undefined
+
+              const railState: RailState =
+                cheat.mode === 'display'
+                  ? hasDisplayResult
                     ? 'active'
                     : 'idle'
+                  : isDegraded
+                    ? 'failed'
+                    : isEnabled && live === 0
+                      ? 'failed'
+                      : isEnabled
+                        ? 'active'
+                        : 'idle'
 
-              const status: CheatRowVM['status'] = isDegraded
-                ? { text: 'Not resolving — retrying, will resume if it comes back', tone: 'failed' }
-                : live !== null
-                  ? { text: `${live}/${cheat.targets.length} live`, tone: live === 0 ? 'failed' : 'muted' }
-                  : { text: isEnabled ? 'enabled' : 'ready', tone: 'muted' }
+              const status: CheatRowVM['status'] =
+                cheat.mode === 'display'
+                  ? hasDisplayResult
+                    ? { text: 'live', tone: 'active' }
+                    : { text: 'not captured yet', tone: 'muted' }
+                  : isDegraded
+                    ? { text: 'Not resolving — retrying, will resume if it comes back', tone: 'failed' }
+                    : live !== null
+                      ? { text: `${live}/${cheat.targets.length} live`, tone: live === 0 ? 'failed' : 'muted' }
+                      : { text: isEnabled ? 'enabled' : 'ready', tone: 'muted' }
 
               const subrowContent = (
                 <>
@@ -1823,10 +1902,10 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                                   }}
                                 >
                                   {result[i]?.alive
-                                    ? `✓ ${result[i]?.value}`
-                                    : result[i]?.value === null
+                                    ? `✓ ${result[i]?.text ?? result[i]?.value}`
+                                    : (result[i]?.text ?? result[i]?.value) == null
                                       ? '✗ not resolving'
-                                      : `✗ ${result[i]?.value} (mismatch)`}
+                                      : `✗ ${result[i]?.text ?? result[i]?.value} (mismatch)`}
                                 </span>
                                 {!isAnchor(t) && !isMono(t) && 'offsets' in t && t.offsets.length === 0 && (
                                   <button
@@ -1880,7 +1959,15 @@ async function saveHotkey(cheat: StoredCheat, hotkey: string | null) {
                 status,
                 railState,
                 control:
-                  cheat.mode === 'freeze' ? (
+                  cheat.mode === 'display' ? (
+                    <span className="address-chip" title="Read-only: this cheat never writes">
+                      {displayText !== undefined
+                        ? (displayText ?? '—')
+                        : displayValue === null
+                          ? '—'
+                          : (cheat.labels?.[String(displayValue)] ?? `index ${displayValue}`)}
+                    </span>
+                  ) : cheat.mode === 'freeze' ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <Toggle enabled={isEnabled} onChange={() => toggle(cheat)} />
                       {cheat.multiplierBaseline !== undefined &&

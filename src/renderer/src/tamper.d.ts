@@ -19,6 +19,9 @@ export interface Candidate {
 export interface TargetStatus {
   alive: boolean
   value: number | null
+  // Set instead of `value` for a readAsString anchor target — see
+  // ipc.ts's TargetStatus (main-process copy this mirrors).
+  text?: string | null
 }
 
 export interface CaughtInstruction {

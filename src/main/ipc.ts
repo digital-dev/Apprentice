@@ -555,6 +555,33 @@ async function writeCheat(
 export interface TargetStatus {
   alive: boolean
   value: number | null
+  // Set instead of `value` for a readAsString anchor target — see
+  // readManagedString below. `value` stays null in that case; CheatList.tsx
+  // shows `text` when present rather than trying to format a number.
+  text?: string | null
+}
+
+// Decodes a managed .NET String object at `objectAddress`: an int32 length
+// at +0x10, then that many UTF-16LE chars starting at +0x14 (the layout
+// documented in the il2cpp-engine-instance-discovery playbook — object
+// header, monitor, length, then inline char data; no native helper needed,
+// this is just two reads). Bounded to a generous but finite length so a
+// misresolved pointer (reading garbage as a huge "length") can't turn into
+// an enormous read; a length that long isn't a real managed string anyway.
+const MAX_STRING_CHARS = 4096
+function readManagedString(handle: number, objectAddress: string): string | null {
+  const lengthHex = nativeAddon.tryReadBytes(handle, objectAddress, 0x14)
+  if (lengthHex === null || lengthHex.length < 0x14 * 2) return null
+  const length = Buffer.from(lengthHex, 'hex').readInt32LE(0x10)
+  if (length < 0 || length > MAX_STRING_CHARS) return null
+  if (length === 0) return ''
+  const charsHex = nativeAddon.tryReadBytes(
+    handle,
+    '0x' + (BigInt(objectAddress) + 0x14n).toString(16),
+    length * 2
+  )
+  if (charsHex === null) return null
+  return Buffer.from(charsHex, 'hex').toString('utf16le')
 }
 
 // The user-facing value they read off a rounded in-game display won't
@@ -596,6 +623,17 @@ async function verifyCheat(
       if (isAnchorTarget(target)) {
         const resolved = resolveAnchor(handle, target)
         if (resolved === null) return { alive: false, value: null }
+        if (target.readAsString) {
+          // The resolved address holds a pointer TO the String object (a C#
+          // string field is a reference, never inline) — one more read than
+          // a numeric field needs before the fixed String layout applies.
+          const pointerHex = nativeAddon.tryReadBytes(handle, resolved, 8)
+          if (pointerHex === null) return { alive: false, value: null, text: null }
+          const objectAddress = '0x' + Buffer.from(pointerHex, 'hex').readBigUInt64LE(0).toString(16)
+          if (objectAddress === '0x0') return { alive: false, value: null, text: null }
+          const text = readManagedString(handle, objectAddress)
+          return { alive: text !== null, value: null, text }
+        }
         const raw = nativeAddon.tryReadValue(handle, resolved, [], dataType)
         if (raw === null) return { alive: false, value: null }
         const value = extract(raw)

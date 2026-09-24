@@ -45,7 +45,12 @@
       "fieldOffset": "0x30",
       "value": 0,
       "dataType": "float",
-      "companions": ["factory-maxsanity-2", "factory-maxsanity-3", "factory-maxsanity-4", "factory-maxsanity-5"],
+      "companions": [
+        "factory-maxsanity-2",
+        "factory-maxsanity-3",
+        "factory-maxsanity-4",
+        "factory-maxsanity-5"
+      ],
       "notes": "CORRECTED: +0x30 is insanity/stress (0=fully sane, 100=fully insane), not 'sanity, 100=full' as originally assumed -- SetInsanity's own name was the honest hint, dismissed too early. Confirmed by diffing against another already-installed, independently-patched trainer running on the same process: its Max Sanity hook forces this exact field to literal 0.0, and the player visibly stays at full sanity with it on. The earlier value of 100 was forcing maximum insanity, which explains both prior bug reports (drained fast, stuck low/can't regain) -- the patches were working exactly as coded, just backwards from the name. This is the one visible toggle for the whole group -- the other four store sites on this same field are internal companions that arm/disarm with this one (see companions.ts); the user only sees and toggles this single 'Maximum Sanity' entry."
     },
     {
@@ -205,36 +210,6 @@
       "internal": true
     },
     {
-      "kind": "patch",
-      "mode": "capture",
-      "id": "factory-capture-PlayerSanity",
-      "name": "Capture: PlayerSanity.Update instance",
-      "originalBytes": "40574883ec40",
-      "length": 6,
-      "signature": "40 57 48 83 ec 40 80 3d ?? ?? ?? ?? 00 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 4e bd",
-      "signatureOffset": 0,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0xdcb0f0",
-      "baseRegister": "rcx",
-      "internal": true
-    },
-    {
-      "id": "factory-set-consumed-sanity",
-      "name": "Set Consumed Sanity",
-      "dataType": "float",
-      "mode": "oneshot",
-      "targets": [
-        {
-          "kind": "anchor",
-          "patchId": "factory-capture-PlayerSanity",
-          "offset": "0x30",
-          "dataType": "float"
-        }
-      ],
-      "value": 50,
-      "notes": "PlayerSanity+0x30 is insanity/stress, not sanity: 0=fully sane, 100=fully insane (confirmed by diffing against another already-installed, independently-patched trainer running on the same process -- see factory-maxsanity's note). This cheat's own name/intent ('consumed sanity') was right all along; the field just needed the polarity correction. Sets it once to the given value rather than forcing it every frame -- disable Maximum Sanity to see the set value hold."
-    },
-    {
       "id": "factory-reveal-ghost-type",
       "name": "Ghost Type",
       "dataType": "int32",
@@ -275,6 +250,54 @@
         "22": "Deogen",
         "23": "Thaye"
       }
+    },
+    {
+      "id": "factory-reveal-ghost-favourite-room",
+      "name": "Ghost Favourite Room",
+      "dataType": "int32",
+      "mode": "display",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-GhostAI",
+          "derefOffsets": ["0x38", "0x70"],
+          "offset": "0x70",
+          "readAsString": true
+        }
+      ],
+      "value": 0,
+      "notes": "GhostAI -> +0x38 (GhostInfo) -> +0x70 (LevelRoom) -> +0x70 (name string, UTF-16LE). Confirmed live: read 'Garage' from a running contract. GhostInfo is identity-scoped data (ghost type, evidence config, set once per contract) and LevelController separately exposes a get_favouriteGhostRoom property getter confirming the concept exists -- that getter does a more complex indexed array lookup we didn't need to replicate since this simpler path already reads real room names."
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-LevelController",
+      "name": "Capture: LevelController.get_favouriteGhostRoom instance",
+      "originalBytes": "4883ec28488b4140",
+      "length": 8,
+      "signature": "48 83 ec 28 48 8b 41 40 48 85 c0 74 ?? 48 8b 40 38",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x231d310",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "id": "factory-reveal-ghost-location",
+      "name": "Ghost Location",
+      "dataType": "int32",
+      "mode": "display",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-LevelController",
+          "derefOffsets": ["0x38"],
+          "offset": "0x70",
+          "readAsString": true
+        }
+      ],
+      "value": 0,
+      "notes": "LevelController -> +0x38 (current LevelRoom) -> +0x70 (name string). +0x38 confirmed by disassembling LevelController.SyncCurrentGhostRoom: it reads `mov rbx,[rdi+0x38]` and compares it against the room passed in to decide whether to sync -- that IS the 'current ghost room' the method's own name says it is, not a guess. Distinct from Ghost Favourite Room's field (GhostInfo, not LevelController) -- the two will very often read the same room name since ghosts favor their favorite room, but they're independently tracked and can differ."
     }
   ]
 }

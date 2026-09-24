@@ -11,6 +11,16 @@ export interface AnchorShape {
   // inventory's Update) reach a value on a different object it references
   // (the wallet), instead of needing a hook on that object's own rare methods.
   derefOffset?: string
+  // The general form of derefOffset, for a value reached through more than
+  // one intermediate reference — e.g. Phasmophobia's ghost's favorite room
+  // name: the captured GhostAI only holds a GhostInfo pointer (+0x38), whose
+  // OWN +0x70 holds the LevelRoom pointer `offset` actually targets. Each
+  // entry is read the same way derefOffset's single hop is: pointer at
+  // (current base + entry), used as the next base. Takes priority over
+  // derefOffset when both are present (there is no reason to set both);
+  // absent or empty means "no extra hops", exactly as before this field
+  // existed.
+  derefOffsets?: string[]
 }
 
 export type AnchorResolution =
@@ -35,8 +45,13 @@ export function resolveAnchorAddress(target: AnchorShape, slot: string | null, r
   // Zero means the game has not run the hooked instruction yet this session.
   if (base === 0n) return { ok: false, reason: 'not-captured' }
 
-  if (target.derefOffset !== undefined) {
-    const fieldHex = read('0x' + (base + BigInt(target.derefOffset)).toString(16), 8)
+  const hops = target.derefOffsets !== undefined && target.derefOffsets.length > 0
+    ? target.derefOffsets
+    : target.derefOffset !== undefined
+      ? [target.derefOffset]
+      : []
+  for (const hop of hops) {
+    const fieldHex = read('0x' + (base + BigInt(hop)).toString(16), 8)
     if (fieldHex === null) return { ok: false, reason: 'deref-unreadable' }
     base = littleEndianPointer(fieldHex)
     // A null reference (the holder exists but not what it points at yet) must

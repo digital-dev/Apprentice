@@ -1,6 +1,11 @@
 import { loadProfile, saveProfile, setProfileDir } from './profile'
 
-export type CheatMode = 'freeze' | 'oneshot'
+// 'display' is read-only: it never writes `value`, has no on/off state, and
+// is never passed to FreezeLoop.enable or the hotkey/oneshot write paths —
+// CheatList.tsx renders it as a plain polling readout instead of a toggle,
+// which is what actually keeps it out of those write paths (there is no
+// separate runtime guard; a 'display' cheat simply never reaches them).
+export type CheatMode = 'freeze' | 'oneshot' | 'display'
 // Every numeric width Apprentice can scan for, freeze, or write through a
 // Mono value target. 'int8' (an unsigned 1-byte write/read — kept
 // unsigned to match the width a Mono bool field, e.g. Player.m_godMode,
@@ -54,6 +59,12 @@ export interface AnchorTarget {
   // inventory's Update) reach a value on another object it references (the
   // wallet), instead of hooking that object's own rarely-called methods.
   derefOffset?: string
+  // The general form of derefOffset — a chain of intermediate pointer hops
+  // instead of just one, for a value reached through more than one
+  // reference (e.g. GhostAI -> GhostInfo -> LevelRoom). See
+  // anchorResolve.ts's AnchorShape.derefOffsets for the exact resolution
+  // order; takes priority over derefOffset when both are set.
+  derefOffsets?: string[]
   // See MonoTarget.value/dataType below — the same per-target override,
   // available on every target kind.
   value?: number
@@ -61,6 +72,15 @@ export interface AnchorTarget {
   // See MonoTarget.bitIndex below — the same single-bit read-modify-write,
   // available on every target kind.
   bitIndex?: number
+  // 'display' mode only: the resolved address holds a pointer to a managed
+  // .NET String (a C# `string` field is always a reference, never inline
+  // data), not a number — read that pointer, then decode the object it
+  // points at as a String (int32 length at +0x10, UTF-16LE chars at +0x14;
+  // see readManagedString in ipc.ts) instead of treating the pointer itself
+  // as the value. dataType is ignored when this is set (a string has no
+  // numeric width). Absent means the existing plain numeric read, exactly
+  // as before this field existed.
+  readAsString?: boolean
 }
 
 // A value reached through Mono-resolved metadata by name, instead of a
@@ -252,6 +272,13 @@ export interface CheatDefinition {
   // captureStore.ts for where the captured values actually live between
   // enable and disable.
   captureOriginal?: boolean
+  // 'display' mode only: maps the live-read integer (as a string key, e.g.
+  // an enum index) to a human-readable label for CheatList.tsx to show
+  // instead of the raw number. A value with no entry falls back to the
+  // number itself, so a partially-known mapping (e.g. some enum members
+  // confirmed, others not yet) degrades to "index N" rather than hiding
+  // the cheat.
+  labels?: Record<string, string>
 }
 
 // A code patch: NOP out the instruction the game uses to write a value,
