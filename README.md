@@ -14,25 +14,31 @@ always-online requirement.
 
 Two ways to cheat:
 
-- **Value cheats** — find an address, write it repeatedly (a "freeze"), or
-  write it once ("one-shot"). A cheat can also be *anchored*: a small capture
-  patch records the game object it belongs to, and the cheat writes a field of
-  that object (optionally following one pointer field first, `derefOffset`).
-  That keeps cheats working across restarts in games with no readable
-  metadata, such as Unity IL2CPP and Unreal.
+- **Value cheats** — find an address, write it repeatedly (a "freeze"), write
+  it once ("one-shot"), or just display it, read-only. A cheat can also be
+  *anchored*: a small capture patch records the game object it belongs to, and
+  the cheat reads or writes a field of that object (optionally following a
+  chain of pointer fields first). A display cheat can decode that field as
+  text instead of a number — Phasmophobia's ghost-location cheats read a room
+  name straight out of the game's own string data. That keeps cheats working
+  across restarts in games with no readable metadata, such as Unity IL2CPP and
+  Unreal.
 - **Code patches** — rewrite the instruction that writes a value, so the game
   itself never puts the old value back. NOP it out, replace it, force a
   fixed result, or skip a method entirely for one object.
 
-Ships with cheat sets for five games, one profile each in `games/`:
+Ships with cheat sets for eight games, one profile each in `games/`:
 
 | Game | Cheats | Engine / notes |
 |---|---|---|
 | Valheim | 18 | Mono JIT (`valheim.json`) |
 | Elden Ring | 14 | Native, pointer-chain value cheats (`start_protected_game.json`, named for its EAC-protected executable) |
-| Palworld | 8 | Unreal (`Palworld-Win64-Shipping.json`) |
-| Aviassembly | 12 | Unity/Mono (`aviassembly.json`) |
+| Palworld | 11 | Unreal (`Palworld-Win64-Shipping.json`) |
+| Aviassembly | 12 | Unity/Mono (`aviassembly.json`) — see `games/aviassembly-notes.md` |
 | Schedule I | 26 | Unity IL2CPP (`Schedule I.json`) — see `games/schedule-i-notes.md` for how each was found |
+| Green Hell | 14 | Unity IL2CPP (`GH.json`) |
+| Phasmophobia | 8 | Unity IL2CPP (`Phasmophobia.json`) — see `games/phasmophobia-notes.md`; several of these read live game state as text (e.g. the ghost's current room) rather than a plain number |
+| Subnautica 2 | 20 | Unreal Engine 5.6, reflection-based value cheats (`Subnautica2-Win64-Shipping.json`) — see `games/subnautica2-notes.md` |
 
 The newest Schedule I cheats (invisibility, no arrest, clone items, the instant
 timers and others) were built from the game's code and checked against a recording

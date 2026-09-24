@@ -6,11 +6,17 @@ open a file only when you need to change it. Line counts are indicative.
 **What it is:** an offline Windows game trainer. Electron + React + TypeScript
 over a C++ N-API addon, plus a standalone read-only MCP server exposing the
 same native primitives for live reverse-engineering sessions. Four ways to
-cheat: *value cheats* (find an address, write it repeatedly), *code patches*
-(rewrite the instruction that writes the value, one of eight modes), *Lua
-scripts* (sandboxed, hotkey- or toggle-driven, for effects too dynamic for a
-patch), and importing an existing Cheat Engine `.CT` table. Primary target:
-Valheim (Mono JIT); Elden Ring is also bundled.
+cheat: *value cheats* (find an address, write it repeatedly, through one of
+four `CheatTarget` kinds — see below), *code patches* (rewrite the instruction
+that writes the value, one of nine modes), *Lua scripts* (sandboxed, hotkey- or
+toggle-driven, for effects too dynamic for a patch), and importing an existing
+Cheat Engine `.CT` table. Engines: Mono JIT (Valheim, Aviassembly),
+IL2CPP (Phasmophobia, Palworld, Schedule I, Supermarket Together), Unreal
+Engine reflection (Subnautica 2, UE 5.6), and native/hand-signatured (Elden
+Ring, `start_protected_game.json`). `games/*.json` lists every bundled profile;
+a same-named `games/<game>-notes.md` (Valheim, Palworld, Phasmophobia,
+Schedule I, Subnautica 2, Aviassembly) holds that game's RE gotchas — check it
+before re-deriving something already found.
 
 ---
 
@@ -37,7 +43,7 @@ and it is read-only (no write/patch/inject tools).
 | File | Lines | Responsibility |
 |---|---|---|
 | `mono_bridge.cc` | 2604 | **Mono runtime introspection.** Resolves classes/fields by name, gets a static field's address, compiles a method to get its live JIT entry, lists every field/method/assembly/class name, and injects a small collector stub (`BuildAssemblyCollectorStub`) to walk `mono_assembly_foreach`-style APIs that have no batch query. Every export attaches a throwaway thread to the Mono runtime first and detaches after — calling into Mono from an unattached thread is unsafe, and a managed method's own body may itself call back into Mono (e.g. a ZDO lookup), so this is the one mechanism the rest of the file exists to make safe. |
-| `write_watch.cc` | 982 | **Find-what-writes.** Hardware breakpoints (Dr0/Dr7) via a debugger loop; decodes the faulting instruction with Zydis; builds the AOB **signature**. Handles signed displacement and DLL-load session stability. One of the most subtle files here. |
+| `write_watch.cc` | ~800 | **Find-what-writes.** Hardware breakpoints (Dr0/Dr7) via a debugger loop; decodes the faulting instruction with Zydis; builds the AOB **signature**. Handles signed displacement and DLL-load session stability. One of the most subtle files here. |
 | `cave_ops.cc` | 945 | Code-cave primitives: `allocateCave`, `freeMemory`, `decodeRun`, and the instruction **encoders** — `encodeStore`, `encodeStoreRegister`, `encodeScale`, `encodeConditionalScale`, `encodeCaptureOnce`, `encodeGuardedSkip`, `encodeImmuneGuard`, `encodeJump` — plus thread suspend/resume wrappers. One encoder per patch mode (see below). |
 | `scanner.cc` | 376 | Value scanning: `scanFirst` / `scanNext`, generalized over every `DataType` width via `value_type.h` (int8/16/32/64, float, double), chunked region reads, process-liveness checks, and optional range bounds. |
 | `mono_call.cc` | 392 | `callRemoteFunction`/`callRemoteFunctionFloat`/`monoCallAttached` — calls an arbitrary function (game code, not just Mono API) on an injected thread, up to 4 pointer-sized args, returning both the integer (RAX) and float (XMM0) result. Frees its own scratch cave after the call. |
@@ -88,11 +94,26 @@ patch_ops) still call Win32 directly; porting them is a separate sub-project.
 
 **`replay/`** — `snapshotFile.ts` (the `.snap` format: gzip of header JSON + region bytes with margins) and `replayOps.ts` (`ReplayOps`, a read-only `PatchOps` over a snapshot so the real `PatchEngine.locate()` runs against recorded game code). See `docs/superpowers/specs/2026-09-19-fixture-replay-design.md`. Tests: `tests/main/replay.synthetic.test.ts` (always; hand-assembled traps), `tests/replay/` (recorder, manifest suite, and the real tier that runs against local snapshots).
 
+**UE (Unreal Engine) reflection targets** — a fourth `CheatTarget` kind (`UeTarget`, store.ts) alongside chain/anchor/mono, for games without Mono to introspect. `ueDiscover.ts` walks `GUObjectArray` to find a class by name (anchor form) or resolve a root instance directly (root form, optionally filtered by `rootOuterClass` — e.g. the attribute-set object owned by the player character, not a creature's). `ueTargetResolve.ts` then walks an FField reflection chain (`path`, `fieldName`, `valueOffset` for a struct member like `FGameplayAttributeData.CurrentValue`) to the final address, supports `allInstances` (write every live instance, e.g. every loaded recipe asset, restored per-address) and `valueFrom` (hold a field at another field's own live value, e.g. Oxygen pinned to MaxOxygen). `moduleBaseCache.ts` avoids re-resolving the module base every tick. See `docs/superpowers/specs/2026-09-17-ue-target-wiring-design.md` and the UE 5.6/Subnautica 2 reference in `games/subnautica2-notes.md`.
+
+**Four `CheatTarget` kinds** (`store.ts`) — what a value cheat can read/write through:
+
+| Kind | Resolves via | Distinguishing capabilities |
+|---|---|---|
+| `ChainTarget` | module + static offset chain (found by scanning) | plain; survives until the runtime restarts |
+| `AnchorTarget` | a `capture`-mode patch's recorded pointer | `derefOffset`/`derefOffsets` (chained pointer hops), `readAsString` (decode a managed `.NET` String — int32 length @+0x10, UTF-16LE chars @+0x14), `bitIndex` |
+| `MonoTarget` | class/static-field name via live Mono metadata | `instanceFieldName`/`instanceClassName` (one hop, cross-class), `pointerFieldOffset` (a second raw-offset hop past that) |
+| `UeTarget` | GUObjectArray scan + FField reflection | `path`/`valueOffset`/`allInstances`/`valueFrom` (see UE paragraph above) |
+
+Every kind also takes a per-target `value`/`dataType` override and `bitIndex` (single-bit read-modify-write inside a byte other bits still own).
+
 | File | Lines | Responsibility |
 |---|---|---|
-| `ipc.ts` | 1503 | Channel handlers (see full list below), the live `patchOps`/`AnchorOps` implementations, anchor resolution, freeze/script/hotkey wiring, `refreshModuleContext`/`attachTo` (shared by manual attach and the watcher), CT import/export handlers, and the push-event senders — every one guarded against a destroyed renderer window. |
-| `patchEngine.ts` | 1194 | **The core.** Locate / apply / restore for code patches across all eight modes, and the cave assembly for every injection mode. Takes a `PatchOps` interface, so every path — especially every refusal — is tested without a game. Also owns `setAnchorContext` (module map + verified set), `onRelearn`, and `monoMethodOffset` (patching mid-method Mono JIT sites, not just the method entry). |
-| `store.ts` | 404 | Types (`CheatDefinition`, `PatchCheat`, `ScriptCheat`, `ChainTarget`, `AnchorTarget`, `MonoTarget`) and thin CRUD over `profile.ts`'s `loadProfile`/`saveProfile`. `DataType` is `int8\|int16\|int32\|int64\|float\|double` — every width `scanner.cc`/`memory_ops.cc` handle uniformly. A target can carry a per-target `value`/`dataType` override, a `bitIndex` for single-bit read-modify-write, and `offValue` (written once on disable/delete for fields the game never resets on its own). |
+| `ipc.ts` | ~1950 | Channel handlers (see full list below), the live `patchOps`/`AnchorOps` implementations, anchor resolution (`readManagedString` for a `readAsString` target), freeze/script/hotkey wiring, `refreshModuleContext`/`attachTo` (shared by manual attach and the watcher), CT import/export handlers, and the push-event senders — every one guarded against a destroyed renderer window. |
+| `patchEngine.ts` | ~1230 | **The core.** Locate / apply / restore for code patches across all nine modes, and the cave assembly for every injection mode. Takes a `PatchOps` interface, so every path — especially every refusal — is tested without a game. Also owns `setAnchorContext` (module map + verified set), `onRelearn`, and `monoMethodOffset` (patching mid-method Mono JIT sites, not just the method entry). |
+| `store.ts` | ~565 | Types (`CheatDefinition`, `PatchCheat`, `ScriptCheat`, and the four `CheatTarget` kinds above) and thin CRUD over `profile.ts`'s `loadProfile`/`saveProfile`. `DataType` is `int8\|int16\|int32\|int64\|float\|double` — every width `scanner.cc`/`memory_ops.cc` handle uniformly, and the only widths a `force`-mode patch's `value`/`dataType` may use (it encodes a 32-bit immediate). `offValue`/`captureOriginal` (store.ts's own doc comments) control what a freeze cheat leaves behind on disable. `companions` (on both `CheatDefinition` and `PatchCheat`) names `internal` patches that arm/disarm together with this one — see `companions.ts`. `PatchCheat.reArmWhenDestroyed` auto-rebuilds a `capture` cave (fresh zeroed slot) when the object it captured turns out to be a destroyed `UnityEngine.Object` — for a per-round-recreated capture target (a boss, a ghost) where `EncodeCaptureOnce`'s default "first object wins for the session" behavior goes stale after round 1. |
+| `anchorResolve.ts` | 63 | `resolveAnchorAddress`: the pure, engine-free half of `AnchorTarget` resolution (capture slot → optional `derefOffset`/`derefOffsets` chain → `+offset`), factored out so it's unit-testable without a native addon. `ipc.ts`'s `resolveAnchor` wraps it with the real `tryReadBytes`. |
+| `companions.ts` | 64 | `CompanionTracker`: arms an `internal` patch the first time any cheat naming it in `companions` turns on, disarms it only when the last one turns off (several cheats can share one companion). Used both for a cheat's own side-effect patch (Valheim tags pieces/drops "cheated") and to collapse several related force patches into one visible toggle (Phasmophobia's five-site "Maximum Sanity"). |
 | `ctImport.ts` | 653 | Imports Cheat Engine `.CT` tables: plain (non-Auto-Assembly) entries map onto `ChainTarget`/freeze; nop-shape, register-copy-shape, and force-shape Auto Assembly scripts map onto the matching patch mode. No general AA interpreter — a script that doesn't reduce to one of these shapes is reported skipped, not guessed at. Hardened against regex/complexity DoS (quadratic tag matching, oversized inputs) and run through `ctImportSafe.ts`/`ctImportWorker.ts` on a worker-thread execution budget. |
 | `ctExport.ts` | 291 | The reverse: builds a `.CT` table from this app's own cheats. `nop`/`replace`/`force` patches have a direct Auto Assembly equivalent. `capture`/`guard`/`immune`/`scale`/`copy` modes and any Mono-resolved target are reported **skipped** rather than approximated — they rely on live Mono metadata resolved fresh per install, which AA has no equivalent for. |
 | `nativeAddon.ts` | 349 | Typed wrappers over all 36 addon exports. Throwing / non-throwing pairs: `readValue`/`tryReadValue`, `readBytes`/`tryReadBytes`. |
@@ -173,7 +194,7 @@ scan isn't thrown away.
 
 ---
 
-## The eight patch modes
+## The nine patch modes
 
 Set by `PatchCheat.mode`; **absent means `'nop'`** so pre-injection saved
 patches keep working.
@@ -185,9 +206,10 @@ patches keep working.
 | `force` | `effect + tail + jmpBack` — the captured store is **replaced**, not replayed | every object |
 | `copy` | `effect + displaced + jmpBack` — copies a live register into `[reg+offset]` via `encodeStoreRegister` | every object |
 | `scale` | `effect + displaced + jmpBack` — multiplies the captured value via `encodeScale`; with a `compareMonoMethod` set, becomes **conditional scale** (`encodeConditionalScale`) — multiplies only when a live Mono call gates it true (e.g. attacker-only damage multipliers) | every object, or attacker-gated subset |
-| `capture` | `effect + displaced + jmpBack` — records the object pointer into the slot, changes nothing | n/a (feeds an anchored cheat) |
+| `capture` | `effect + displaced + jmpBack` — records the object pointer into the slot **only while the slot is still zero** (`EncodeCaptureOnce`), changes nothing else. First object wins for the whole attached session — right for a player-lifetime singleton, wrong for something recreated per round (opt into `PatchCheat.reArmWhenDestroyed`, store.ts, for those) | n/a (feeds an anchored cheat) |
 | `guard` | `guardBlob + displaced + jmpBack` — compares the object against the slot, skips the write for that one | **one object only** |
 | `immune` | `encodeImmuneGuard` variant of guard, arm pointer resolved dynamically (Mono or non-Mono games) rather than fixed at capture time | **one object only** |
+| `strip` | *(no single fieldOffset/value/dataType — see `fields`)* — writes several fields at once off the SAME baseRegister, **re-read fresh on every invocation** rather than a captured/anchored one; replays the original instruction(s) after, unlike force | whichever object is current at each call (e.g. a shared crafting-requirement row) |
 
 **Cave layout is fixed:** slot at `cave+0` (8 bytes, holds a captured pointer),
 code at `cave+8`.
@@ -297,7 +319,7 @@ dependency (e.g. driving `ceserver`'s network protocol) on top of this.
 
 ---
 
-## Tests — 557 across 37 files, and what they can't tell you
+## Tests — ~1150 across 75 files (root), and what they can't tell you
 
 `npx vitest run` · `npx tsc --noEmit` · `npm run build`
 
@@ -320,9 +342,11 @@ appear/disappear with a plausible fingerprint, that two builds of "the same"
 DLL fingerprint differently, and that the same bytes read at a fixed RVA
 survive the DLL being unloaded and reloaded at a **different** base address.
 
-The MCP server has its own test files (`mcp-server/tests/`), including an
-integration test that spawns the built `dist/index.js` — requires
-`cd mcp-server && npm install` to have run first (gitignored `dist/`).
+The MCP server has its own ~170 tests across 20 files (`mcp-server/tests/`),
+including an integration test that spawns the built `dist/index.js` —
+requires `cd mcp-server && npm install` to have run first (gitignored
+`dist/`). **CI does not run them** (`ci.yml`'s mcp-server step only `npm ci`s
+and builds it) — check by hand before trusting that package's tests are green.
 
 **The harness is a static MSVC binary; the real target is Mono JIT.** Almost
 every defect found in-game was invisible here for that reason: stable bytes
