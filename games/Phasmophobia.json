@@ -272,15 +272,16 @@
       "kind": "patch",
       "mode": "capture",
       "id": "factory-capture-LevelController",
-      "name": "Capture: LevelController.get_favouriteGhostRoom instance",
-      "originalBytes": "4883ec28488b4140",
-      "length": 8,
-      "signature": "48 83 ec 28 48 8b 41 40 48 85 c0 74 ?? 48 8b 40 38",
+      "name": "Capture: LevelController.SyncCurrentGhostRoomNetworked instance",
+      "originalBytes": "48895c2408",
+      "length": 5,
+      "signature": "48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 40 80 3d ?? ?? ?? ?? 00 49 8b f0 48 63 fa 48 8b d9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 4c 8b 05 ?? ?? ?? ?? 45 33 c9 48 8b 4e 08 b2 01 e8 ?? ?? ?? ??",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x231d310",
+      "moduleOffset": "0x231ccb0",
       "baseRegister": "rcx",
-      "internal": true
+      "internal": true,
+      "notes": "Switched from get_favouriteGhostRoom (2026-09-23): that property getter apparently never fires during normal play -- Ghost Location stayed 'not captured yet' indefinitely even after the display-arm fix, while Ghost Type and Favourite Room (same session) worked immediately. SyncCurrentGhostRoomNetworked's own body also writes +0x38 (`mov [rbx+0x38],rdx`), reconfirming that's the right field; hooked at its true entry (before `mov rbx,rcx` executes), so rcx still holds `this` at the hook point like every other capture here."
     },
     {
       "id": "factory-reveal-ghost-location",
