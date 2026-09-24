@@ -26,6 +26,9 @@ interface AnyCheat {
   signatureOffset?: number
   moduleName?: string | null
   moduleOffset?: string | null
+  monoClass?: string
+  monoMethod?: string
+  monoSearch?: boolean
   sourceRegister?: string
   value?: number
   dataType?: string
@@ -65,11 +68,21 @@ describe.each(files)('games/%s', (file) => {
   it.each(patches.map((p) => [p.id, p] as const))('patch %s is well-formed for its mode', (_id, p) => {
     expect(p.originalBytes, 'originalBytes').toMatch(HEX)
     expect(p.originalBytes!.length / 2).toBe(p.length)
-    const tokens = (p.signature ?? '').split(' ')
-    expect(tokens.length).toBeGreaterThan(0)
-    for (const t of tokens) expect(t).toMatch(SIG_TOKEN)
-    // The signature has to be able to hold the instruction it locates.
-    expect(tokens.length).toBeGreaterThanOrEqual((p.signatureOffset ?? 0) + p.length!)
+    // A class+method-anchored patch resolves by live Mono metadata (anchor.ts's
+    // own "Path 0"), not a byte signature — scanAob(patch.signature) is only
+    // ever reached when monoSearch is explicitly true (anchor.ts, and see
+    // patchEngine.ts's isMonoAnchored comment on why it's untrustworthy
+    // cross-session anyway). Requiring a well-formed signature on a plain
+    // mono-anchored patch was checking a field the engine never reads.
+    const isMonoAnchored = p.monoClass !== undefined && p.monoMethod !== undefined
+    const needsSignature = !isMonoAnchored || p.monoSearch === true
+    if (needsSignature) {
+      const tokens = (p.signature ?? '').split(' ')
+      expect(tokens.length).toBeGreaterThan(0)
+      for (const t of tokens) expect(t).toMatch(SIG_TOKEN)
+      // The signature has to be able to hold the instruction it locates.
+      expect(tokens.length).toBeGreaterThanOrEqual((p.signatureOffset ?? 0) + p.length!)
+    }
     if (p.moduleName) expect(p.moduleOffset).toMatch(/^0x[0-9a-f]+$/)
 
     if (p.mode === 'replace') {
