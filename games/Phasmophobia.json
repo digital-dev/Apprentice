@@ -43,8 +43,9 @@
       "moduleOffset": "0xdc684e",
       "baseRegister": "rbx",
       "fieldOffset": "0x30",
-      "value": 100,
-      "dataType": "float"
+      "value": 0,
+      "dataType": "float",
+      "notes": "CORRECTED: +0x30 is insanity/stress (0=fully sane, 100=fully insane), not 'sanity, 100=full' as originally assumed -- SetInsanity's own name was the honest hint, dismissed too early. Confirmed by diffing against another already-installed, independently-patched trainer running on the same process: its Max Sanity hook forces this exact field to literal 0.0, and the player visibly stays at full sanity with it on. The earlier value of 100 was forcing maximum insanity, which explains both prior bug reports (drained fast, stuck low/can't regain) -- the patches were working exactly as coded, just backwards from the name."
     },
     {
       "kind": "patch",
@@ -59,7 +60,7 @@
       "moduleOffset": "0xdc68b2",
       "baseRegister": "rbx",
       "fieldOffset": "0x30",
-      "value": 100,
+      "value": 0,
       "dataType": "float"
     },
     {
@@ -75,9 +76,9 @@
       "moduleOffset": "0xdc6b64",
       "baseRegister": "rcx",
       "fieldOffset": "0x30",
-      "value": 100,
+      "value": 0,
       "dataType": "float",
-      "notes": "PlayerSanity.SetInsanity, first of two store sites. Unlike ChangeSanity (a delta), SetInsanity(int) is an ABSOLUTE assignment: clamp(float(arg),0,100) written straight to +0x30, bypassing every other patch in one call. This is the most likely explanation for sanity getting stuck low despite the other patches: whatever calls SetInsanity(0) (a curse/event -- caller not yet identified) can zero it in one shot, and it only recovers once SanityDrainer's per-frame call reaches the already-patched ChangeSanity site again."
+      "notes": "PlayerSanity.SetInsanity, first of two store sites. Unlike ChangeSanity (a delta), SetInsanity(int) is an ABSOLUTE assignment: clamp(float(arg),0,100) written straight to +0x30, bypassing every other patch in one call. CORRECTED: the field is insanity (0=sane), not sanity -- see factory-maxsanity's note. Forcing 0 here means forcing zero insanity, i.e. full sanity."
     },
     {
       "kind": "patch",
@@ -92,9 +93,9 @@
       "moduleOffset": "0xdc6b77",
       "baseRegister": "rcx",
       "fieldOffset": "0x30",
-      "value": 100,
+      "value": 0,
       "dataType": "float",
-      "notes": "PlayerSanity.SetInsanity, second store site (the arg<0 clamp-to-0 branch vs. the arg>100 clamp-to-100 branch -- same function, two store instructions like the ChangeSanity pair)."
+      "notes": "PlayerSanity.SetInsanity, second store site (the arg<0 clamp-to-0 branch vs. the arg>100 clamp-to-100 branch -- same function, two store instructions like the ChangeSanity pair). CORRECTED to 0 -- see factory-maxsanity's note on field polarity."
     },
     {
       "kind": "patch",
@@ -109,9 +110,9 @@
       "moduleOffset": "0xdc6b0c",
       "baseRegister": "rdi",
       "fieldOffset": "0x30",
-      "value": 100,
+      "value": 0,
       "dataType": "float",
-      "notes": "PlayerSanity.NetworkedUpdatePlayerSanity's own direct store -- the two other Maximum Sanity patches only cover ChangeSanity's two overloads. This site writes an authoritative network-synced value straight to +0x30, bypassing both, whenever you're in a hosted/joined multiplayer lobby. Found via write-watch after a report that sanity still drained to ~0 with the first two patches active -- confirmed the field held before checking, and only sees this method after the fact."
+      "notes": "PlayerSanity.NetworkedUpdatePlayerSanity's own direct store -- the two other Maximum Sanity patches only cover ChangeSanity's two overloads. This site writes an authoritative network-synced value straight to +0x30, bypassing both, whenever you're in a hosted/joined multiplayer lobby. CORRECTED to 0 -- see factory-maxsanity's note on field polarity."
     },
     {
       "kind": "patch",
@@ -226,7 +227,7 @@
         }
       ],
       "value": 50,
-      "notes": "PlayerSanity+0x30, same field the Maximum Sanity force-patches clamp to 100. Confirmed via ChangeSanity disassembly (rbx+0x30 is the displayed sanity value, 100=full). Sets it once to the given value (100=full, 0=insane) rather than forcing it every frame -- disable Maximum Sanity to see the set value hold."
+      "notes": "PlayerSanity+0x30 is insanity/stress, not sanity: 0=fully sane, 100=fully insane (confirmed by diffing against another already-installed, independently-patched trainer running on the same process -- see factory-maxsanity's note). This cheat's own name/intent ('consumed sanity') was right all along; the field just needed the polarity correction. Sets it once to the given value rather than forcing it every frame -- disable Maximum Sanity to see the set value hold."
     },
     {
       "id": "factory-reveal-ghost-type",

@@ -34,7 +34,17 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
     process. Cause not identified — worth checking in-app whether all patches in
     this group install together when "Maximum Sanity" is toggled, or one is
     silently failing.
-  - Five sites patched now; not yet confirmed fixed by live testing.
+  - **Root cause found and fixed (this session): `PlayerSanity+0x30` is insanity/stress,
+    not sanity — 0=fully sane, 100=fully insane.** All five patches had `value: 100`,
+    i.e. forcing maximum insanity the entire time; that's the actual explanation for
+    both earlier bug reports (fast drain, stuck-low/can't-regain), not the multiplayer
+    or `SetInsanity` theories floated along the way (those were real gaps worth
+    patching regardless, just not the root cause). Confirmed by diffing against another already-installed, independently-patched trainer running on the same process    (per [[il2cpp-engine-instance-discovery]]'s "diff a working trainer" technique): its own Max Sanity hook forces this exact field to
+    literal 0.0, and the player visibly holds full sanity with it on. All five
+    `value`s corrected to 0. `SetInsanity`'s own name was the honest signal the whole
+    time and got dismissed as "sloppy naming" early on — don't do that again; a
+    method name is evidence, not decoration.
+  - Not yet confirmed fixed by live testing with the corrected values.
 - Set Consumed Sanity (oneshot on the same field via new `factory-capture-PlayerSanity`
   anchor — confirmed by disassembling `ChangeSanity`: `rbx+0x30` is the displayed
   sanity, 100=full)
