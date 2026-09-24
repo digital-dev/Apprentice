@@ -250,8 +250,10 @@
         "20": "The Mimic",
         "21": "Moroi",
         "22": "Deogen",
-        "23": "Thaye"
-      }
+        "23": "Thaye",
+        "27": "Obambo"
+      },
+      "notes": "Labels 0-23 came from the original factory-built enum reference and only cover the game's ghost roster as of when this cheat was first built. The game has since added more (index 27 confirmed live in-game as Obambo, reported by the user -- Kinetic Games' Winter's Jest update added Obambo/Dayan/Gallu together, so 24-26 and 28+ are very likely also real ghosts, just not yet confirmed). Deliberately left 24-26/28+ unmapped rather than guessed from a wiki's ghost list, which has no reliable index ordering -- the game's own GhostType enum metadata isn't reachable through the usual class survey (unlike a MonoBehaviour, an enum type doesn't show up in the IL2CPP class enumeration this factory's scripts walk). Unmapped indices fall back to showing 'index N' (see CheatDefinition.labels in store.ts) rather than breaking or hiding the cheat -- add entries here as the user reports them live, the same way 27 was confirmed."
     },
     {
       "id": "factory-reveal-ghost-favourite-room",
