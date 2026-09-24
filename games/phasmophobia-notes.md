@@ -11,16 +11,30 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
 - Unlimited Stamina (force-pins `PlayerStamina+0x40` exertion to 3.0 — the "how tired"
   gauge, not the displayed bar; freezing to 0 broke sprinting, see memory)
 - Refill Stamina (oneshot on same field via new `factory-capture-PCStamina` anchor)
-- Maximum Sanity (force, **three** store sites, `PlayerSanity+0x30` — the third,
-  `factory-maxsanity-3`, was missing at first: user reported sanity still draining to
-  ~0 with the first two active. Write-watched the live instance; the only writer
-  caught was the per-frame clamp in `Update` (harmless, clamps an already-100 value
-  down only if a difficulty cap is lower). Field read 100.0 at that moment, so the
-  drain the user saw wasn't reproduced live — but a static check of
-  `NetworkedUpdatePlayerSanity` (not covered by the first two patches, which only hook
-  `ChangeSanity`'s two overloads) found a third direct `movss [rdi+0x30], xmm6` store
-  that writes an authoritative network-synced value straight to the field. Patched it
-  too. Root cause is very likely multiplayer sync — untested whether it recurs now.)
+- Maximum Sanity (force, now **five** store sites, `PlayerSanity+0x30`):
+  - `factory-maxsanity`/`-2`: the two `ChangeSanity` (delta) overloads, from the
+    original factory draft.
+  - `factory-maxsanity-3`: `NetworkedUpdatePlayerSanity`'s direct store. Added after
+    a report of draining to ~0 with the first two active; turned out to be a red
+    herring for that specific report (single-player, "ANOMALY" in the screenshot was
+    the player's in-game name, not a validation flag) but is still a real gap worth
+    having patched for multiplayer.
+  - `factory-maxsanity-4`/`-5`: `SetInsanity`'s two store sites, added after a
+    follow-up report of sanity stuck low / not regenerating in a solo contract.
+    Unlike `ChangeSanity` (adds/subtracts a delta), `SetInsanity(int)` is an
+    ABSOLUTE assignment — `clamp(float(arg), 0, 100)` written straight to `+0x30` —
+    so it bypasses every other patch in one call. This is the more likely
+    explanation for "stuck, can't regain": something calls `SetInsanity(0)` (a
+    curse/event — caller not yet identified) and the value only recovers once
+    `SanityDrainer`'s per-frame call reaches an already-patched `ChangeSanity` site
+    again, which may not happen every frame.
+  - **Also found while diagnosing this**: at one point `factory-maxsanity` (the
+    first `ChangeSanity` overload patch) was confirmed live-unpatched (original
+    bytes, no jmp) even though `-2` and `-3` were both installed in the same
+    process. Cause not identified — worth checking in-app whether all patches in
+    this group install together when "Maximum Sanity" is toggled, or one is
+    silently failing.
+  - Five sites patched now; not yet confirmed fixed by live testing.
 - Set Consumed Sanity (oneshot on the same field via new `factory-capture-PlayerSanity`
   anchor — confirmed by disassembling `ChangeSanity`: `rbx+0x30` is the displayed
   sanity, 100=full)
