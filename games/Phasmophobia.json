@@ -1,0 +1,253 @@
+{
+  "schema": 2,
+  "exe": "Phasmophobia",
+  "modules": {
+    "UnityPlayer.dll": {
+      "size": 31817728,
+      "timestamp": 1721777247,
+      "version": "2022.3.40.56742"
+    },
+    "GameAssembly.dll": {
+      "size": 115814400,
+      "timestamp": 1789484138,
+      "version": null
+    }
+  },
+  "cheats": [
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "factory-unlimited-stamina-2",
+      "name": "Unlimited Stamina (pin exertion)",
+      "originalBytes": "f30f117340",
+      "length": 5,
+      "signature": "0f 57 f6 f3 0f 11 73 40 0f 2f ce 0f 28 74 24 20 72 15 48 8b 4b 50 48 85 c9 74 0c 33 d2 48 83 c4 30 5b e9",
+      "signatureOffset": 3,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xde0e2e",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x40",
+      "value": 3,
+      "dataType": "float"
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "factory-maxsanity",
+      "name": "Maximum Sanity",
+      "originalBytes": "f30f117330",
+      "length": 5,
+      "signature": "c0 f3 0f 58 40 24 f3 0f 11 40 24 f3 0f 58 73 30 f3 0f 11 73 30 48 8b 05 66 19 66 05 48 8b 88 b8",
+      "signatureOffset": 16,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xdc684e",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x30",
+      "value": 100,
+      "dataType": "float"
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "factory-maxsanity-2",
+      "name": "Maximum Sanity (secondary store site)",
+      "originalBytes": "f30f117330",
+      "length": 5,
+      "signature": "0f 57 f6 0f 28 7c 24 20 f3 0f 11 73 30 0f 28 74 24 30 48 83 c4 40 5b c3",
+      "signatureOffset": 8,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xdc68b2",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x30",
+      "value": 100,
+      "dataType": "float"
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-SaltShaker",
+      "name": "Capture: SaltShaker.Update instance",
+      "originalBytes": "40534883ec2033d2",
+      "length": 8,
+      "signature": "40 53 48 83 ec 20 33 d2 48 8b d9 e8 90 1c ec ff 48 8b 13 48 8b cb 48 8b 82 d8 09 00 00 48 8b 92 e0 09 00 00",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x743710",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "id": "factory-unlimited-salt",
+      "name": "Unlimited Salt",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-SaltShaker",
+          "offset": "0x3e8",
+          "dataType": "int32"
+        }
+      ],
+      "value": 99
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-SingleplayerProfile",
+      "name": "Capture: SingleplayerProfile.Update instance",
+      "originalBytes": "488b89b8000000",
+      "length": 7,
+      "signature": "48 8b 89 b8 00 00 00 48 85 c9 74 07 33 d2 e9 dd de 1e 00 c3",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x1438f10",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "id": "factory-setmoney",
+      "name": "Set Money",
+      "dataType": "int32",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-SingleplayerProfile",
+          "offset": "0xc8",
+          "dataType": "int32"
+        }
+      ],
+      "value": 999999
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "factory-ghost-always-visible",
+      "name": "Ghost Always Visible",
+      "originalBytes": "0f84fc000000",
+      "length": 6,
+      "replacementBytes": "90e9fc000000",
+      "signature": "80 bb a8 00 00 00 00 0f 84 fc 00 00 00 48 89 74 24 48 33 d2 48 8b cb 48 89 7c 24 58 e8 36 81 29 02",
+      "signatureOffset": 7,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x2068e40"
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-GhostAI",
+      "name": "Capture: GhostAI.Update instance",
+      "originalBytes": "40534883ec60",
+      "length": 6,
+      "signature": "40 53 48 83 ec 60 80 3d f1 e6 5e 04 00 48 8b d9 75 37",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x2068f80",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-PlayerSanity",
+      "name": "Capture: PlayerSanity.Update instance",
+      "originalBytes": "40574883ec40",
+      "length": 6,
+      "signature": "40 57 48 83 ec 40 80 3d ?? ?? ?? ?? 00 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 4e bd",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xdcb0f0",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "id": "factory-set-consumed-sanity",
+      "name": "Set Consumed Sanity",
+      "dataType": "float",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-PlayerSanity",
+          "offset": "0x30",
+          "dataType": "float"
+        }
+      ],
+      "value": 50,
+      "notes": "PlayerSanity+0x30, same field the Maximum Sanity force-patches clamp to 100. Confirmed via ChangeSanity disassembly (rbx+0x30 is the displayed sanity value, 100=full). Sets it once to the given value (100=full, 0=insane) rather than forcing it every frame -- disable Maximum Sanity to see the set value hold."
+    },
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "factory-capture-PCStamina",
+      "name": "Capture: PCStamina.Update instance",
+      "originalBytes": "48895c2408",
+      "length": 5,
+      "signature": "48 89 5c 24 08 57 48 83 ec 30 48 8b 41 60 48 8b d9",
+      "signatureOffset": 0,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xd303a0",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "id": "factory-refill-stamina",
+      "name": "Refill Stamina",
+      "dataType": "float",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-PCStamina",
+          "offset": "0x40",
+          "dataType": "float"
+        }
+      ],
+      "value": 0,
+      "notes": "Same PlayerStamina+0x40 exertion gauge as factory-unlimited-stamina-2 (0=fully rested, inverse of the displayed bar). One-time set instead of a permanent force patch."
+    },
+    {
+      "id": "factory-reveal-ghost-type",
+      "name": "Ghost Type",
+      "dataType": "int32",
+      "mode": "display",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-GhostAI",
+          "derefOffset": "0x38",
+          "offset": "0x28",
+          "dataType": "int32"
+        }
+      ],
+      "value": 0,
+      "labels": {
+        "0": "Spirit",
+        "1": "Wraith",
+        "2": "Phantom",
+        "3": "Poltergeist",
+        "4": "Banshee",
+        "5": "Jinn",
+        "6": "Mare",
+        "7": "Revenant",
+        "8": "Shade",
+        "9": "Demon",
+        "10": "Yurei",
+        "11": "Oni",
+        "12": "Yokai",
+        "13": "Hantu",
+        "14": "Goryo",
+        "15": "Myling",
+        "16": "Onryo",
+        "17": "The Twins",
+        "18": "Raiju",
+        "19": "Obake",
+        "20": "The Mimic",
+        "21": "Moroi",
+        "22": "Deogen",
+        "23": "Thaye"
+      }
+    }
+  ]
+}
