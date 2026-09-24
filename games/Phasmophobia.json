@@ -207,7 +207,9 @@
       "moduleName": "GameAssembly.dll",
       "moduleOffset": "0x2068f80",
       "baseRegister": "rcx",
-      "internal": true
+      "internal": true,
+      "reArmWhenDestroyed": true,
+      "notes": "A ghost is a fresh GameObject every contract, so EncodeCaptureOnce's default 'first object wins for the session' pinned Ghost Type/Favourite Room/Location to the FIRST contract's ghost forever, going stale (but not obviously failing -- the destroyed object's old fields are still readable) on every contract after. Confirmed live: capture slot held a GhostAI whose own native backing (+0x10) had gone to zero -- genuinely destroyed -- while a valid new GhostAI instance sat right there unread. reArmWhenDestroyed auto-cycles restore/apply when that happens (CheatList.tsx), rebuilding the cave with a zeroed slot so the next Update call recaptures fresh."
     },
     {
       "id": "factory-reveal-ghost-type",

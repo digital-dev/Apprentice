@@ -691,6 +691,29 @@ export default function CheatList({
             else next.delete(patch.id)
             return next
           })
+          // EncodeCaptureOnce (cave_ops.cc) pins the first object it ever
+          // sees for the whole attached session — right for a player-
+          // lifetime singleton, wrong for one recreated per round/level
+          // (see PatchCheat.reArmWhenDestroyed's own doc, store.ts). Detect
+          // that the captured object has become a destroyed
+          // UnityEngine.Object (native backing pointer at +0x10 reads all
+          // zero) and cycle restore/apply to rebuild the cave with a fresh
+          // zeroed slot — the same effect toggling the patch off and on by
+          // hand would have, done automatically since these captures back
+          // a toggle-less `display` cheat.
+          if (patch.reArmWhenDestroyed && info?.pointer) {
+            const nativeBackingAddress = '0x' + (BigInt(info.pointer) + 0x10n).toString(16)
+            const nativeBacking = await window.tamper.readMemoryBlock(nativeBackingAddress, 8)
+            if (cancelled) return
+            const destroyed = nativeBacking !== null && nativeBacking.every((b) => b === 0)
+            if (destroyed) {
+              await window.tamper.restorePatch(patch)
+              if (cancelled) return
+              await window.tamper.applyPatch(patch)
+              lastCapturePointers.current.delete(patch.id)
+              seen.delete(patch.id)
+            }
+          }
         } catch {
           // not attached, or the patch went away mid-poll — the next tick
           // picks it up if it comes back

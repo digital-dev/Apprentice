@@ -329,6 +329,25 @@ export interface PatchCheat {
   // cheat that causes it instead of being a second toggle. A companion patch shared by several cheats stays armed until
   // the last of them is turned off (see companions.ts).
   companions?: string[]
+  // capture/guard only: EncodeCaptureOnce (cave_ops.cc) writes the captured
+  // pointer into the cave's slot ONLY WHILE IT IS ZERO — "first object wins,
+  // for the session" (see its own comment for why: a shared instruction like
+  // a health setter would otherwise flip between whoever last touched it).
+  // That is wrong for an object that gets destroyed and recreated within
+  // the SAME attached process — a Phasmophobia ghost is a fresh GameObject
+  // every contract, so a capture on it pins the first contract's ghost
+  // forever and silently goes stale for every one after. When true,
+  // CheatList.tsx's capture-poll loop checks whether the currently captured
+  // pointer is a destroyed UnityEngine.Object (its native backing pointer,
+  // +0x10, reads zero — the same convention noted in
+  // il2cpp-engine-instance-discovery's memory) and, if so, cycles
+  // restorePatch/applyPatch to rebuild the cave with a freshly zeroed slot,
+  // exactly as if the user had manually toggled the patch off and on (the
+  // re-arm path EncodeCaptureOnce's own comment already describes). Absent
+  // means the plain one-shot-forever behavior every existing capture has
+  // always had — only opt in for a capture anchored on something that is
+  // genuinely recreated per round/level, not a player-lifetime singleton.
+  reArmWhenDestroyed?: boolean
   moduleName: string | null // named module, or null for JIT/anonymous code
   moduleOffset: string | null // hex offset within that module
   // An alternative to moduleName/moduleOffset: resolve this patch's
