@@ -45,7 +45,8 @@
       "fieldOffset": "0x30",
       "value": 0,
       "dataType": "float",
-      "notes": "CORRECTED: +0x30 is insanity/stress (0=fully sane, 100=fully insane), not 'sanity, 100=full' as originally assumed -- SetInsanity's own name was the honest hint, dismissed too early. Confirmed by diffing against another already-installed, independently-patched trainer running on the same process: its Max Sanity hook forces this exact field to literal 0.0, and the player visibly stays at full sanity with it on. The earlier value of 100 was forcing maximum insanity, which explains both prior bug reports (drained fast, stuck low/can't regain) -- the patches were working exactly as coded, just backwards from the name."
+      "companions": ["factory-maxsanity-2", "factory-maxsanity-3", "factory-maxsanity-4", "factory-maxsanity-5"],
+      "notes": "CORRECTED: +0x30 is insanity/stress (0=fully sane, 100=fully insane), not 'sanity, 100=full' as originally assumed -- SetInsanity's own name was the honest hint, dismissed too early. Confirmed by diffing against another already-installed, independently-patched trainer running on the same process: its Max Sanity hook forces this exact field to literal 0.0, and the player visibly stays at full sanity with it on. The earlier value of 100 was forcing maximum insanity, which explains both prior bug reports (drained fast, stuck low/can't regain) -- the patches were working exactly as coded, just backwards from the name. This is the one visible toggle for the whole group -- the other four store sites on this same field are internal companions that arm/disarm with this one (see companions.ts); the user only sees and toggles this single 'Maximum Sanity' entry."
     },
     {
       "kind": "patch",
@@ -61,7 +62,8 @@
       "baseRegister": "rbx",
       "fieldOffset": "0x30",
       "value": 0,
-      "dataType": "float"
+      "dataType": "float",
+      "internal": true
     },
     {
       "kind": "patch",
@@ -78,6 +80,7 @@
       "fieldOffset": "0x30",
       "value": 0,
       "dataType": "float",
+      "internal": true,
       "notes": "PlayerSanity.SetInsanity, first of two store sites. Unlike ChangeSanity (a delta), SetInsanity(int) is an ABSOLUTE assignment: clamp(float(arg),0,100) written straight to +0x30, bypassing every other patch in one call. CORRECTED: the field is insanity (0=sane), not sanity -- see factory-maxsanity's note. Forcing 0 here means forcing zero insanity, i.e. full sanity."
     },
     {
@@ -95,6 +98,7 @@
       "fieldOffset": "0x30",
       "value": 0,
       "dataType": "float",
+      "internal": true,
       "notes": "PlayerSanity.SetInsanity, second store site (the arg<0 clamp-to-0 branch vs. the arg>100 clamp-to-100 branch -- same function, two store instructions like the ChangeSanity pair). CORRECTED to 0 -- see factory-maxsanity's note on field polarity."
     },
     {
@@ -112,6 +116,7 @@
       "fieldOffset": "0x30",
       "value": 0,
       "dataType": "float",
+      "internal": true,
       "notes": "PlayerSanity.NetworkedUpdatePlayerSanity's own direct store -- the two other Maximum Sanity patches only cover ChangeSanity's two overloads. This site writes an authoritative network-synced value straight to +0x30, bypassing both, whenever you're in a hosted/joined multiplayer lobby. CORRECTED to 0 -- see factory-maxsanity's note on field polarity."
     },
     {

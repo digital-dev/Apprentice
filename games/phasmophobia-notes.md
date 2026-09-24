@@ -45,6 +45,12 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
     time and got dismissed as "sloppy naming" early on — don't do that again; a
     method name is evidence, not decoration.
   - Not yet confirmed fixed by live testing with the corrected values.
+  - **UI cleanup**: only `factory-maxsanity` is user-visible now. The other four
+    (`-2`, `-3`, `-4`, `-5`) are marked `internal: true` and listed in
+    `factory-maxsanity`'s `companions`, so one toggle arms/disarms all five store
+    sites together (`src/main/companions.ts` — the same mechanism Valheim's
+    piece-tagging side effect already uses). No behavior change, just one checkbox
+    instead of five.
 - Set Consumed Sanity (oneshot on the same field via new `factory-capture-PlayerSanity`
   anchor — confirmed by disassembling `ChangeSanity`: `rbx+0x30` is the displayed
   sanity, 100=full)
