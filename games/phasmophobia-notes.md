@@ -11,7 +11,16 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
 - Unlimited Stamina (force-pins `PlayerStamina+0x40` exertion to 3.0 — the "how tired"
   gauge, not the displayed bar; freezing to 0 broke sprinting, see memory)
 - Refill Stamina (oneshot on same field via new `factory-capture-PCStamina` anchor)
-- Maximum Sanity (force, two store sites, `PlayerSanity+0x30`)
+- Maximum Sanity (force, **three** store sites, `PlayerSanity+0x30` — the third,
+  `factory-maxsanity-3`, was missing at first: user reported sanity still draining to
+  ~0 with the first two active. Write-watched the live instance; the only writer
+  caught was the per-frame clamp in `Update` (harmless, clamps an already-100 value
+  down only if a difficulty cap is lower). Field read 100.0 at that moment, so the
+  drain the user saw wasn't reproduced live — but a static check of
+  `NetworkedUpdatePlayerSanity` (not covered by the first two patches, which only hook
+  `ChangeSanity`'s two overloads) found a third direct `movss [rdi+0x30], xmm6` store
+  that writes an authoritative network-synced value straight to the field. Patched it
+  too. Root cause is very likely multiplayer sync — untested whether it recurs now.)
 - Set Consumed Sanity (oneshot on the same field via new `factory-capture-PlayerSanity`
   anchor — confirmed by disassembling `ChangeSanity`: `rbx+0x30` is the displayed
   sanity, 100=full)

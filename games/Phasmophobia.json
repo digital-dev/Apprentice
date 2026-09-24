@@ -64,6 +64,23 @@
     },
     {
       "kind": "patch",
+      "mode": "force",
+      "id": "factory-maxsanity-3",
+      "name": "Maximum Sanity (networked sync site)",
+      "originalBytes": "f30f117730",
+      "length": 5,
+      "signature": "45 33 c9 48 8b 4b 08 b2 01 e8 ?? ?? ?? ?? 84 c0 74 ?? f3 0f 11 77 30 48 8b 5c 24 60 0f 28 74 24 40 48 83 c4 50 5f c3 e8 ?? ?? ?? ?? cc cc cc cc cc cc cc cc cc cc 48 83 ec 28 48 8b 41 20 48 85 c0 74 ??",
+      "signatureOffset": 18,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0xdc6b0c",
+      "baseRegister": "rdi",
+      "fieldOffset": "0x30",
+      "value": 100,
+      "dataType": "float",
+      "notes": "PlayerSanity.NetworkedUpdatePlayerSanity's own direct store -- the two other Maximum Sanity patches only cover ChangeSanity's two overloads. This site writes an authoritative network-synced value straight to +0x30, bypassing both, whenever you're in a hosted/joined multiplayer lobby. Found via write-watch after a report that sanity still drained to ~0 with the first two patches active -- confirmed the field held before checking, and only sees this method after the fact."
+    },
+    {
+      "kind": "patch",
       "mode": "capture",
       "id": "factory-capture-SaltShaker",
       "name": "Capture: SaltShaker.Update instance",
@@ -176,36 +193,6 @@
       ],
       "value": 50,
       "notes": "PlayerSanity+0x30, same field the Maximum Sanity force-patches clamp to 100. Confirmed via ChangeSanity disassembly (rbx+0x30 is the displayed sanity value, 100=full). Sets it once to the given value (100=full, 0=insane) rather than forcing it every frame -- disable Maximum Sanity to see the set value hold."
-    },
-    {
-      "kind": "patch",
-      "mode": "capture",
-      "id": "factory-capture-PCStamina",
-      "name": "Capture: PCStamina.Update instance",
-      "originalBytes": "48895c2408",
-      "length": 5,
-      "signature": "48 89 5c 24 08 57 48 83 ec 30 48 8b 41 60 48 8b d9",
-      "signatureOffset": 0,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0xd303a0",
-      "baseRegister": "rcx",
-      "internal": true
-    },
-    {
-      "id": "factory-refill-stamina",
-      "name": "Refill Stamina",
-      "dataType": "float",
-      "mode": "oneshot",
-      "targets": [
-        {
-          "kind": "anchor",
-          "patchId": "factory-capture-PCStamina",
-          "offset": "0x40",
-          "dataType": "float"
-        }
-      ],
-      "value": 0,
-      "notes": "Same PlayerStamina+0x40 exertion gauge as factory-unlimited-stamina-2 (0=fully rested, inverse of the displayed bar). One-time set instead of a permanent force patch."
     },
     {
       "id": "factory-reveal-ghost-type",
