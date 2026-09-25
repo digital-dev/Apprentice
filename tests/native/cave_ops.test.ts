@@ -233,6 +233,36 @@ describe('encodeStore', () => {
   it('rejects an unknown register instead of encoding nonsense', () => {
     expect(() => (addon as any).encodeStore('notareg', 0, 0)).toThrow()
   })
+
+  it('encodes a single-byte store when widthBytes is 1', () => {
+    // C6 83 <disp32> <imm8> — MOV r/m8, imm8 with a disp32 ModRM (mod=10,
+    // reg=000, rm=011=rbx). This is the actual shape GhostAI+0x109 needs:
+    // a dword store here would clobber the two real int8 flags right after it.
+    const hex: string = (addon as any).encodeStore('rbx', 0x109, 1, 1)
+    expect(hex).toBe('c68309010000' + '01')
+  })
+
+  it('masks the immediate to a single byte when widthBytes is 1', () => {
+    const hex: string = (addon as any).encodeStore('rbx', 0x109, 0x1ff, 1)
+    expect(hex.slice(-2)).toBe('ff') // 0x1ff truncated to 0xff, not sign/zero-extended garbage
+  })
+
+  it('rejects a widthBytes it cannot encode (e.g. 2) instead of silently mis-encoding', () => {
+    expect(() => (addon as any).encodeStore('rbx', 0x109, 1, 2)).toThrow()
+  })
+
+  // Regression: an intermediate JS wrapper that declares an optional 4th
+  // parameter but omits it when calling onward (`(a,b,c,d) => native(a,b,c,d)`
+  // where the outer caller left `d` out) still passes an EXPLICIT
+  // `undefined` at this boundary — argc is 4, not 3. That silently reached
+  // `.As<Napi::Number>().Uint32Value()` on `undefined` and crashed the whole
+  // host process (not a catchable JS exception) rather than falling back to
+  // the default width, taking down every force/strip cheat in the real app.
+  // This must behave exactly like the 3-arg call above.
+  it('treats an explicit undefined 4th argument the same as omitting it entirely', () => {
+    const hex: string = (addon as any).encodeStore('rdi', 0x818, 0x43af0000, undefined)
+    expect(hex).toBe('c78718080000' + '0000af43')
+  })
 })
 
 describe('encodeStoreRegister', () => {

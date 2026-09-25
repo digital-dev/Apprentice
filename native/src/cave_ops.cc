@@ -283,6 +283,32 @@ Napi::Value EncodeStore(const Napi::CallbackInfo& info) {
   std::string regName = info[0].As<Napi::String>().Utf8Value();
   int64_t offset = info[1].As<Napi::Number>().Int64Value();
   uint32_t imm = info[2].As<Napi::Number>().Uint32Value();
+  // Optional 4th arg: destination width in bytes. Defaults to 4 (the
+  // original dword-only behavior every existing caller relies on) —
+  // int32 and float alike were always written this way. A real int8
+  // field (e.g. GhostAI+0x109, confirmed one byte wide with two more
+  // real one-byte flags immediately after it) needs width 1, or a dword
+  // store here clobbers its neighbors — see the strip-mode call site.
+  //
+  // Checking info[3].IsNumber() rather than info.Length() > 3 is load-
+  // bearing, not defensive-for-its-own-sake: a JS caller that forwards an
+  // optional parameter through an intermediate wrapper (e.g.
+  // `(a,b,c,d) => native(a,b,c,d)` where the outer call omitted `d`) still
+  // passes an EXPLICIT `undefined` as the 4th argument at the N-API
+  // boundary — info.Length() is 4, not 3, in that case. .As<Napi::Number>()
+  // on that undefined then throws past ZYAN's own error handling in a way
+  // that aborts the whole host process rather than raising a catchable JS
+  // exception (confirmed live: this crashed Tamper outright on every
+  // force/strip cheat once one such wrapper existed). Checking the actual
+  // value's type, not merely its presence, is what makes "argument
+  // omitted" and "argument explicitly undefined" behave the same.
+  uint32_t width = (info.Length() > 3 && info[3].IsNumber())
+                        ? info[3].As<Napi::Number>().Uint32Value()
+                        : 4;
+  if (width != 1 && width != 4) {
+    Napi::Error::New(env, "unsupported store width (only 1 or 4 bytes)").ThrowAsJavaScriptException();
+    return env.Null();
+  }
 
   ZydisRegister reg = RegisterByName(regName);
   if (reg == ZYDIS_REGISTER_NONE) {
@@ -298,9 +324,21 @@ Napi::Value EncodeStore(const Napi::CallbackInfo& info) {
   req.operands[0].type = ZYDIS_OPERAND_TYPE_MEMORY;
   req.operands[0].mem.base = reg;
   req.operands[0].mem.displacement = offset;
-  req.operands[0].mem.size = 4; // dword: int32 and float alike
+  req.operands[0].mem.size = width;
   req.operands[1].type = ZYDIS_OPERAND_TYPE_IMMEDIATE;
-  req.operands[1].imm.u = imm;
+  if (width == 1) {
+    // Zydis's encoder range-checks an immediate as signed regardless of
+    // which union member (.u vs .s) is written — they're the same bits —
+    // so a byte value of 0x80-0xFF must be SIGN-extended to fit an imm8's
+    // -128..127 range, not zero-extended. Zero-extending 0xFF as +255 into
+    // a 64-bit value fails encoding outright (confirmed empirically: every
+    // value >= 0x80 threw "failed to encode store" with zero-extension).
+    // The on-wire byte is identical either way (MOV r/m8,imm8 doesn't
+    // interpret sign); only the ENCODER's own acceptance check cares.
+    req.operands[1].imm.s = static_cast<int8_t>(imm & 0xFF);
+  } else {
+    req.operands[1].imm.u = imm;
+  }
 
   uint8_t buf[ZYDIS_MAX_INSTRUCTION_LENGTH];
   ZyanUSize len = sizeof(buf);

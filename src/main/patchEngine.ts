@@ -76,7 +76,10 @@ export interface PatchOps {
     // through a register that appears here.
     clobbers: string[]
   }
-  encodeStore(baseRegister: string, offset: number, imm32: number): string
+  // widthBytes defaults to 4 (dword — int32 and float alike) when omitted;
+  // pass 1 for a genuine int8 field so the store doesn't clobber whatever
+  // sits in the next 3 bytes.
+  encodeStore(baseRegister: string, offset: number, imm32: number, widthBytes?: number): string
   encodeStoreRegister(destRegister: string, offset: number, sourceRegister: string): string
   encodeScale(sourceXmmRegister: string, atAddress: string, slotAddress: string): string
   // scale's conditional sibling: same multiply, but only when a call to
@@ -249,6 +252,14 @@ export function valueBits(value: number, dataType: DataType): number {
     return new DataView(buffer).getUint32(0, true)
   }
   return value >>> 0
+}
+
+// encodeStore's destination width in bytes for a force/strip field's
+// dataType — 1 for a genuine int8 (so the store doesn't clobber whatever
+// sits in the next 3 bytes), 4 for int32/float alike (the original,
+// still-default dword behavior).
+function storeWidthBytes(dataType: DataType): number {
+  return dataType === 'int8' ? 1 : 4
 }
 
 interface InstallResult {
@@ -746,13 +757,15 @@ export class PatchEngine {
         if (
           typeof patch.value !== 'number' ||
           !patch.dataType ||
-          (patch.dataType !== 'int32' && patch.dataType !== 'float')
+          (patch.dataType !== 'int32' && patch.dataType !== 'float' && patch.dataType !== 'int8')
         ) {
-          // Force mode encodes the value as a 32-bit immediate (see
-          // valueBits below and cave_ops.cc's encodeStore) — any other
-          // width, including a legitimately-set int8/int16/int64/double,
-          // would be silently mis-encoded rather than refused if this
-          // check only looked for presence.
+          // Force mode encodes the value as either a 32-bit immediate
+          // (int32/float, see valueBits below) or, for a genuine int8
+          // field, a single-byte immediate (cave_ops.cc's encodeStore
+          // with widthBytes=1) — any OTHER width, including a
+          // legitimately-set int16/int64/double, would be silently
+          // mis-encoded rather than refused if this check only looked
+          // for presence.
           throw new Error('missing or unencodable force-mode fields')
         }
         BigInt(patch.fieldOffset as string) // throws on unparsable hex
@@ -782,15 +795,15 @@ export class PatchEngine {
         // fieldOffset/value/dataType of its own to validate, only the
         // fields array. Each entry gets the exact same width check force's
         // single field already gets, for the exact same reason: EncodeStore
-        // only ever writes a dword, so any other dataType would be silently
-        // mis-encoded rather than refused.
+        // only ever writes a dword or a byte, so any other dataType would
+        // be silently mis-encoded rather than refused.
         if (!Array.isArray(patch.fields) || patch.fields.length === 0) {
           throw new Error('missing or unencodable strip-mode fields')
         }
         for (const field of patch.fields) {
           if (
             typeof field.value !== 'number' ||
-            (field.dataType !== 'int32' && field.dataType !== 'float')
+            (field.dataType !== 'int32' && field.dataType !== 'float' && field.dataType !== 'int8')
           ) {
             throw new Error('missing or unencodable strip-mode fields')
           }
@@ -1069,14 +1082,16 @@ export class PatchEngine {
                         this.ops.encodeStore(
                           patch.baseRegister as string,
                           Number(BigInt(field.fieldOffset)),
-                          valueBits(field.value, field.dataType)
+                          valueBits(field.value, field.dataType),
+                          storeWidthBytes(field.dataType)
                         )
                       )
                       .join('')
                   : this.ops.encodeStore(
                       patch.baseRegister as string,
                       Number(BigInt(patch.fieldOffset as string)),
-                      valueBits(patch.value as number, patch.dataType as DataType)
+                      valueBits(patch.value as number, patch.dataType as DataType),
+                      storeWidthBytes(patch.dataType as DataType)
                     )
       const jumpBackFrom = addHex(codeAddress, effect.length / 2 + replay.length / 2)
       body = effect + replay + this.ops.encodeJump(jumpBackFrom, returnTo)

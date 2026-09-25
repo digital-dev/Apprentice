@@ -210,8 +210,8 @@ export const nativeAddon = {
     relocatable: boolean
     clobbers: string[]
   } => addon.decodeRun(handle, address, minBytes),
-  encodeStore: (baseRegister: string, offset: number, imm32: number): string =>
-    addon.encodeStore(baseRegister, offset, imm32),
+  encodeStore: (baseRegister: string, offset: number, imm32: number, widthBytes?: number): string =>
+    addon.encodeStore(baseRegister, offset, imm32, widthBytes),
   encodeStoreRegister: (destRegister: string, offset: number, sourceRegister: string): string =>
     addon.encodeStoreRegister(destRegister, offset, sourceRegister),
   // scale mode's effect: multiply an XMM register in place by a runtime

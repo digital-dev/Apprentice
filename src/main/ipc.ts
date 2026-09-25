@@ -733,7 +733,8 @@ const patchOps: PatchOps = {
       return { length: 0, decodable: false, relocatable: false, clobbers: [] }
     return nativeAddon.decodeRun(attachedHandle, address, minBytes)
   },
-  encodeStore: (baseRegister, offset, imm32) => nativeAddon.encodeStore(baseRegister, offset, imm32),
+  encodeStore: (baseRegister, offset, imm32, widthBytes) =>
+    nativeAddon.encodeStore(baseRegister, offset, imm32, widthBytes),
   encodeStoreRegister: (destRegister, offset, sourceRegister) =>
     nativeAddon.encodeStoreRegister(destRegister, offset, sourceRegister),
   encodeScale: (sourceXmmRegister, atAddress, slotAddress) =>

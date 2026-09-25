@@ -96,9 +96,10 @@ class FakeOps implements PatchOps {
       clobbers: this.runClobbers
     }
   }
-  encodeStoreCalls: { baseRegister: string; offset: number; imm32: number }[] = []
-  encodeStore(baseRegister: string, offset: number, imm32: number): string {
-    this.encodeStoreCalls.push({ baseRegister, offset, imm32 })
+  encodeStoreCalls: { baseRegister: string; offset: number; imm32: number; widthBytes?: number }[] =
+    []
+  encodeStore(baseRegister: string, offset: number, imm32: number, widthBytes?: number): string {
+    this.encodeStoreCalls.push({ baseRegister, offset, imm32, widthBytes })
     return 'c78718080000' + '0000af43' // mov [rdi+0x818], 350.0f — same fixed
     // output regardless of args, mirroring encodeStoreRegister/encodeScale's
     // existing fake style; a strip test with 2 fields asserts the effect is
@@ -1731,8 +1732,8 @@ describe('PatchEngine — strip injection', () => {
     expect(result.ok).toBe(true)
 
     expect(ops.encodeStoreCalls).toEqual([
-      { baseRegister: 'rdi', offset: 0x2c, imm32: 0 },
-      { baseRegister: 'rdi', offset: 0x38, imm32: 0 }
+      { baseRegister: 'rdi', offset: 0x2c, imm32: 0, widthBytes: 4 },
+      { baseRegister: 'rdi', offset: 0x38, imm32: 0, widthBytes: 4 }
     ])
 
     // Two fields means two calls to FakeOps.encodeStore, each returning its
@@ -1772,6 +1773,19 @@ describe('PatchEngine — strip injection', () => {
     expect(result.ok).toBe(false)
     expect(ops.caves).toHaveLength(0)
     expect(ops.writes).toHaveLength(0)
+  })
+
+  it('accepts a genuine int8 field and asks encodeStore for a 1-byte store, not the dword default', async () => {
+    const byteField = {
+      ...stripPatch,
+      id: 'patch-strip-byte',
+      fields: [{ fieldOffset: '0x109', value: 1, dataType: 'int8' }]
+    } as PatchCheat
+    const result = await engine.apply(byteField)
+    expect(result.ok).toBe(true)
+    expect(ops.encodeStoreCalls).toEqual([
+      { baseRegister: 'rdi', offset: 0x109, imm32: 1, widthBytes: 1 }
+    ])
   })
 
   it("refuses, before allocating a cave, when a field's fieldOffset isn't valid hex", async () => {
