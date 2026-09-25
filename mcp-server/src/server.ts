@@ -14,6 +14,7 @@ import { registerFingerprintTools } from './tools/fingerprint'
 import { registerVerifyTools } from './tools/verify'
 import { registerUeTools } from './tools/ue'
 import { registerAuthorTools } from './tools/author'
+import { registerIl2cppInvestigateTools } from './tools/il2cppInvestigate'
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'game-memory', version: '0.1.0' })
@@ -28,5 +29,6 @@ export function createServer(): McpServer {
   registerVerifyTools(server)
   registerUeTools(server)
   registerAuthorTools(server)
+  registerIl2cppInvestigateTools(server)
   return server
 }
