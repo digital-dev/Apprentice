@@ -155,45 +155,56 @@
     },
     {
       "kind": "patch",
-      "mode": "capture",
-      "id": "factory-capture-SingleplayerProfile",
-      "name": "Capture: SingleplayerProfile.Update instance",
-      "originalBytes": "488b89b8000000",
-      "length": 7,
-      "signature": "48 8b 89 b8 00 00 00 48 85 c9 74 07 33 d2 e9 dd de 1e 00 c3",
-      "signatureOffset": 0,
+      "mode": "replace",
+      "id": "factory-ghost-always-visible-gate",
+      "name": "Ghost Always Visible (gate NOP)",
+      "internal": true,
+      "originalBytes": "0f849b000000",
+      "length": 6,
+      "replacementBytes": "909090909090",
+      "signature": "b3 00 01 00 00 80 bb f3 00 00 00 00 0f 84 9b 00 00 00 f3 0f 10 b3 98 01 00 00 33 c9 e8 6e cb 15",
+      "signatureOffset": 12,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x1438f10",
-      "baseRegister": "rcx",
-      "internal": true
+      "moduleOffset": "0x206916d",
+      "notes": "Companion to factory-ghost-always-visible. Abandons the earlier GhostAI.Appear/UnAppear approach entirely (that pair is invoked indirectly and was never confirmed to be the real visibility gate). This is a DIFFERENT, confirmed-live mechanism inside GhostAI.Update itself, found by diffing this exact code region against another already-installed patch on the same running process, toggled on and off live (a legitimate live oracle -- see [[il2cpp-engine-instance-discovery]]'s 'diffable oracle' technique). That patch NOPs this jz (originally `jz +0x9b`, skipping a block of GhostAI.Update on some real-time visibility condition) so the block always executes every frame regardless of that condition."
     },
     {
-      "id": "factory-setmoney",
-      "name": "Set Money",
-      "dataType": "int32",
-      "mode": "oneshot",
-      "targets": [
+      "kind": "patch",
+      "mode": "strip",
+      "id": "factory-ghost-always-visible",
+      "name": "Ghost Always Visible",
+      "originalBytes": "f30f5cf00f2ffe",
+      "length": 7,
+      "signature": "b3 98 01 00 00 33 c9 e8 6e cb 15 03 f3 0f 5c f0 0f 2f fe f3 0f 11 b3 98 01 00 00 76 7b 33 d2 48 8b cb e8 63",
+      "signatureOffset": 12,
+      "moduleName": "GameAssembly.dll",
+      "moduleOffset": "0x2069182",
+      "baseRegister": "rbx",
+      "companions": [
+        "factory-ghost-always-visible-gate"
+      ],
+      "fields": [
         {
-          "kind": "anchor",
-          "patchId": "factory-capture-SingleplayerProfile",
-          "offset": "0xc8",
-          "dataType": "int32"
+          "fieldOffset": "0x109",
+          "value": 1,
+          "dataType": "int8"
         }
       ],
-      "value": 999999
+      "notes": "Found by diffing this exact GhostAI.Update code region before/after toggling another already-installed, independently-patched trainer running on the same process live -- a legitimate diffable oracle (see [[il2cpp-engine-instance-discovery]]). That patch replaces this same 7-byte `subss xmm6,xmm0; comiss xmm7,xmm6` pair with a jmp to a code cave that does `mov byte[rbx+0x109],1`, then replays these exact original 7 bytes unchanged, then jumps back -- i.e. it injects one extra store without touching the original float comparison at all. `strip` mode replicates that: re-reads the live `this` (rbx) fresh on every call into GhostAI.Update, writes 1 to +0x109, then replays the original subss/comiss so the function's own logic is otherwise undisturbed. GhostAI+0x109 is a real field from this session's own class survey (int8, sits next to two other int8 flags at +0x108/+0x10a) -- read here as the actual per-frame visibility-decision output the earlier Appear/UnAppear investigation was looking for and never found, because it's set from inside Update, not from Appear/UnAppear at all. Requires the factory-ghost-always-visible-gate companion (see its notes) to also be active -- without the gate NOP, some frames still skip the block this write sits in before ever reaching it. Not yet independently re-verified live with the other trainer's patch fully off and only this profile's own patches on -- do that before trusting it fully."
     },
     {
       "kind": "patch",
       "mode": "replace",
-      "id": "factory-ghost-always-visible",
-      "name": "Ghost Always Visible",
-      "originalBytes": "0f84fc000000",
-      "length": 6,
-      "replacementBytes": "90e9fc000000",
-      "signature": "80 bb a8 00 00 00 00 0f 84 fc 00 00 00 48 89 74 24 48 33 d2 48 8b cb 48 89 7c 24 58 e8 36 81 29 02",
-      "signatureOffset": 7,
+      "id": "factory-disable-ghost",
+      "name": "Disable Ghost",
+      "originalBytes": "00",
+      "length": 1,
+      "replacementBytes": "01",
+      "signature": "33 d2 0f 29 74 24 50 48 8b cb 0f 29 7c 24 40 e8 ae 7f 29 02 48 85 c0 0f 84 93 02 00 00 80 78 68 00 0f 57 ff 0f 84 6e 01",
+      "signatureOffset": 32,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x2068e40"
+      "moduleOffset": "0x2068fee",
+      "notes": "Found by diffing GhostAI.Update before/after toggling another already-installed, independently-patched trainer running on the same process live (same diffable-oracle technique as factory-ghost-always-visible). This is a single-byte immediate change inside `cmp byte ptr [rax+0x68], 0x00` (rax = the return value of a helper GhostAI.Update calls near its start, null-checked first) -- the patch changes only the compared constant (0x00 -> 0x01), leaving the `jz`, the surrounding branch structure and every other byte untouched. This is the safest patch shape available (no branch, no rip-relative operand, no inserted code): the compare now trips on a different value of whatever state [rax+0x68] holds, which this session did not further identify by name, only located and reproduced byte-for-byte. NOT YET LIVE-VERIFIED with only this profile's own patch active (the other trainer's equivalent patch was toggled for the diff, then turned back off before this entry was written, but this exact patch hasn't been applied and confirmed independently). This project shipped a DIFFERENT, unrelated 'Disable Ghost' attempt in an earlier session (an early-return patch on GhostAI.StartHuntingTimer) that broke door-lock bookkeeping and had to be reverted after getting the user killed twice -- that mechanism was abandoned; this one replaces it with an independently-verified byte, not a resurrection of the old approach. Verify carefully before trusting fully."
     },
     {
       "kind": "patch",
@@ -265,7 +276,10 @@
         {
           "kind": "anchor",
           "patchId": "factory-capture-GhostAI",
-          "derefOffsets": ["0x38", "0x70"],
+          "derefOffsets": [
+            "0x38",
+            "0x70"
+          ],
           "offset": "0x70",
           "readAsString": true
         }
@@ -282,13 +296,38 @@
         {
           "kind": "anchor",
           "patchId": "factory-capture-GhostAI",
-          "derefOffsets": ["0x58", "0x40", "0x38"],
+          "derefOffsets": [
+            "0x58",
+            "0x40",
+            "0x38"
+          ],
           "offset": "0x70",
           "readAsString": true
         }
       ],
       "value": 0,
       "notes": "GhostAI -> +0x58 (GhostActivity) -> +0x40 (LevelController) -> +0x38 (current LevelRoom) -> +0x70 (name string). Rides the same factory-capture-GhostAI anchor as Ghost Type/Favourite Room instead of a dedicated LevelController capture -- two separate LevelController hook attempts (get_favouriteGhostRoom, then SyncCurrentGhostRoomNetworked) both stayed 'not captured yet' live, apparently never firing during solo play (the second one's own name suggests it's multiplayer-only). Reaching the SAME +0x38 field through GhostAI's own reliable capture sidesteps needing any LevelController hook at all. Confirmed live: read 'Utility Room', matching Favourite Room exactly (ghost was in its favorite room at the time) -- +0x38 itself was independently confirmed twice by disassembling both LevelController.SyncCurrentGhostRoom and SyncCurrentGhostRoomNetworked, both of which read/write it as the current room."
+    },
+    {
+      "id": "factory-reveal-player-location",
+      "name": "Player Location",
+      "dataType": "int32",
+      "mode": "display",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "factory-capture-GhostAI",
+          "derefOffsets": [
+            "0x58",
+            "0x40",
+            "0x30"
+          ],
+          "offset": "0x70",
+          "readAsString": true
+        }
+      ],
+      "value": 0,
+      "notes": "GhostAI -> +0x58 (GhostActivity) -> +0x40 (LevelController) -> +0x30 (LOCAL PLAYER's current LevelRoom, a distinct field from the ghost's own current room at +0x38) -> +0x70 (name string). Rides the same factory-capture-GhostAI anchor as the other Ghost/Location reveals -- no separate capture needed. Mechanism confirmed by disassembling the function LevelRoomTrigger.OnTriggerEnter tail-jumps into: it resolves the live LocalPlayer/LevelController singleton through the same generic-cache indirection IL2CPP uses for FindObjectOfType-style lookups (static cache cell -> +0xB8 -> deref), then on a successful player-collider check does `mov [rcx+0x30], rdi` where rdi is the entered LevelRoom -- i.e. this exact field is the room the trigger volume just put the player into. Confirmed live: with no contract active outside, LevelController+0x30 pointed at a LevelRoom instance whose name string read 'Outside' (length-prefixed UTF-16LE, matching the 7-char count field before the chars were even read)."
     }
   ]
 }

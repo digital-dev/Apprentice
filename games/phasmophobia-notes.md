@@ -39,8 +39,11 @@ Private field *names* are Beebyte-obfuscated; class/method names are not.
     i.e. forcing maximum insanity the entire time; that's the actual explanation for
     both earlier bug reports (fast drain, stuck-low/can't-regain), not the multiplayer
     or `SetInsanity` theories floated along the way (those were real gaps worth
-    patching regardless, just not the root cause). Confirmed by diffing against another already-installed, independently-patched trainer running on the same process    (per [[il2cpp-engine-instance-discovery]]'s "diff a working trainer" technique): its own Max Sanity hook forces this exact field to
-    literal 0.0, and the player visibly holds full sanity with it on. All five
+    patching regardless, just not the root cause). Confirmed by diffing against another
+    already-installed, independently-patched trainer running on the same process (per
+    [[il2cpp-engine-instance-discovery]]'s "diff a working trainer" technique): its own
+    Max Sanity hook forces this exact field to literal 0.0, and the player visibly
+    holds full sanity with it on. All five
     `value`s corrected to 0. `SetInsanity`'s own name was the honest signal the whole
     time and got dismissed as "sloppy naming" early on — don't do that again; a
     method name is evidence, not decoration.
