@@ -8,8 +8,8 @@
       "version": "2022.3.62.28864"
     },
     "GameAssembly.dll": {
-      "size": 70332416,
-      "timestamp": 1791043358,
+      "size": 68820992,
+      "timestamp": 1786590259,
       "version": null
     }
   },
@@ -24,7 +24,7 @@
       "signature": "40 53 48 83 ec 60 0f 29 74 24 50 48 8b d9 f3 0f 10 b1 20 01 00 00",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x68e3b0",
+      "moduleOffset": "0x655210",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -38,7 +38,7 @@
       "signature": "c6 81 78 01 00 00 01 c3 cc cc cc cc cc cc cc cc",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x604280",
+      "moduleOffset": "0x5cacf0",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -47,12 +47,12 @@
       "mode": "capture",
       "id": "factory-capture-PlayerInventory",
       "name": "Capture: PlayerInventory.Update instance",
-      "originalBytes": "40534881ec80000000",
+      "originalBytes": "40534881ec90000000",
       "length": 9,
-      "signature": "40 53 48 81 ec 80 00 00 00 80 3d ?? ?? ?? ?? 00 48 8b d9 44 0f 29 4c 24 40",
+      "signature": "40 53 48 81 ec 90 00 00 00 80 3d ?? ?? ?? ?? 00 48 8b d9 44 0f 29 44 24 60",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x6931f0",
+      "moduleOffset": "0x6365c0",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -66,7 +66,7 @@
       "signature": "48 83 ec 38 0f 29 74 24 20 33 d2 f3 0f 10 71 30",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x6b9aa0",
+      "moduleOffset": "0x659910",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -74,13 +74,13 @@
       "kind": "patch",
       "mode": "capture",
       "id": "factory-capture-CurfewManager",
-      "name": "Capture: CurfewManager.OnUncappedMinPass instance",
-      "originalBytes": "40534883ec70",
-      "length": 6,
-      "signature": "40 53 48 83 ec 70 80 3d ?? ?? ?? ?? 00 48 8b d9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 0e ea",
+      "name": "Capture: CurfewManager.get_IsEnabled instance",
+      "originalBytes": "0fb68120010000",
+      "length": 7,
+      "signature": "0f b6 81 20 01 00 00 c3 cc cc cc cc cc cc cc cc",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x6569f0",
+      "moduleOffset": "0x4dc930",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -89,12 +89,12 @@
       "mode": "capture",
       "id": "factory-capture-TimeManager",
       "name": "Capture: TimeManager.Update instance",
-      "originalBytes": "40534883ec30",
+      "originalBytes": "40534883ec60",
       "length": 6,
-      "signature": "40 53 48 83 ec 30 81 b9 28 01 00 00 90 01 00 00",
+      "signature": "40 53 48 83 ec 60 81 b9 28 01 00 00 90 01 00 00",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9f0c50",
+      "moduleOffset": "0xa952d0",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -108,7 +108,7 @@
       "signature": "40 53 48 83 ec 70 80 3d ?? ?? ?? ?? 00 48 8b d9 0f 29 74 24 60 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 0f 29 7c 24 50 33 d2",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x69afc0",
+      "moduleOffset": "0x63e130",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -187,7 +187,7 @@
           "dataType": "float"
         }
       ],
-      "value": 20000
+      "value": 70000
     },
     {
       "id": "factory-water",
@@ -240,7 +240,7 @@
         {
           "kind": "anchor",
           "patchId": "factory-capture-TimeManager",
-          "offset": "0x134",
+          "offset": "0x13c",
           "dataType": "float"
         }
       ],
@@ -255,10 +255,10 @@
       "originalBytes": "40534883ec20",
       "length": 6,
       "replacementBytes": "33c0c3909090",
-      "signature": "40 53 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b da 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 8b 0d ?? ?? ?? ?? 83 b9 e0 00 00 00 00 75 ?? e8 ?? ?? ?? ?? 45 33 c0 33 d2 48 8b cb e8 ?? ?? ?? ?? 84 c0 0f 85 ?? ?? ?? ?? 48 85 db 0f 84 ?? ?? ?? ??",
+      "signature": "40 53 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b da 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 8b 0d ?? ?? ?? ?? 83 b9 e0 00 00 00 00 75 ?? e8 ?? ?? ?? ?? 45 33 c0 33 d2 48 8b cb e8 ?? ?? ?? ?? 84 c0 75 ?? 48 85 db 74 ?? 48 8b 83 68 01 00 00 48 85 c0 74 ?? 80 b8 18 01 00 00 00 74 ?? 48 8b 83 70 01 00 00 48 85 c0 74 ?? 80 b8 68 01 00 00 00 75 ?? 33 d2 48 8b c8 e8 ?? ?? ?? ?? 85 c0 7f ?? 48 8b 83 70 01 00 00 48 85 c0 74 ??",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x76cfd0"
+      "moduleOffset": "0x72a2b0"
     },
     {
       "kind": "patch",
@@ -271,21 +271,21 @@
       "signature": "48 89 5c 24 10 57 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b da 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 85 db 0f 84 ?? ?? ?? ?? 33 d2 48 89 74 24 30 48 8b cb",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x76dd20"
+      "moduleOffset": "0x72af60"
     },
     {
       "kind": "patch",
       "mode": "scale",
       "id": "factory-movespeed-scale",
       "name": "Movement Speed Multiplier (player only)",
-      "originalBytes": "0f28c6",
-      "length": 3,
-      "signature": "8b 48 08 f2 0f 10 00 f2 0f 11 86 9c 00 00 00 89 8e a4 00 00 00 48 8b ce e8 ?? ?? ?? ?? 0f 28 c6 f3 0f 59 b6 a4 00 00 00 f3 0f 59 86 9c 00 00 00 f3 0f 11 b6 a4 00 00 00 f3 0f 11 86 9c 00 00 00",
-      "signatureOffset": 29,
+      "originalBytes": "80b95b02000000",
+      "length": 7,
+      "signature": "e8 ?? ?? ?? ?? 48 8b 05 ?? ?? ?? ?? 48 8b 80 b8 00 00 00 48 8b 48 18 48 85 c9 0f 84 ?? ?? ?? ?? 80 b9 5b 02 00 00 00 f3 44 0f 10 0d ?? ?? ?? ?? f3 0f 59 fe 74 ?? f3 41 0f 59 f9",
+      "signatureOffset": 32,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x69918f",
+      "moduleOffset": "0x63c300",
       "sourceRegister": "xmm6",
-      "value": 2,
+      "value": 3,
       "dataType": "float"
     },
     {
@@ -314,7 +314,7 @@
       "signature": "48 89 5c 24 08 57 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b fa 48 8b d9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 8b 8b 90 01 00 00",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x5b3dd0"
+      "moduleOffset": "0x57e850"
     },
     {
       "kind": "patch",
@@ -327,7 +327,7 @@
       "signature": "48 89 5c 24 08 57 48 83 ec 50 80 3d ?? ?? ?? ?? 00 48 8b da 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 48 85 db 0f 84 ?? ?? ?? ?? 48 8b 15 ?? ?? ?? ?? 4c 8b 03 0f b6 82 30 01 00 00",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x5b47f0"
+      "moduleOffset": "0x57f200"
     },
     {
       "kind": "patch",
@@ -340,7 +340,7 @@
       "signature": "48 8b c4 48 89 58 10 48 89 48 08 56 57 41 54 41 56 41 57 48 81 ec a0 01 00 00",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x5b6790"
+      "moduleOffset": "0x5811b0"
     },
     {
       "kind": "patch",
@@ -352,7 +352,7 @@
       "signature": "40 53 48 83 ec 20 0f 2f 0d ?? ?? ?? ?? 48 8b d9 f3 0f 11 89 48 01 00 00 72 ??",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x668920",
+      "moduleOffset": "0x630390",
       "sourceRegister": "xmm1",
       "value": 0,
       "dataType": "float"
@@ -361,49 +361,14 @@
       "kind": "patch",
       "mode": "replace",
       "id": "factory-maxrelationship",
-      "name": "Max Relationship on Sale (completing a sale sets that customer's relationship to max, permanently)",
-      "originalBytes": "0f57c90f2fc87719f30f100d44538502",
-      "length": 16,
-      "replacementBytes": "b800002041660f6ec0c3909090909090",
-      "signature": "0f 57 c9 0f 2f c8 77 ?? f3 0f 10 0d ?? ?? ?? ?? 0f 2f c1 76 ?? 0f 28 c1 f3 0f 5c 05 ?? ?? ?? ??",
+      "name": "Max Relationship (every NPC reads as fully friendly)",
+      "originalBytes": "f30f104110f30f5e05a32c5202",
+      "length": 13,
+      "replacementBytes": "b80000803f660f6ec0c3909090",
+      "signature": "f3 0f 10 41 10 f3 0f 5e 05 ?? ?? ?? ?? c3 cc cc 40 53",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x6fa7f0",
-      "note": "Customer.ProcessHandover calls CustomerSatisfaction.GetRelationshipChange (its only caller) and passes the result straight to NPCRelationData.ChangeRelationship; SetRelationship clamps to 0..5. Entry now returns +10.0 so every handover that reaches that call pushes the customer to max, permanently (saved RelationDelta). Replaces the old get_NormalizedRelationDelta read-only trick. Untested in-game: unknown whether ProcessHandover also runs for a failed/rejected handover (it would then also max). | Suppliers (Albert Hoover etc): companions patch Supplier.MeetupOrderCompleted (spend) and Supplier.TryRecoverDebt (debt repayment).",
-      "companions": [
-        "factory-maxrelationship-supplier-meetup",
-        "factory-maxrelationship-supplier-debt"
-      ]
-    },
-    {
-      "kind": "patch",
-      "mode": "replace",
-      "id": "factory-maxrelationship-supplier-meetup",
-      "name": "Max Relationship on Sale: supplier meetup orders",
-      "originalBytes": "f30f5935a12e84020f28ce",
-      "length": 11,
-      "replacementBytes": "ba00002041660f6eca9090",
-      "signature": "f3 0f 5e 70 74 4c 8b 0f 41 b0 01 48 8b cf 49 8b 81 78 01 00 00 4d 8b 89 80 01 00 00 f3 0f 59 35 ?? ?? ?? ?? 0f 28 ce ff d0 f3 0f 58 bb 10 03 00 00 0f 28 74 24 30 f3 0f 11 bb 10 03 00 00",
-      "signatureOffset": 28,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x70cc97",
-      "internal": true,
-      "note": "Supplier relationship gain: delta = spend/divisor*const passed to the virtual NPCRelationData.ChangeRelationship; the final mulss+movaps into xmm1 is replaced by mov edx,10.0f; movd xmm1,edx (edx is a free volatile there; rax holds the call target). Companion of factory-maxrelationship. Untested in-game."
-    },
-    {
-      "kind": "patch",
-      "mode": "replace",
-      "id": "factory-maxrelationship-supplier-debt",
-      "name": "Max Relationship on Sale: supplier debt repayment",
-      "originalBytes": "f3440f5905c5f68302410f28c8",
-      "length": 13,
-      "replacementBytes": "ba00002041660f6eca90909090",
-      "signature": "f3 44 0f 5e 40 74 4c 8b 0f 41 b0 01 48 8b cf 49 8b 81 78 01 00 00 4d 8b 89 80 01 00 00 f3 44 0f 59 05 ?? ?? ?? ?? 41 0f 28 c8 ff d0 48 8b 0d ?? ?? ?? ?? f3 44 0f 10 44 24 70 f3 41 0f 5c f8",
-      "signatureOffset": 29,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x710472",
-      "internal": true,
-      "note": "Supplier relationship gain: delta = spend/divisor*const passed to the virtual NPCRelationData.ChangeRelationship; the final mulss+movaps into xmm1 is replaced by mov edx,10.0f; movd xmm1,edx (edx is a free volatile there; rax holds the call target). Companion of factory-maxrelationship. Untested in-game."
+      "moduleOffset": "0x8dcea0"
     },
     {
       "kind": "patch",
@@ -413,10 +378,10 @@
       "originalBytes": "f7da",
       "length": 2,
       "replacementBytes": "31d2",
-      "signature": "0f 84 ?? ?? ?? ?? 48 8b 49 28 48 85 c9 0f 84 ?? ?? ?? ?? 8b 93 90 00 00 00 45 33 c9 f7 da 45 33 c0 e8 ?? ?? ?? ?? 48 83 bb e0 00 00 00 00 74 ??",
+      "signature": "0f 84 ?? ?? ?? ?? 48 8b 49 28 48 85 c9 0f 84 ?? ?? ?? ?? 8b 97 90 00 00 00 45 33 c9 f7 da 45 33 c0 e8 ?? ?? ?? ?? 48 83 bf e0 00 00 00 00 74 ??",
       "signatureOffset": 28,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0xab3afc"
+      "moduleOffset": "0xa4c868"
     },
     {
       "kind": "patch",
@@ -426,22 +391,22 @@
       "originalBytes": "f7dd",
       "length": 2,
       "replacementBytes": "31ed",
-      "signature": "48 8b 83 80 00 00 00 48 85 c0 0f 84 ?? ?? ?? ?? 48 8b 48 28 48 85 c9 0f 84 ?? ?? ?? ?? f7 dd 45 33 c9 8b d5 45 33 c0 e8 ?? ?? ?? ??",
+      "signature": "48 8b 87 80 00 00 00 48 85 c0 0f 84 ?? ?? ?? ?? 48 8b 48 28 48 85 c9 0f 84 ?? ?? ?? ?? f7 dd 45 33 c9 8b d5 45 33 c0 e8 ?? ?? ?? ??",
       "signatureOffset": 29,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0xab56c7"
+      "moduleOffset": "0xa4e3ad"
     },
     {
       "kind": "patch",
       "mode": "capture",
       "id": "factory-capture-ItemUIManager",
       "name": "Capture: ItemUIManager.Update instance",
-      "originalBytes": "40534883ec50",
+      "originalBytes": "40574883ec40",
       "length": 6,
-      "signature": "40 53 48 83 ec 50 80 3d ?? ?? ?? ?? 00 48 8b d9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ce ec",
+      "signature": "40 57 48 83 ec 40 80 3d ?? ?? ?? ?? 00 48 8b f9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? e8 9e f3",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0xab6730",
+      "moduleOffset": "0xa4f400",
       "baseRegister": "rcx",
       "internal": true
     },
@@ -466,10 +431,10 @@
       "name": "Instant Chemistry (batches complete on the next tick, automatically, while toggled on)",
       "originalBytes": "017138",
       "length": 3,
-      "signature": "0f 84 ?? ?? ?? ?? 3b 78 50 0f 8d ?? ?? ?? ?? 48 8b 8b 28 02 00 00 48 85 c9 0f 84 ?? ?? ?? ?? 01 71 38 33 d2 e8 ?? ?? ?? ?? 48 85 c0 0f 84 ?? ?? ?? ??",
-      "signatureOffset": 31,
+      "signature": "48 8b 8b 28 02 00 00 48 85 c9 0f 84 a2 02 00 00 01 71 38",
+      "signatureOffset": 16,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x887bef",
+      "moduleOffset": "0x83c45e",
       "baseRegister": "rcx",
       "fieldOffset": "0x38",
       "value": 999999,
@@ -486,7 +451,7 @@
       "signature": "48 85 c9 0f 84 ?? ?? ?? ?? 45 33 c0 b2 01 e8 ?? ?? ?? ?? 8b 83 38 03 00 00 2b c7 89 83 38 03 00 00 85 c0 0f 8f ?? ?? ?? ?? 33 c9",
       "signatureOffset": 25,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x87f913"
+      "moduleOffset": "0x8341c3"
     },
     {
       "kind": "patch",
@@ -498,7 +463,7 @@
       "signature": "8b 93 20 02 00 00 8d 0c 16 89 8b 20 02 00 00",
       "signatureOffset": 9,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x8a7e66",
+      "moduleOffset": "0x85c50f",
       "baseRegister": "rbx",
       "fieldOffset": "0x220",
       "value": 1000,
@@ -521,7 +486,7 @@
       "signature": "48 83 b9 18 02 00 00 00 74 ?? 48 8b 81 18 02 00 00 8b 40 28 0f af 81 90 02 00 00 c3 33 c0 c3",
       "signatureOffset": 20,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x8a6724",
+      "moduleOffset": "0x85ade4",
       "note": "Companion of factory-instant-mixing (armed/disarmed together via its `companions` list; hidden from the cheat list as `internal`). Fixes Instant Mixing's '-940 mins remaining' style display, per the user's request to clamp the shown number to 0 instead of letting it go negative. Found live this session: a small standalone function (no name recovered from IL2CPP metadata -- it sits between two named methods with no MethodInfo entry of its own, likely a compiler-emitted property accessor) that does nothing but `return CurrentMixOperation.Quantity * MixTimePerItem` -- no completion check, no side effects, unlike the other 8 occurrences of this same multiply found via signature scan (all of which are inline completion checks inside MixingStation's own methods, confirmed by disassembling each). That shape -- a bare read-only total with no comparison -- is exactly what an external UI computing `remaining = total - CurrentMixTime` would call rather than recomputing the multiply itself, which is also why none of the 9 internal completion-check sites contain a subtraction: the subtraction happens in whatever external code calls this getter, not in MixingStation's own compiled code. Replaces the `imul eax,[rcx+0x290]` with `mov eax,[rcx+0x220]` (CurrentMixTime, the same object) so this getter always returns exactly whatever CurrentMixTime currently is -- any caller computing `total - current` gets exactly 0, never negative, regardless of the pinned value factory-instant-mixing forces. Confirmed via `IsMixingDone` (a separate, verified-live-uncached property) that collection availability does not depend on this getter, so overriding it should not affect whether a batch can be collected -- only the displayed number. Confirmed working live this session."
     },
     {
@@ -530,13 +495,14 @@
       "id": "factory-instant-mixing-complete",
       "name": "Instant Mixing: trigger the completion event/animation",
       "internal": true,
-      "originalBytes": "0f8c7f010000",
+      "originalBytes": "0f8c8c010000",
       "length": 6,
       "replacementBytes": "909090909090",
       "signature": "0f af bb 90 02 00 00 3b cf 0f 8c ?? ?? ?? ?? 3b d7 0f 8d ?? ?? ?? ?? 33 c9 e8 ?? ?? ?? ?? 84 c0",
       "signatureOffset": 9,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x8a7e7f"
+      "moduleOffset": "0x85c528",
+      "note": "Companion of factory-instant-mixing (armed/disarmed together via its `companions` list; hidden from the cheat list as `internal`). Fixes 'the machine never dings, I have to exit and reopen to get the product', reported live this session. Root cause, confirmed by disassembling MixingStation.OnTimePass fresh: factory-instant-mixing's force-hook overrides what gets WRITTEN to CurrentMixTime's memory (rbx+0x220), but the completion-event trigger a few instructions later reads a REGISTER, not memory -- `lea ecx,[rsi+rdx]` computes ecx from the real, un-cheated old-value-plus-increment BEFORE our hook ever runs, so `cmp ecx,edi; jl <skip>` (edi = required) almost always still takes the 'not complete' branch even though memory (which IsMixingDone and the display-fix both read fresh) correctly shows done. Forcing a memory field can never retroactively change a register the surrounding code already computed from the pre-hook value -- this is a structural limit of hooking the store instruction, not something a different forced value would fix. This patch instead neutralizes the `jl` itself (NOPed out, 6 bytes) so the completion path always falls through regardless of what ecx holds, letting the very next check -- `cmp edx,edi; jnl <skip>` (edx = OLD memory value, read fresh at the top of this same tick, before our hook fires) -- do the real gating: edx starts below any real required-total and only reaches factory-instant-mixing's forced 1000 after the first tick, so the completion event fires exactly once (on the tick that first crosses the threshold) and never re-fires on subsequent ticks, the same edge-triggered shape the game's own code already relies on. Confirmed working live this session -- the machine dings and the product is collectible without exiting and reopening."
     },
     {
       "kind": "patch",
@@ -545,10 +511,10 @@
       "name": "Instant Plant Growth (plants finish on the next tick)",
       "originalBytes": "f30f59b0a8030000",
       "length": 8,
-      "signature": "e8 ?? ?? ?? ?? 48 8b 43 20 0f 28 f0 f3 41 0f 59 f0 48 85 c0 74 ?? f3 0f 59 b0 a8 03 00 00 33 c9 f3 0f 59 74 24 60 e8 ?? ?? ?? ?? 84 c0",
-      "signatureOffset": 22,
+      "signature": "48 85 c0 0f 84 ?? ?? ?? ?? f3 0f 59 f7 33 c9 f3 41 0f 59 f1 f3 0f 59 f0 f3 0f 59 b0 a8 03 00 00 f3 0f 59 74 24 70 e8 ?? ?? ?? ?? 84 c0 74 ??",
+      "signatureOffset": 24,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x81ddcc",
+      "moduleOffset": "0x7d9cd2",
       "sourceRegister": "xmm6",
       "value": 100000,
       "dataType": "float"
@@ -563,7 +529,7 @@
       "signature": "48 8b 8b 10 02 00 00 48 85 c9 74 ?? ff 41 40 48 8b 8b 10 02 00 00 48 85 c9 74 ?? 33 d2 e8 ?? ?? ?? ??",
       "signatureOffset": 12,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x89e40d",
+      "moduleOffset": "0x852b2d",
       "baseRegister": "rcx",
       "fieldOffset": "0x40",
       "value": 1000,
@@ -578,10 +544,10 @@
       "originalBytes": "85ff752a39bb1c010000750db001",
       "length": 14,
       "replacementBytes": "b001eb0a90909090909090909090",
-      "signature": "8b fa 48 8b d9 48 8b 91 88 01 00 00 49 8b c8 49 89 10 e8 ?? ?? ?? ?? 85 ff 75 ?? 39 bb 1c 01 00 00 75 ?? b0 01 48 8b 5c 24 30 48 83 c4 20 5f c3",
-      "signatureOffset": 23,
+      "signature": "48 89 5c 24 08 57 48 83 ec 20 8b fa 48 8b d9 48 8b 91 88 01 00 00 49 8b c8 49 89 10 e8 4f 97 ca ff",
+      "signatureOffset": 33,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x71f521"
+      "moduleOffset": "0x6e42a1"
     },
     {
       "kind": "patch",
@@ -594,7 +560,7 @@
       "signature": "40 53 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b d9 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c6 05 ?? ?? ?? ?? 01 80 bb 88 00 00 00 00 75 ??",
       "signatureOffset": 0,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x6b8f80"
+      "moduleOffset": "0x656000"
     },
     {
       "kind": "patch",
@@ -604,10 +570,10 @@
       "originalBytes": "0f93c2",
       "length": 3,
       "replacementBytes": "b20190",
-      "signature": "3b 59 18 0f 83 ?? ?? ?? ?? 66 0f 6e 04 29 0f 5b c0 f3 0f 58 c6 0f 2f f8 0f 93 c2 48 85 f6 0f 84 ?? ?? ?? ?? 45 33 c0 48 8b ce",
-      "signatureOffset": 24,
+      "signature": "0f 83 ?? ?? ?? ?? 48 63 c3 66 0f 6e 44 81 20 0f 5b c0 f3 0f 58 c6 0f 2f f8 0f 93 c2 48 85 ff 0f 84 ?? ?? ?? ?? 45 33 c0 48 8b cf",
+      "signatureOffset": 25,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9ccca4",
+      "moduleOffset": "0x9649ec",
       "companions": [
         "factory-atm-nodepositlimit-clamp",
         "factory-atm-nodepositlimit-mainbutton",
@@ -615,21 +581,23 @@
         "factory-atm-max-label-fullcash",
         "factory-atm-max-confirm-strictfix",
         "factory-atm-max-button-enabled"
-      ]
+      ],
+      "note": "ATM.DepositLimitEnabled and ATM.WeeklyDepositLimit are compile-time consts (confirmed live: enumerateIl2cpp reports offset 0x0 for both, colliding with ATM.WeeklyDepositSum's real offset 0x0 -- the tell for a literal baked into code, not real storage; see the skill's 'const fields have no storage' landmine). Only ATM.WeeklyDepositSum is a real runtime static field (ATM's cached class-typeinfo global at RVA 0x3952b90 -> +0xB8 static_fields -> +0x0), reset to 0 in ATM.WeekPass/DayPass. The actual enforcement traced to ATMInterface.UpdateAvailableAmounts: it loops the `amounts` preset list and for each one loads WeeklyDepositLimit as a baked float constant into xmm7 (`movss xmm7,[rip+const]`, a shared rodata literal -- deliberately NOT the patch target since a data literal can be pooled/reused elsewhere), computes WeeklyDepositSum+candidateAmount into xmm0, then `comiss xmm7,xmm0; setnb dl` (dl=1, i.e. button interactable, only when the limit is not exceeded) before calling into what sets that amount button's interactable state. Patched the `setnb dl` (0F 93 C2, local to this one call site, not shared data) to `mov dl,1; nop` so every preset amount stays selectable regardless of the weekly sum. ProcessTransaction/the deposit RPC do not re-check the limit themselves -- this button-enable gate is the only enforcement, confirmed by reading the full method (no second comparison against WeeklyDepositLimit anywhere in ProcessTransaction). Unique 43-byte signature confirmed live via scan_aob (1 match) before shipping. Live user report after shipping just this patch: the deposit button was still disabled -- see factory-atm-nodepositlimit-clamp, a second, independent gate this one didn't cover."
     },
     {
       "kind": "patch",
       "mode": "replace",
       "id": "factory-atm-nodepositlimit-clamp",
       "name": "No ATM Deposit Limit: selected amount is never clamped to the remaining weekly allowance",
-      "originalBytes": "f30f5df8",
+      "originalBytes": "f30f5df0",
       "length": 4,
       "replacementBytes": "90909090",
-      "signature": "48 8b c8 e8 ?? ?? ?? ?? 48 8b 05 ?? ?? ?? ?? 48 8b 80 b8 00 00 00 f3 0f 10 05 ?? ?? ?? ?? f3 0f 5c 00 f3 0f 5d f8 0f 57 c0 0f 2f c6 77 ?? 0f 2f f7",
-      "signatureOffset": 34,
+      "signature": "83 b8 e0 00 00 00 00 75 ?? 48 8b c8 e8 ?? ?? ?? ?? 48 8b 05 ?? ?? ?? ?? 48 8b 80 b8 00 00 00 f3 0f 10 05 ?? ?? ?? ?? f3 0f 5c 00 f3 0f 5d f0 0f 57 c0 0f 2f c7 77 ?? 0f 2f fe",
+      "signatureOffset": 43,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9cc5e8",
-      "internal": true
+      "moduleOffset": "0x964328",
+      "internal": true,
+      "note": "Found after factory-atm-nodepositlimit alone wasn't enough: the user reported the deposit button still disabled after that patch. Traced the actual bug: even with every preset amount BUTTON now clickable, clicking one still runs ATMInterface.SetSelectedAmount, a second, independent gate that computes `remaining = WeeklyDepositLimit(const) - ATM.WeeklyDepositSum` and does `minss xmm6,xmm0` to cap the just-picked amount at that remaining allowance -- once the weekly sum is at or past the limit, this clamps selectedAmount down to 0, which is almost certainly what a downstream selectedAmount>0 check reads to grey out the confirm/deposit button (matches the user's exact symptom). NOPed the `minss xmm6,xmm0` (F3 0F 5D F0, 4 bytes) so the chosen amount passes through unclamped; left the floor-clamp immediately after (`xorps xmm0,xmm0; comiss xmm0,xmm7`, a separate check against a caller-supplied minimum, not the weekly limit) untouched since it only zeroes the result when the floor argument itself is negative, which normal callers never pass. Unique 62-byte signature confirmed live via scan_aob (1 match). Ship together with factory-atm-nodepositlimit -- the first patch keeps the preset buttons selectable, this one keeps the selected value from being silently zeroed back out. Live user report after shipping both: deposit button STILL disabled -- see factory-atm-nodepositlimit-mainbutton, a third, independent gate on the main button itself neither of these touch."
     },
     {
       "kind": "patch",
@@ -642,7 +610,7 @@
       "signature": "48 8b c8 e8 ?? ?? ?? ?? 48 8b 05 ?? ?? ?? ?? 48 85 db 0f 84 ?? ?? ?? ?? 48 8b 80 b8 00 00 00 48 8b cb 44 0f 2f 00 0f 97 c2 45 33 c0 e8 ?? ?? ?? ?? 48 8b 0d ?? ?? ?? ?? 48 8b 9f 18 01 00 00",
       "signatureOffset": 38,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9cd45f",
+      "moduleOffset": "0x9650f0",
       "internal": true,
       "note": "Third and final gate for this wishlist item, found after both prior patches still left the deposit button disabled per live user report. ATMInterface.Update itself (not the amount-selector screen at all) directly toggles menu_DepositButton's own interactable state every frame: loads ATM.WeeklyDepositSum, compares it against the baked WeeklyDepositLimit constant (`comiss xmm8,[static_fields]; setnbe dl`, dl=1 only while sum < limit), then calls the interactable-setter with menu_DepositButton as the target. This is the button the user actually clicks FIRST, before ever reaching the amount-selector screen the other two patches cover -- once the weekly sum reaches the limit, the whole Deposit flow is locked out at the entry point regardless of what factory-atm-nodepositlimit/-clamp do downstream. Patched the local `setnbe dl` (0F 97 C2) to `mov dl,1; nop`, same technique as factory-atm-nodepositlimit. Unique 63-byte signature confirmed live via scan_aob (1 match). All three patches together should be required for a full fix: main button stays enabled (this patch) -> preset amount buttons stay enabled (factory-atm-nodepositlimit) -> the picked amount isn't zeroed back out (factory-atm-nodepositlimit-clamp). Untested in-game."
     },
@@ -657,7 +625,7 @@
       "signature": "e8 ?? ?? ?? ?? 48 8b 0d ?? ?? ?? ?? 0f 28 f0 83 b9 e0 00 00 00 00 75 ?? e8 ?? ?? ?? ?? 33 c9 e8 ?? ?? ?? ?? f3 0f 5d f0 0f 28 c6 0f 28 74 24 20 48 8b 5c 24 40 48 83 c4 30",
       "signatureOffset": 36,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9cba06",
+      "moduleOffset": "0x963746",
       "internal": true,
       "note": "Follow-up to the user's request: the MAX preset (index -1, ATMInterface.GetAmountFromIndex) computes min(cash-on-hand, ATMInterface.get_remainingAllowedDeposit()) -- a THIRD, independently-compiled instance of the WeeklyDepositLimit-minus-WeeklyDepositSum formula, this time behind a real named getter rather than inlined (unlike UpdateAvailableAmounts' and SetSelectedAmount's inline versions, already patched by factory-atm-nodepositlimit/-clamp). Cash-on-hand is read first (CashInstance.Balance, via the same live pointer chain factory-cash anchors), then `minss xmm6,xmm0` clamps it down to whatever remains of the weekly allowance -- so MAX showed the smaller of the two, not the player's actual total cash, even with the other three ATM patches installed (they don't touch this call site). NOPed the `minss xmm6,xmm0` (F3 0F 5D F0) so the MAX preset returns the raw cash balance unclamped; get_remainingAllowedDeposit itself is left alone since nothing else in this file calls it besides this one now-defused comparison. Unique 57-byte signature confirmed live via scan_aob (1 match). Verified live by directly calling the exact functions this code calls (call_remote_function on the object-lookup at 0x8E9690, then call_remote_function_float on the Balance getter at 0xBEAAFA0): returns 12563.5, matching the player's real cash balance read via the factory-cash pointer chain -- confirms the underlying VALUE this patch produces is correct. User still saw '-9000' after this patch -- see factory-atm-max-label-fullcash, a fourth occurrence that controls the button's own displayed text, separate from the value this patch fixes."
     },
@@ -672,7 +640,7 @@
       "signature": "e8 ?? ?? ?? ?? 48 8b 0d ?? ?? ?? ?? 0f 28 f0 83 b9 e0 00 00 00 00 75 ?? e8 ?? ?? ?? ?? 33 c9 e8 ?? ?? ?? ?? f3 0f 5d f0 48 8b 0d ?? ?? ?? ?? 83 b9 e0 00 00 00 00 75 ?? e8 ?? ?? ?? ??",
       "signatureOffset": 36,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9cd1f3",
+      "moduleOffset": "0x964e8d",
       "internal": true,
       "note": "Root cause of the '-9000' the user actually saw. factory-atm-max-fullcash fixed the VALUE GetAmountFromIndex(-1) computes (verified live: 12563.5, correct); this is a SEPARATE, fourth occurrence of the identical cash-vs-remainingAllowedDeposit clamp, this time inside ATMInterface.Update itself, which every frame (while depositing==true) fetches the LAST entry in amountButtons (`List.get_Item(count-1)`, i.e. the MAX button specifically), gets its Text component, and writes `min(cash, get_remainingAllowedDeposit())` into it as the button's own label -- completely independent of what GetAmountFromIndex returns when actually clicked. Since WeeklyDepositSum has grown past the old WeeklyDepositLimit(10000) thanks to the other ATM patches already letting deposits through, get_remainingAllowedDeposit() now returns a negative number (10000-19000=-9000), and min(12563.5, -9000)=-9000 -- exactly the value reported. NOPed the same `minss xmm6,xmm0` (F3 0F 5D F0) pattern so the MAX button's text also shows the raw, unclamped cash balance, matching what clicking it actually selects. Unique 61-byte signature confirmed live via scan_aob (1 match). User confirmed the label now matches cash, but reported the MAX deposit itself greyed out -- see factory-atm-max-confirm-strictfix, a genuine pre-existing game bug this exposed (not a side effect of any ATM patch)."
     },
@@ -687,7 +655,7 @@
       "signature": "48 8b 9f b8 00 00 00 33 d2 48 8b cf e8 ?? ?? ?? ?? 48 85 db 0f 84 ?? ?? ?? ?? 0f 2f c7 48 8b cb 0f 97 c2 45 33 c0 e8 ?? ?? ?? ?? 80 bf 20 01 00 00 00 75 ??",
       "signatureOffset": 32,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9cd282",
+      "moduleOffset": "0x964f19",
       "internal": true,
       "note": "Correction after further live investigation: xmm7 at this comparison is actually zeroed (`xorps xmm7,xmm7`) earlier in Update, not selectedAmount as first assumed -- so this gate is really just 'cash > 0', not a balance-vs-selected-amount check, and this patch (SETA->SETAE) has no real effect (balance is essentially never exactly 0). Left in place since it's harmless and technically more permissive, but it was NOT the cause of the greyed-out MAX button the user reported -- see factory-atm-max-button-enabled for the actual fix, found by reading the MAX button's own m_Interactable field live (confirmed false) and tracing forward from there instead of assuming."
     },
@@ -696,46 +664,15 @@
       "mode": "replace",
       "id": "factory-atm-max-button-enabled",
       "name": "No ATM Deposit Limit: MAX button itself stays interactable",
-      "originalBytes": "410f97c6",
-      "length": 4,
-      "replacementBytes": "41b60190",
-      "signature": "44 39 b1 e0 00 00 00 75 ?? e8 ?? ?? ?? ?? 33 c9 e8 ?? ?? ?? ?? 0f 2f c6 41 0f 97 c6 48 85 db 74 ?? 45 33 c0 41 0f b6 d6",
-      "signatureOffset": 24,
+      "originalBytes": "0f97c2",
+      "length": 3,
+      "replacementBytes": "b20190",
+      "signature": "eb ?? 48 8b 0d ?? ?? ?? ?? 83 b9 e0 00 00 00 00 75 ?? e8 ?? ?? ?? ?? 33 c9 e8 ?? ?? ?? ?? 0f 2f c6 0f 97 c2 48 85 db 74 ?? 45 33 c0 48 8b cb",
+      "signatureOffset": 33,
       "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x9ccd22",
-      "internal": true
-    },
-    {
-      "kind": "patch",
-      "mode": "replace",
-      "id": "factory-dealer-maxcustomers",
-      "name": "Dealer Customer Limit 20 (was 10)",
-      "originalBytes": "8379180a",
-      "length": 4,
-      "replacementBytes": "83791814",
-      "signature": "e8 ?? ?? ?? ?? 49 8b 8d f0 02 00 00 48 85 c9 0f 84 ?? ?? ?? ?? 48 85 c0 0f 84 ?? ?? ?? ?? 83 79 18 0a 0f 9c c2 45 33 c0 48 8b c8 e8 ?? ?? ?? ??",
-      "signatureOffset": 30,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0xa5fd15",
-      "note": "Dealer.MAX_CUSTOMERS is a const (offset 0, no storage). The only enforcement is the phone UI: DealerManagementApp.SetDisplayedDealer sets the Assign Customer button interactable to AssignedCustomers.Count < 10 (cmp [rcx+0x18],0x0A; setl). Dealer.AddCustomer/AddCustomer_Server have no cap. Immediate changed to 0x14. Untested in-game.",
-      "companions": [
-        "factory-dealer-maxcustomers-label"
-      ]
-    },
-    {
-      "kind": "patch",
-      "mode": "replace",
-      "id": "factory-dealer-maxcustomers-label",
-      "name": "Dealer customer limit: label shows /20",
-      "originalBytes": "c78424480100000a000000",
-      "length": 11,
-      "replacementBytes": "c784244801000014000000",
-      "signature": "48 8b 15 ?? ?? ?? ?? 83 7b 18 02 0f 86 ?? ?? ?? ?? 48 89 53 30 48 8d 4b 30 e8 ?? ?? ?? ?? c7 84 24 48 01 00 00 0a 00 00 00 33 d2 48 8d 8c 24 48 01 00 00 e8 ?? ?? ?? ?? 83 7b 18 03",
-      "signatureOffset": 30,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0xa5f619",
+      "moduleOffset": "0x964a66",
       "internal": true,
-      "note": "The customers label formats count and the const 10 (shown as N/10); immediate changed to 20 so the label matches. Companion of factory-dealer-maxcustomers. Untested in-game."
+      "note": "The real, sixth and final gate. Found by reading UnityEngine.UI.Selectable's real field layout live (Button->Selectable, m_Interactable at +0xD8) and confirming the MAX button's own instance had it set to 0 -- then tracing forward instead of guessing. ATMInterface.UpdateAvailableAmounts has a DEDICATED branch for the last (MAX) slot, entirely separate from the generic per-preset loop body factory-atm-nodepositlimit already patched: it fetches amountButtons[count-1] (the MAX button), checks cash>0, then does `call get_remainingAllowedDeposit(); comiss xmm0,xmm6(=0); setnbe dl` and sets the MAX button's own interactable to dl -- i.e. MAX is only clickable while get_remainingAllowedDeposit() (WeeklyDepositLimit-WeeklyDepositSum) is still positive, completely independent of the per-preset check, the SetSelectedAmount clamp, and the confirm-button check already patched. Since the other patches let WeeklyDepositSum grow past the limit, this returns <=0 and permanently disables the MAX button regardless of actual cash. Patched the local `setnbe dl` (0F 97 C2, distinct address from the near-identical-looking pattern in confirmAmountButton's check) to `mov dl,1; nop`. Unique 47-byte signature confirmed live via scan_aob (1 match). Untested in-game."
     }
   ]
 }

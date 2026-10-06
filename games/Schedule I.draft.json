@@ -477,19 +477,6 @@
     },
     {
       "kind": "patch",
-      "mode": "replace",
-      "id": "factory-instant-oven",
-      "name": "Instant Ovens (cooks report complete)",
-      "originalBytes": "48895c2408",
-      "length": 5,
-      "replacementBytes": "b001c39090",
-      "signature": "48 89 5c 24 08 57 48 83 ec 20 80 3d ?? ?? ?? ?? 00 48 8b d9 8b 79 40 75 ?? 48 8d 0d ?? ?? ?? ?? e8 ?? ?? ?? ??",
-      "signatureOffset": 0,
-      "moduleName": "GameAssembly.dll",
-      "moduleOffset": "0x862270"
-    },
-    {
-      "kind": "patch",
       "mode": "scale",
       "id": "factory-instant-growth",
       "name": "Instant Plant Growth (plants finish on the next tick)",

@@ -27,7 +27,7 @@ Two ways to cheat:
   itself never puts the old value back. NOP it out, replace it, force a
   fixed result, or skip a method entirely for one object.
 
-Ships with cheat sets for eight games, one profile each in `games/`:
+Ships with cheat sets for ten games, one profile each in `games/`:
 
 | Game | Cheats | Engine / notes |
 |---|---|---|
@@ -35,10 +35,12 @@ Ships with cheat sets for eight games, one profile each in `games/`:
 | Elden Ring | 14 | Native, pointer-chain value cheats (`start_protected_game.json`, named for its EAC-protected executable) |
 | Palworld | 11 | Unreal (`Palworld-Win64-Shipping.json`) |
 | Aviassembly | 12 | Unity/Mono (`aviassembly.json`) — see `games/aviassembly-notes.md` |
-| Schedule I | 26 | Unity IL2CPP (`Schedule I.json`) — see `games/schedule-i-notes.md` for how each was found |
+| Schedule I | 29 | Unity IL2CPP (`Schedule I.json`) — see `games/schedule-i-notes.md` for how each was found; re-derived for the 2026-10 beta build. `games/schedule-i-recipe-calculator.html` is an offline mixing-recipe calculator built from the game's own data |
 | Green Hell | 14 | Unity IL2CPP (`GH.json`) |
-| Phasmophobia | 8 | Unity IL2CPP (`Phasmophobia.json`) — see `games/phasmophobia-notes.md`; several of these read live game state as text (e.g. the ghost's current room) rather than a plain number |
+| Phasmophobia | 9 | Unity IL2CPP (`Phasmophobia.json`) — see `games/phasmophobia-notes.md`; several of these read live game state as text (e.g. the ghost's current room) rather than a plain number |
 | Subnautica 2 | 20 | Unreal Engine 5.6, reflection-based value cheats (`Subnautica2-Win64-Shipping.json`) — see `games/subnautica2-notes.md` |
+| Far Cry 5 | 15 | Native (`FarCry5.json`) — see `games/farcry5-notes.md` |
+| Supermarket Together | 16 | Unity/Mono (`Supermarket Together.json`) |
 
 The newest Schedule I cheats (invisibility, no arrest, clone items, the instant
 timers and others) were built from the game's code and checked against a recording
