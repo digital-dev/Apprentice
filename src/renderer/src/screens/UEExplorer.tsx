@@ -43,6 +43,7 @@ export default function UEExplorer({ onUseAsUeTarget, onDone }: Props) {
   const [fieldFilter, setFieldFilter] = useState('')
   const [resolving, setResolving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [autoDetecting, setAutoDetecting] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -67,6 +68,33 @@ export default function UEExplorer({ onUseAsUeTarget, onDone }: Props) {
     setHasConfig(true)
     setConfigSaved(true)
     setTimeout(() => setConfigSaved(false), 2000)
+  }
+
+  // Runs the same signature-scan discovery the cheat-apply path already
+  // relies on in the background, but on demand -- fills the form and saves
+  // immediately on success so Resolve works without a separate manual Save
+  // step. A null result (not attached, no world loaded yet, or a layout
+  // this game doesn't recognize) leaves the manual form as the fallback.
+  async function autoDetect() {
+    setError(null)
+    setAutoDetecting(true)
+    try {
+      const config = await window.tamper.ueAutoDiscover()
+      if (config === null) {
+        setError(
+          'Auto-detect could not find a recognizable layout — is the game attached, and is a world loaded (not just a title screen)? You can fill in the ten numbers manually below instead.'
+        )
+        return
+      }
+      setGNames(config.gNames)
+      setGObjectArray(config.gObjectArray)
+      await window.tamper.ueSaveConfig(config)
+      setHasConfig(true)
+      setConfigSaved(true)
+      setTimeout(() => setConfigSaved(false), 2000)
+    } finally {
+      setAutoDetecting(false)
+    }
   }
 
   async function resolve() {
@@ -108,14 +136,18 @@ export default function UEExplorer({ onUseAsUeTarget, onDone }: Props) {
         <h3>1. GNames / GUObjectArray config</h3>
         {!hasConfig && !loadingConfig && (
           <p className="muted" style={{ fontSize: 12 }}>
-            No config saved for this game yet. These ten numbers are build-specific and can&apos;t be
-            auto-discovered — find them once via the manual recipe in{' '}
+            No config saved for this game yet. Try Auto-detect below first — it scans the attached
+            game for known code patterns and fills these in for you. If it can&apos;t recognize this
+            game&apos;s layout, fall back to the manual recipe in{' '}
             <code>docs/superpowers/specs/2026-09-17-ue-reflection-decode-design.md</code> (locate the
             GNames pool via a known string like &quot;/Script/CoreUObject&quot;, calibrate the decode
-            formula against entry 0 = &quot;None&quot;, then locate GUObjectArray the same way), then
-            fill them in below and Save.
+            formula against entry 0 = &quot;None&quot;, then locate GUObjectArray the same way) and
+            fill them in below by hand.
           </p>
         )}
+        <button onClick={autoDetect} disabled={autoDetecting} style={{ marginBottom: 12 }}>
+          {autoDetecting ? 'Auto-detecting…' : 'Auto-detect'}
+        </button>
         <div className="field-row">
           <label>GNames base</label>
           <input

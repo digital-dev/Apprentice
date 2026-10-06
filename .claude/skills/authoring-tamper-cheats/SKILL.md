@@ -73,6 +73,69 @@ an error naming the playbook; use the recipes below.
 Design: `docs/superpowers/specs/2026-09-19-cheat-factory-design.md` and
 `docs/superpowers/specs/2026-09-19-il2cpp-cheat-factory-design.md`.
 
+## When a wishlist item isn't a category: the deep-investigation fallback
+
+`author_cheats` only matches per-instance stat fields (see
+`categories.ts`). Function-shaped asks — a shop/UI unlock gate, a
+placement/collision check, an NPC decision, anything computed rather than
+stored — come back `notFound`/`manual` or were never a category to begin
+with. Don't improvise ad hoc: follow this procedure, the write-up of the
+process this repo's hand-authored cheats (No Body Search, Place Anywhere,
+Unlock All Shop Items, the Instant-* patches) actually used. Full design:
+`docs/superpowers/specs/2026-09-28-agentic-cheat-authoring-design.md`.
+
+1. **Survey.** `mcp-server/scripts/survey.js <pid> <outFile>
+   "<keyword-regex>"` against class-name keywords from the wishlist item
+   ("Shop", "Unlock", "Build", "Place", "Grid", ...). Nothing plausible?
+   Web-search the game's own name for the mechanic (e.g. "Schedule I shop
+   unlock rank system") to learn what it's actually called internally,
+   then re-survey with better keywords — the web result only points the
+   search, it never substitutes for reading the actual code.
+2. **Disassemble candidates**: `disasm.js` on methods whose names suggest
+   a gate (`Is*Valid`, `Can*`, `*Unlocked`, `Check*`, `Update`/
+   `LateUpdate` for per-frame state). Read what each one actually
+   touches; a name is a hint, not evidence.
+3. **Trace to the real, concrete implementation**, not the first hit —
+   `findCallers.js`/`findFieldReaders.js`. An IL2CPP virtual-dispatch
+   thunk is a 3-instruction stub (`mov rax,[rcx]; mov rdx,[rax+N]; jmp
+   [rax+M]`) that looks like a dead end; keep tracing to the
+   non-polymorphic method it lands on (e.g. `get_IsUnlocked`'s thunk
+   resolving to the one real `StorableItemDefinition.GetIsUnlocked`
+   shared by every purchasable item).
+4. **Classify the recipe** with the existing "Which recipe is this?" and
+   "Cheat category → recipe lookup" tables below — unchanged by this
+   procedure, just reached from a function-shaped starting point instead
+   of a field-shaped one.
+5. **Build the patch**: `makeCapture.js`/`makeReplace.js` where they fit;
+   hand-build `strip`/`scale`/`force` shapes those scripts don't cover.
+6. **Verify the signature is unique live** via `scan_aob` before treating
+   the patch as done — never ship a signature with more than one match
+   (the scripts do this automatically; a hand-built patch must do it
+   explicitly).
+7. **Run the full safety checklist** from "Before shipping: verification
+   discipline" below, no exceptions for an agent-found target: live
+   differential-test any rate/duration field before zeroing it, test a
+   multi-occurrence data-table patch against more than one item/building
+   type, gate (don't blanket-patch) a shared/generic helper.
+8. **Write to the live profile** (`games/<exe>.json`, not a draft file —
+   this fallback matches the hand-authored convention, not
+   `author_cheats`' draft-only one) with a `note` explaining the
+   mechanism and what was traced, and mirror that writeup into
+   `games/<exe>-notes.md`. Say "untested in-game" rather than asserting a
+   mechanism works when it hasn't been toggled live.
+
+**Isolate the noisy part in a fork.** Steps 1–3 produce a lot of
+disassembly dump that's mostly dead ends. Dispatch a `fork` (it inherits
+the live game handle/session context) to run the survey/disasm/trace
+loop and return a distilled report: the mechanism found, the proposed
+cheat JSON, confidence, and which landmines below apply. Review that
+report against the checklist yourself before writing anything — a fork's
+summary describes what it did, not a decision to apply unexamined.
+
+This fallback never runs unprompted: it activates for a wishlist item the
+user asked for that doesn't match a category, never as a proactive scan
+proposing cheats nobody requested.
+
 ## When a cheat doesn't work, or the mechanism isn't obvious: read the code, then watch the game
 
 Confident guesses from field and method *names* fail often; evidence does not.

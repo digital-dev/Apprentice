@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('tamper', {
     ipcRenderer.invoke('mono:readLiveValue', className, staticFieldName, instanceFieldName),
   ueGetConfig: () => ipcRenderer.invoke('ue:getConfig'),
   ueSaveConfig: (config: UeConfig) => ipcRenderer.invoke('ue:saveConfig', config),
+  ueAutoDiscover: () => ipcRenderer.invoke('ue:autoDiscover'),
   ueResolveClass: (className: string, maxObjectsToScan: number) =>
     ipcRenderer.invoke('ue:resolveClass', className, maxObjectsToScan),
   ueListFieldNames: (classAddress: string) => ipcRenderer.invoke('ue:listFieldNames', classAddress),

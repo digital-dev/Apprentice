@@ -261,14 +261,21 @@ declare global {
         staticFieldName: string,
         instanceFieldName?: string
       ) => Promise<{ raw: string; int32: number; float: number } | null>
-      // UE Explorer's read/write side. saveConfig persists the current
-      // profile's UeConfig calibration (see profile.ts's own doc for why
-      // there's no way to auto-fill this). resolveClass/listFieldNames
-      // mirror monoResolveClass/monoListFields but for UE reflection --
-      // null/[] on "not attached", "no ueConfig calibrated yet", or "not
-      // found" alike, same "can't resolve right now" convention.
+      // UE Explorer's read/write side. saveConfig persists a manual
+      // UeConfig override to the current profile. autoDiscover runs the
+      // same signature-scan-based discovery the cheat-apply path already
+      // uses in the background (see ueDiscover.ts / ipc.ts's
+      // startUeDiscovery), awaited so the UI gets a real result instead of
+      // polling -- null means "not attached" or "couldn't recognize this
+      // game's layout", in which case the manual calibration form is the
+      // fallback. resolveClass/listFieldNames mirror
+      // monoResolveClass/monoListFields but for UE reflection, preferring a
+      // saved profile UeConfig and falling back to whatever autoDiscover
+      // already found live -- null/[] on "not attached" or "not found"
+      // either way, same "can't resolve right now" convention.
       ueGetConfig: () => Promise<UeConfig | null>
       ueSaveConfig: (config: UeConfig) => Promise<boolean>
+      ueAutoDiscover: () => Promise<UeConfig | null>
       ueResolveClass: (className: string, maxObjectsToScan: number) => Promise<string | null>
       ueListFieldNames: (classAddress: string) => Promise<string[]>
       // Opens a native file picker for a .CT file and imports every

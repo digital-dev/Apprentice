@@ -1760,12 +1760,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
   )
 
   // UE Explorer's read side: resolve a class by exact name and list its
-  // field names, given the current profile's calibrated UeConfig (see
-  // docs/superpowers/specs/2026-09-17-ue-reflection-decode-design.md for
-  // why that config can't be auto-discovered). null covers "not attached",
-  // "no ueConfig calibrated for this game yet", and "not found" alike --
-  // all routine, matching every other resolver's "can't resolve right now"
-  // convention.
+  // field names. Prefers the current profile's manually-calibrated
+  // UeConfig when one is saved (an explicit user override always wins),
+  // falling back to whatever discoverUeConfig has already found live for
+  // the attached process (ueDiscovered, the same auto-discovery the
+  // cheat-apply path already relies on -- see ue:autoDiscover below and
+  // docs/superpowers/specs/2026-09-20-ue-autodiscovery-design.md). null
+  // covers "not attached", "no config either way yet", and "not found"
+  // alike -- all routine, matching every other resolver's "can't resolve
+  // right now" convention.
   ipcMain.handle('ue:getConfig', (): import('./profile').UeConfig | null => {
     if (attachedExe === null) return null
     return loadProfile(attachedExe).ueConfig ?? null
@@ -1782,17 +1785,31 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
     }
   )
 
+  // Explorer's "Auto-detect" button: runs the same signature-scan-based
+  // discovery the cheat-apply path uses lazily in the background, but
+  // awaited so the UI gets a real result instead of "try again in a
+  // second". Returns null for "not attached", "discovery already failed
+  // recently" (rate-limited by UE_DISCOVER_RETRY_MS, same as the
+  // background path), or "this game's layout wasn't recognized" alike --
+  // the Explorer falls back to manual calibration either way, so this
+  // doesn't need to distinguish them for the caller.
+  ipcMain.handle('ue:autoDiscover', async (): Promise<import('./profile').UeConfig | null> => {
+    if (attachedHandle === null) return null
+    await startUeDiscovery(attachedHandle)
+    return ueDiscovered
+  })
+
   ipcMain.handle(
     'ue:resolveClass',
     (_e, className: string, maxObjectsToScan: number): string | null => {
       if (attachedHandle === null || attachedExe === null) return null
-      const profile = loadProfile(attachedExe)
-      if (profile.ueConfig === undefined) return null
+      const config = loadProfile(attachedExe).ueConfig ?? ueDiscovered
+      if (config === null) return null
       const handle = attachedHandle
       return resolveClassAddress(
         (address, length) => nativeAddon.tryReadBytes(handle, address, length),
-        profile.ueConfig.gObjectArray,
-        profile.ueConfig.gNames,
+        config.gObjectArray,
+        config.gNames,
         className,
         maxObjectsToScan
       )
@@ -1801,13 +1818,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
 
   ipcMain.handle('ue:listFieldNames', (_e, classAddress: string): string[] => {
     if (attachedHandle === null || attachedExe === null) return []
-    const profile = loadProfile(attachedExe)
-    if (profile.ueConfig === undefined) return []
+    const config = loadProfile(attachedExe).ueConfig ?? ueDiscovered
+    if (config === null) return []
     const handle = attachedHandle
     const readBytes = (address: string, length: number): string | null =>
       nativeAddon.tryReadBytes(handle, address, length)
-    return walkProperties(readBytes, classAddress, fieldLayoutFor(profile.ueConfig))
-      .map((entry) => decodeFName(readBytes, profile.ueConfig!.gNames, entry.name.comparisonIndex))
+    return walkProperties(readBytes, classAddress, fieldLayoutFor(config))
+      .map((entry) => decodeFName(readBytes, config.gNames, entry.name.comparisonIndex))
       .filter((name): name is string => name !== null)
   })
 
