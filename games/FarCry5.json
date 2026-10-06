@@ -1,0 +1,411 @@
+{
+  "schema": 2,
+  "exe": "FarCry5",
+  "modules": {
+    "FC_m64.dll": {
+      "size": 250253312,
+      "timestamp": 1743608884,
+      "version": "1.0.0.0"
+    }
+  },
+  "cheats": [
+    {
+      "kind": "patch",
+      "mode": "capture",
+      "id": "farcry5-capture-player",
+      "name": "Capture: player entity",
+      "originalBytes": "0f29742420",
+      "length": 5,
+      "signature": "0f 29 74 24 20 48 8b 49 48 e8 ?? ?? ?? ?? 0f 2f 05 ?? ?? ?? ?? 48 8b 4f 50",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x9bea61d",
+      "baseRegister": "rcx",
+      "internal": true
+    },
+    {
+      "id": "farcry5-unlimited-health",
+      "name": "Unlimited Health",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "farcry5-capture-player",
+          "derefOffset": "0x48",
+          "offset": "0x18",
+          "dataType": "float"
+        }
+      ],
+      "value": 100,
+      "notes": "Freezes the player health stat (entity+0x48, current at +0x18) at 100. The freeze runs every 100 ms, so burst damage (explosions, long falls) can still kill between ticks. A stronger form would block the decrease inside the game's SetHealth (+0x108e340), gated on the player pointer; Tamper cannot hand a capture patch's pointer to another patch, so that form is not used. Untested in-game."
+    },
+    {
+      "id": "farcry5-unlimited-stamina",
+      "name": "Unlimited Stamina",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "farcry5-capture-player",
+          "derefOffset": "0x428",
+          "offset": "0x18",
+          "dataType": "float"
+        }
+      ],
+      "value": 100,
+      "notes": "Freezes the stamina stat (entity+0x428; same stat class as health, +0x18 current, +0x1c max) at 100. Untested in-game."
+    },
+    {
+      "id": "farcry5-unlimited-oxygen",
+      "name": "Unlimited Oxygen",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "anchor",
+          "patchId": "farcry5-capture-player",
+          "derefOffset": "0x468",
+          "offset": "0x18",
+          "dataType": "float"
+        }
+      ],
+      "value": 100,
+      "notes": "Freezes the oxygen stat (entity+0x468; same stat class) at 100. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "farcry5-ghost",
+      "name": "Ghost Mode (enemies ignore you)",
+      "originalBytes": "0f84df000000",
+      "length": 6,
+      "signature": "0f 84 ?? ?? ?? ?? 49 8b 00 48 89 5c 24 50 48 89 7c 24 58",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x2c6428f",
+      "replacementBytes": "90e9df000000",
+      "notes": "Turns the jz after cmp [r8+0x14],2 into an unconditional jmp to the same target. The function looks like an NPC awareness/event handler, so every event takes the 'type 2' path. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "nop",
+      "id": "farcry5-timer-b",
+      "name": "Buff timer 2 (no countdown)",
+      "originalBytes": "f30f5cc1",
+      "length": 4,
+      "signature": "f3 0f 5c c1 0f 2f c2 f3 0f 11 41 64 77 ?? 41 b0 01",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xe2411fd",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "nop",
+      "id": "farcry5-unlimited-buff-duration",
+      "name": "Unlimited Buff Duration",
+      "originalBytes": "f30f5cc6",
+      "length": 4,
+      "signature": "f3 0f 5c c6 f3 0f 11 43 08 83 f8 05 73 ?? 48 8d 0c 80",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x239f67a",
+      "companions": [
+        "farcry5-timer-b"
+      ],
+      "notes": "NOPs the two subss instructions that count timers down (+0x239f67a over a 24-byte-stride timer array, and +0xe2411fd for a single timer at +0x64). Both are shared timer code, so other timers in those loops stop counting too. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "farcry5-freeze-timer",
+      "name": "Freeze Timer",
+      "originalBytes": "f30f5c01",
+      "length": 4,
+      "signature": "f3 0f 5c 01 c3 48 33 3c 24 41 89 f0 4d 31 c0 66 c1 c9 09",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x6071440",
+      "replacementBytes": "0f57c090",
+      "notes": "The function returns game-time minus a stored start time (subss xmm0,[rcx]; ret). Replaced with xorps xmm0,xmm0; nop so elapsed time reads 0. A shared helper: any timer built on it stops, not only mission timers. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "strip",
+      "id": "farcry5-overheat-read",
+      "name": "Overheat read (zero)",
+      "originalBytes": "f30f1081f0010000",
+      "length": 8,
+      "signature": "f3 0f 10 81 f0 01 00 00 48 8d 54 24 40 48 8d 4d 28",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdcd1660",
+      "baseRegister": "rcx",
+      "fields": [
+        {
+          "fieldOffset": "0x1f0",
+          "value": 0,
+          "dataType": "float"
+        }
+      ],
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "farcry5-no-overheat",
+      "name": "No Weapon Overheat",
+      "originalBytes": "f30f5833",
+      "length": 4,
+      "signature": "f3 0f 58 33 f3 0f 10 3d ?? ?? ?? ?? 48 8b 7c 24 50 0f 2f f7",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x1db4de6",
+      "replacementBytes": "0f57f690",
+      "companions": [
+        "farcry5-overheat-read"
+      ],
+      "notes": "Replaces addss xmm6,[rbx] (heat accumulate) with xorps xmm6,xmm6 so the stored value stays 0, and zeroes the weapon field at +0x1f0 when it is read. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "farcry5-super-accuracy",
+      "name": "Super Accuracy",
+      "originalBytes": "f30f11b008040000",
+      "length": 8,
+      "signature": "f3 0f 11 b0 08 04 00 00 f3 0f 11 90 14 04 00 00",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x1e277d0",
+      "baseRegister": "rax",
+      "fieldOffset": "0x408",
+      "value": 0,
+      "dataType": "float",
+      "notes": "Replaces the store of the spread accumulator ([rax+0x408]) with a store of 0. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "farcry5-recoil-11c",
+      "name": "Recoil store 0x11c",
+      "originalBytes": "f3440f11831c010000",
+      "length": 9,
+      "signature": "f3 44 0f 11 83 1c 01 00 00 f3 44 0f 11 83 20 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdcb2a71",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x11c",
+      "value": 0,
+      "dataType": "float",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "farcry5-recoil-120",
+      "name": "Recoil store 0x120",
+      "originalBytes": "f3440f118320010000",
+      "length": 9,
+      "signature": "f3 44 0f 11 83 20 01 00 00 f3 0f 11 b3 2c 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdcb2a7a",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x120",
+      "value": 0,
+      "dataType": "float",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "farcry5-recoil-12c",
+      "name": "Recoil store 0x12c",
+      "originalBytes": "f30f11b32c010000",
+      "length": 8,
+      "signature": "f3 0f 11 b3 2c 01 00 00 f3 0f 11 b3 30 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdcb2a83",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x12c",
+      "value": 0,
+      "dataType": "float",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "farcry5-recoil-130",
+      "name": "Recoil store 0x130",
+      "originalBytes": "f30f11b330010000",
+      "length": 8,
+      "signature": "f3 0f 11 b3 30 01 00 00 f3 0f 11 83 24 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdcb2a8b",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x130",
+      "value": 0,
+      "dataType": "float",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "farcry5-recoil-124",
+      "name": "Recoil store 0x124",
+      "originalBytes": "f30f118324010000",
+      "length": 8,
+      "signature": "f3 0f 11 83 24 01 00 00 0f 10 45 20 c6 83 28 01 00 00 01",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdcb2a93",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x124",
+      "value": 0,
+      "dataType": "float",
+      "internal": true
+    },
+    {
+      "kind": "patch",
+      "mode": "force",
+      "id": "farcry5-no-recoil",
+      "name": "No Recoil",
+      "originalBytes": "f3440f11a318010000",
+      "length": 9,
+      "signature": "f3 44 0f 11 a3 18 01 00 00 f3 44 0f 11 83 1c 01 00 00",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdcb2a68",
+      "baseRegister": "rbx",
+      "fieldOffset": "0x118",
+      "value": 0,
+      "dataType": "float",
+      "companions": [
+        "farcry5-recoil-11c",
+        "farcry5-recoil-120",
+        "farcry5-recoil-12c",
+        "farcry5-recoil-130",
+        "farcry5-recoil-124"
+      ],
+      "notes": "Six consecutive stores into the weapon recoil state (rbx+0x118..0x130) are each replaced by a store of 0. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "strip",
+      "id": "farcry5-no-reload",
+      "name": "No Reload / Unlimited Magazine",
+      "originalBytes": "83b98801000000",
+      "length": 7,
+      "signature": "83 b9 88 01 00 00 00 48 89 cb 74 ?? 30 c0 48 83 c4 30",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xdc2ea35",
+      "baseRegister": "rcx",
+      "fields": [
+        {
+          "fieldOffset": "0x188",
+          "value": 99,
+          "dataType": "int32"
+        }
+      ],
+      "notes": "Entry of a function that returns false while [weapon+0x188] != 0. Writes 99 there before the original compare, so the magazine never reads empty. Covers unlimited ammo while firing; reserve counts are not touched. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "strip",
+      "id": "farcry5-fishing-line",
+      "name": "Unlimited Fishing Line Durability",
+      "originalBytes": "f30f10b67c020000",
+      "length": 8,
+      "signature": "f3 0f 10 b6 7c 02 00 00 f3 0f 59 35 ?? ?? ?? ?? e8 ?? ?? ?? ?? 39 05 ?? ?? ?? ??",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x2125512",
+      "baseRegister": "rsi",
+      "fields": [
+        {
+          "fieldOffset": "0x27c",
+          "value": 1,
+          "dataType": "float"
+        }
+      ],
+      "notes": "Writes 1.0 to the normalized durability at [rsi+0x27c] before the game reads it. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "strip",
+      "id": "farcry5-easy-craft",
+      "name": "Easy Craft (no material cost)",
+      "originalBytes": "448be0",
+      "length": 3,
+      "signature": "44 8b e0 8b 47 10 44 3b e0 89 44 24 38 0f 93 c1",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x24ee9c0",
+      "baseRegister": "rdi",
+      "fields": [
+        {
+          "fieldOffset": "0x10",
+          "value": 0,
+          "dataType": "int32"
+        }
+      ],
+      "notes": "Zeroes the required quantity at [rdi+0x10] before the have-vs-need compare. This is probably a shared data row, so the change is not undone when the cheat is switched off until the game reloads it. Test against more than one recipe before relying on it. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "strip",
+      "id": "farcry5-unlimited-perk-points",
+      "name": "Unlimited Perk Points",
+      "originalBytes": "398fe8000000",
+      "length": 6,
+      "signature": "39 8f e8 00 00 00 72 ?? 8b 48 08 83 f9 ff 74 ??",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xc0e7dad",
+      "baseRegister": "rdi",
+      "fields": [
+        {
+          "fieldOffset": "0xe8",
+          "value": 999,
+          "dataType": "int32"
+        }
+      ],
+      "notes": "Affordability check: the function compares the balance at [rdi+0xe8] with a looked-up cost ([rax+0x9c]) and fails when the balance is lower. Writes 999 into the balance before the compare, which also sets the stored balance to 999. A second check at +0x245c419 (mov ebx,[rax] on a value returned by a global lookup) exists and is NOT patched: it overwrites whatever any caller looks up, and I could not tell how far that reaches. If a perk purchase still fails, that site is the next thing to look at. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "farcry5-unlimited-missiles",
+      "name": "Unlimited Missiles",
+      "originalBytes": "448b44d674",
+      "length": 5,
+      "signature": "44 8b 44 d6 74 e8 ?? ?? ?? ?? c6 44 33 40 00 48 8b 5c 24 30",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0x1d2d0d9",
+      "replacementBytes": "6a09415890",
+      "notes": "Replaces mov r8d,[rsi+rdx*8+0x74] (slot count) with push 9; pop r8; nop so the count reads 9. The stored count is not rewritten, so on-screen numbers may differ. Untested in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "farcry5-unlimited-bombs",
+      "name": "Unlimited Bombs",
+      "originalBytes": "448b44df74",
+      "length": 5,
+      "signature": "44 8b 44 df 74 89 da 48 89 c1 e8 ?? ?? ?? ?? 48 8b 5c 24 30",
+      "signatureOffset": 0,
+      "moduleName": "FC_m64.dll",
+      "moduleOffset": "0xcbaf0ba",
+      "replacementBytes": "6a09415890",
+      "notes": "Same shape as Unlimited Missiles in a different function: mov r8d,[rdi+rbx*8+0x74] reads as 9. Untested in-game."
+    }
+  ]
+}

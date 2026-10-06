@@ -1,0 +1,345 @@
+{
+  "schema": 2,
+  "exe": "Supermarket Together",
+  "modules": {},
+  "cheats": [
+    {
+      "id": "stm-funds",
+      "name": "Unlimited Funds",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "gameFunds"
+        }
+      ],
+      "value": 99999999,
+      "note": "gameFunds is a float SyncVar at +0x1E0 (live read ~172k); CmdAlterFunds adds to it unclamped. Read from GameData disassembly; not run in-game. Host only (SyncVar)."
+    },
+    {
+      "id": "stm-funds-set",
+      "name": "Set Funds",
+      "dataType": "float",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "gameFunds"
+        }
+      ],
+      "value": 1000000,
+      "note": "Edit the value, then Apply. Read from GameData disassembly; not run in-game. Host only (SyncVar)."
+    },
+    {
+      "id": "stm-xp-set",
+      "name": "Set Franchise Experience",
+      "dataType": "int32",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "gameFranchiseExperience"
+        }
+      ],
+      "value": 1000000,
+      "note": "int at +0x1E4 (live 189314). Level is derived by CalculateFranchiseLevel; may need a UI refresh. Read from GameData disassembly; not run in-game. Host only (SyncVar)."
+    },
+    {
+      "id": "stm-points-set",
+      "name": "Set Franchise Points",
+      "dataType": "int32",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "gameFranchisePoints"
+        }
+      ],
+      "value": 999,
+      "note": "int at +0x1E8. Read from GameData disassembly; not run in-game. Host only (SyncVar)."
+    },
+    {
+      "id": "stm-stop-time",
+      "name": "Stop Time",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "timeFactor"
+        }
+      ],
+      "value": 50,
+      "offValue": 1,
+      "note": "FixedUpdate only advances timeOfDay while timeFactor < 10; the game sets 50 when closed/day ends and 1.0 on open (AuxiliarSupermarketOpen). Freezing 50 halts the clock. Read from GameData disassembly; not run in-game. Host only (SyncVar)."
+    },
+    {
+      "id": "stm-time-2x",
+      "name": "Time Speed x2",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "timeFactor"
+        }
+      ],
+      "value": 0.5,
+      "offValue": 1,
+      "note": "timeOfDay += (1/timeFactor)*dt/60 while open, normal 1.0. Use only while open: while closed, a value < 10 starts the clock. Untested for the day-end path. Read from GameData disassembly; not run in-game. Host only (SyncVar)."
+    },
+    {
+      "id": "stm-time-4x",
+      "name": "Time Speed x4",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "timeFactor"
+        }
+      ],
+      "value": 0.25,
+      "offValue": 1,
+      "note": "See Time Speed x2. Never use 0 (divide by zero). Read from GameData disassembly; not run in-game. Host only (SyncVar)."
+    },
+    {
+      "id": "stm-tokens-set",
+      "name": "Set All Machine Tokens (star / snowflake / moon)",
+      "dataType": "int32",
+      "mode": "oneshot",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "AchievementsManager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "evtsTkns",
+          "pointerFieldOffset": "0x20"
+        },
+        {
+          "kind": "mono",
+          "className": "AchievementsManager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "evtsTkns",
+          "pointerFieldOffset": "0x24"
+        },
+        {
+          "kind": "mono",
+          "className": "AchievementsManager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "evtsTkns",
+          "pointerFieldOffset": "0x28"
+        },
+        {
+          "kind": "mono",
+          "className": "AchievementsManager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "evtsTkns",
+          "pointerFieldOffset": "0x2c"
+        },
+        {
+          "kind": "mono",
+          "className": "AchievementsManager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "evtsTkns",
+          "pointerFieldOffset": "0x30"
+        },
+        {
+          "kind": "mono",
+          "className": "AchievementsManager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "evtsTkns",
+          "pointerFieldOffset": "0x34"
+        }
+      ],
+      "value": 999,
+      "note": "AchievementsManager.evtsTkns is an int[6] of token counts (AddToken(idx,n) adds to slot idx). Which slot is star/snowflake/moon was not identified, so all 6 slots are set. The on-screen count refreshes the next time the game calls AddToken. Read live: all 6 were 0. Not run in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "stm-no-thieves",
+      "name": "No Thieves",
+      "originalBytes": "41c687f801000001",
+      "length": 8,
+      "replacementBytes": "41c687f801000000",
+      "signature": "66 0f 2f c8 0f 86 08 00 00 00 41 c6 87 f8 01 00 00 01 48 8b ce 33 d2 90 49 bb ?? ?? ?? ?? ?? ?? ?? ?? 41 ff d3",
+      "signatureOffset": 10,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "<SpawnCustomerNPC>d__203",
+      "monoMethod": "MoveNext",
+      "monoSearch": true
+    },
+    {
+      "kind": "patch",
+      "mode": "replace",
+      "id": "stm-unlimited-shelf",
+      "name": "Unlimited Shelf Items",
+      "originalBytes": "41ffcf",
+      "length": 3,
+      "replacementBytes": "909090",
+      "signature": "4c 63 38 49 8b c7 85 c0 0f 8e ?? ?? ?? ?? 41 ff cf 48 8b 47 68 49 8b ce d1 e1 ff c1 48 63 c9 39 48 18",
+      "signatureOffset": 14,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "Data_Container",
+      "monoMethod": "NPCGetsItemFromRow",
+      "monoSearch": true
+    },
+    {
+      "id": "stm-sales-x3",
+      "name": "Checkout Payment x3",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "NPC_Manager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "extraCheckoutMoney"
+        }
+      ],
+      "value": 3,
+      "offValue": 1.1,
+      "note": "Float at +0x2BC (live 1.1). Data_Container.AuxReceivePayment loads it from the NPC_Manager singleton while taking a payment; the multiply itself was not traced. Not run in-game."
+    },
+    {
+      "id": "stm-employee-speed",
+      "name": "Employee Speed x3",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "NPC_Manager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "extraEmployeeSpeedFactor"
+        }
+      ],
+      "value": 10,
+      "offValue": 1,
+      "note": "Float at +0x2B8 (live 1.0). Name-based; its readers were not traced. Not run in-game."
+    },
+    {
+      "id": "stm-employee-place",
+      "name": "Fast Employee Restock",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "NPC_Manager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "employeeItemPlaceWait"
+        }
+      ],
+      "value": 0.02,
+      "offValue": 0.1,
+      "note": "Seconds an employee waits per item placed (+0x2C0, live 0.1). Name-based; readers not traced. Not run in-game."
+    },
+    {
+      "id": "stm-more-customers",
+      "name": "More Customers",
+      "dataType": "int32",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "GameData",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "extraCustomersPerk"
+        }
+      ],
+      "value": 20,
+      "offValue": 2,
+      "note": "Int at +0x208 (live 2), added to the customer cap. Name-based, effect on spawn rate not traced. Not run in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "scale",
+      "id": "stm-fast-shopping",
+      "name": "Fast Shopping (customers grab instantly, move much faster)",
+      "originalBytes": "f3410f11af08020000",
+      "length": 9,
+      "signature": "0f 5a c0 66 66 90 49 bb ?? ?? ?? ?? ?? ?? ?? ?? 41 ff d3 f3 0f 5a c0 48 8b 85 00 ff ff ff f2 0f 5a e8 f3 41 0f 11 af 08 02 00 00",
+      "signatureOffset": 34,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "<SpawnCustomerNPC>d__203",
+      "monoMethod": "MoveNext",
+      "monoSearch": true,
+      "sourceRegister": "xmm5",
+      "value": 0.05,
+      "dataType": "float",
+      "note": "NPC_Info.productItemPlaceWait (+0x208, per-customer, no singleton) is computed once at spawn as Mathf.Clamp(0.5 - gameDay*0.003, 0.1, 0.5) then stored here; <PlaceProductsCoroutine>d__137.MoveNext reads it back as the per-item grab delay (traced live this session). No global field to freeze, so this scales the value written at spawn instead. Signature verified unique live; the arm/patch mechanism itself was not run in-game.",
+      "companions": [
+        "stm-fast-shopping-movespeed"
+      ]
+    },
+    {
+      "id": "stm-fast-checkout",
+      "name": "Fast Checkout (employee + self-checkout)",
+      "dataType": "float",
+      "mode": "freeze",
+      "targets": [
+        {
+          "kind": "mono",
+          "className": "NPC_Manager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "productCheckoutWait"
+        },
+        {
+          "kind": "mono",
+          "className": "NPC_Manager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "minSelfCheckoutWait"
+        },
+        {
+          "kind": "mono",
+          "className": "NPC_Manager",
+          "staticFieldName": "Instance",
+          "instanceFieldName": "maxSelfCheckoutWait"
+        }
+      ],
+      "value": 0.05,
+      "captureOriginal": true,
+      "note": "Merges the three checkout-wait fields (employee cashier: +0x2C4 live 0.4s; self-checkout min/max: +0x2C8/+0x2CC live 0.85s/1.75s) into one toggle. captureOriginal (not a shared offValue) so each target restores its own live value on disable, since the three defaults differ. Employee wait traced by name only; self-checkout waits traced live into <CustomerSelfCheckout>d__139.MoveNext this session. Not run in-game."
+    },
+    {
+      "kind": "patch",
+      "mode": "scale",
+      "id": "stm-fast-shopping-movespeed",
+      "internal": true,
+      "name": "Fast Shopping companion: customer NavMeshAgent speed",
+      "originalBytes": "833e00",
+      "length": 3,
+      "signature": "f3 0f 10 15 ?? ?? ?? ?? f3 0f 5a d2 f2 0f 59 ca f2 0f 58 c1 48 8b ce f2 0f 10 c8 f2 0f 5a c9 83 3e 00",
+      "signatureOffset": 31,
+      "moduleName": null,
+      "moduleOffset": null,
+      "monoClass": "NPC_Manager",
+      "monoMethod": "SetAgentData",
+      "monoSearch": true,
+      "sourceRegister": "xmm1",
+      "value": 4,
+      "dataType": "float",
+      "note": "NPC_Manager.SetAgentData(agent) runs once per customer at spawn (called from <SpawnCustomerNPC>d__203.MoveNext) and makes 4-5 property-setter calls on the passed-in component in sequence: a bool (true), then floats with day-scaled-and-clamped values -- 1.0 flat, ~1.9+small growth, 120+up to 60, 8+up to 24. Never confirmed which Unity API each setter is (no icall names visible, only JIT thunk addresses) -- identified the 3rd float setter (~1.9-6 range) as NavMeshAgent.speed by numeric plausibility against Unity's own defaults (speed ~1-6, angularSpeed default 120, acceleration default 8, which the 4th and 5th setters' ranges match almost exactly). This is the best guess, not a confirmed mechanism. Anchored on the instruction right after the final cvtsd2ss produces the float (xmm1) and before the property-setter call consumes it, so the multiply applies to the same value regardless of which property it turns out to be. Signature verified unique live; not armed in-game. Hidden as a companion of stm-fast-shopping (kind:patch + internal) rather than a separate toggle, since the user asked for one Fast Shopping switch."
+    }
+  ]
+}
