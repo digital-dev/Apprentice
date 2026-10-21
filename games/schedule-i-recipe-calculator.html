@@ -3,116 +3,338 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Schedule I Recipe Calculator</title>
+<title>Schedule I Mixing Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0f1115;--panel:#171a21;--panel2:#1d212a;--line:#2a2f3a;--text:#e6e8ee;--dim:#98a0b0;--accent:#6ee7a8;--accent2:#7aa7ff;--warn:#f5b84b;--bad:#ff7a7a;
---t1:#7fd6a1;--t2:#7ab8ff;--t3:#c79bff;--t4:#ffb86b;--t5:#ff7f9f}
-@media (prefers-color-scheme:light){:root{--bg:#f3f4f7;--panel:#fff;--panel2:#f0f2f6;--line:#d8dce5;--text:#1b1f27;--dim:#5b6475;--accent:#0f9d62;--accent2:#2a62d6;--warn:#b9770e;--bad:#c0392b;
---t1:#1c9a5a;--t2:#1f6fd0;--t3:#8a4fd6;--t4:#d9730d;--t5:#d02c5b}}
+:root{
+  --bg:#0a0d09;--bg2:#10150f;--panel:#141a13;--panel2:#1a2219;--line:#273126;--line2:#364334;
+  --text:#e9f1e6;--dim:#9aa897;--faint:#6b7867;
+  --acc:#8bff5a;--acc-ink:#0b1a05;--warn:#ffc24b;--bad:#ff6b6b;--good:#8bff5a;
+  --t1:#6fe39a;--t2:#5ab8ff;--t3:#c08bff;--t4:#ffad5a;--t5:#ff6fa3;
+  --r:14px;
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
-header{padding:18px 20px 8px;max-width:1200px;margin:0 auto}
-h1{margin:0;font-size:20px}
-.sub{color:var(--dim);font-size:12px;margin-top:2px}
-main{max-width:1200px;margin:0 auto;padding:8px 20px 40px;display:grid;grid-template-columns:380px 1fr;gap:16px}
-@media (max-width:900px){main{grid-template-columns:1fr;padding:8px 16px 40px}}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
-.card h2{margin:0 0 10px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
-label.f{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
-select,input[type=range]{width:100%}
-select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px}
+html,body{margin:0}
+body{
+  color:var(--text);font:14px/1.5 Inter,system-ui,"Segoe UI",Roboto,sans-serif;min-height:100vh;
+  background:
+    radial-gradient(1100px 600px at 5% -10%,#1b3313 0%,transparent 60%),
+    radial-gradient(900px 500px at 105% 0%,#10263a 0%,transparent 55%),
+    var(--bg);
+  background-attachment:fixed;
+}
+button{font:inherit;color:inherit}
+a{color:var(--acc)}
+.hidden{display:none!important}
+
+/* header */
+.top{max-width:1280px;margin:0 auto;padding:22px 20px 6px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}
+.brand{display:flex;gap:14px;align-items:center}
+.logo{width:54px;height:54px;color:var(--acc);filter:drop-shadow(0 0 10px color-mix(in srgb,var(--acc) 45%,transparent))}
+h1{font-family:"Bebas Neue",Impact,sans-serif;font-weight:400;font-size:42px;letter-spacing:.03em;margin:0;line-height:1}
+h1 span{color:var(--acc);text-shadow:0 0 18px color-mix(in srgb,var(--acc) 50%,transparent)}
+.sub{color:var(--faint);font-size:11.5px;margin-top:4px}
+.tabs{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);padding:5px;border-radius:999px;flex-wrap:wrap}
+.tabs button{border:0;background:transparent;color:var(--dim);padding:8px 16px;border-radius:999px;cursor:pointer;font-weight:600;font-size:13px;transition:.15s}
+.tabs button:hover{color:var(--text)}
+.tabs button.on{background:var(--acc);color:var(--acc-ink);box-shadow:0 0 18px color-mix(in srgb,var(--acc) 40%,transparent)}
+
+main{max-width:1280px;margin:0 auto;padding:14px 20px 60px}
+.grid{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:18px;align-items:start}
+@media(max-width:960px){.grid{grid-template-columns:minmax(0,1fr)} main,.top{padding-left:16px;padding-right:16px}}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.pickrow{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:14px;align-items:stretch}
+.tunerow{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:24px}
+@media(max-width:960px){.pickrow,.tunerow{grid-template-columns:minmax(0,1fr)}}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,540px),1fr));gap:14px}
+.gobar .progress{position:absolute;left:0;right:0;top:100%;margin-top:6px;justify-content:center}
+.ready{display:flex;align-items:center;gap:16px;padding:14px 18px}
+.ready .logo{width:44px;height:44px;flex:none}
+.ready p{margin:0;color:var(--dim);font-size:13px}
+.ready b{color:var(--text)}
+.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:var(--r);padding:16px;box-shadow:0 12px 30px -20px #000}
+
+/* steps */
+.stephead{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px}
+.stephead .num{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--acc);color:var(--acc-ink);font-family:"Bebas Neue",Impact,sans-serif;font-size:20px;box-shadow:0 0 14px -2px var(--acc)}
+.stephead h2,.h{margin:0;font-size:16px;font-weight:700}
+.stephead p{margin:2px 0 0;color:var(--dim);font-size:12.5px}
+.h{margin-bottom:10px}
+.lbl{margin:16px 0 6px;color:var(--dim);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.lbl b{color:var(--acc);font-size:18px}
+.lbl .links{text-transform:none;letter-spacing:0;font-weight:500}
+.hint{color:var(--faint);font-size:12px;margin:4px 0 0}
+
+/* products */
+.prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.prod{display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 6px 9px;border:1px solid var(--line);border-radius:12px;background:var(--bg2);cursor:pointer;text-align:center;transition:.15s}
+.prod:hover{border-color:var(--line2);transform:translateY(-2px)}
+.prod.on{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 9%,var(--bg2));box-shadow:0 0 0 1px var(--acc) inset,0 0 22px -8px var(--acc)}
+.prod b{font-size:13px}
+.prod small{color:var(--dim);font-size:11px;line-height:1.3}
+.picon{display:block;filter:drop-shadow(0 3px 6px rgba(0,0,0,.5))}
+
+/* effects */
+.search{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--text);margin:10px 0 2px;font:inherit}
+.search:focus{outline:none;border-color:var(--acc)}
+.tier{display:flex;align-items:center;gap:8px;margin:12px 0 6px;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--c)}
+.tier::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,color-mix(in srgb,var(--c) 45%,transparent),transparent)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.tier{margin-top:8px;font-size:11px;color:var(--dim)}
-.chip{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:999px;padding:3px 10px;cursor:pointer;font-size:12px;user-select:none}
-.chip:hover{border-color:var(--dim)}
-.chip.on{background:var(--accent);color:#06210f;border-color:var(--accent);font-weight:600}
-.chip.t1{border-left:3px solid var(--t1)}.chip.t2{border-left:3px solid var(--t2)}.chip.t3{border-left:3px solid var(--t3)}.chip.t4{border-left:3px solid var(--t4)}.chip.t5{border-left:3px solid var(--t5)}
-.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.seg button{flex:1;background:var(--panel2);color:var(--text);border:0;padding:7px;cursor:pointer;font-size:12px}
-.seg button.on{background:var(--accent2);color:#fff}
-.row{display:flex;gap:8px;align-items:center}
-button.go{background:var(--accent);color:#06210f;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;flex:1}
-button.go:disabled{opacity:.5;cursor:default}
-button.ghost{background:transparent;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 12px;cursor:pointer}
-.small{font-size:12px;color:var(--dim)}
-.ing{display:flex;flex-wrap:wrap;gap:6px}
-.ing label{display:flex;gap:5px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:3px 8px;background:var(--panel2);font-size:12px;cursor:pointer}
-.res{width:100%;border-collapse:collapse}
-.res th{color:var(--dim);font-weight:500;font-size:11px;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-.res td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-.res tr:last-child td{border-bottom:0}
-.pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 7px;margin:0 2px 3px 0;font-size:12px;white-space:nowrap}
-.pill b{color:var(--dim);font-weight:500;margin-right:4px}
-.eff{display:inline-block;border-radius:5px;padding:1px 7px;margin:0 3px 3px 0;font-size:12px;border:1px solid var(--line)}
-.eff.want{background:color-mix(in srgb,var(--accent) 22%,transparent);border-color:var(--accent)}
-.eff.extra{color:var(--dim)}
-.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-.good{color:var(--accent)}.bad{color:var(--bad)}
-.note{border-left:3px solid var(--warn);padding:6px 10px;margin:10px 0;background:color-mix(in srgb,var(--warn) 10%,transparent);font-size:12px}
-.tabs{display:flex;gap:6px;margin-bottom:12px}
-.tabs button{background:var(--panel);color:var(--dim);border:1px solid var(--line);border-radius:8px;padding:7px 14px;cursor:pointer}
-.tabs button.on{color:var(--text);border-color:var(--accent2)}
-details{margin-top:12px}summary{cursor:pointer;color:var(--dim);font-size:12px}
-.sim .steps{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
-.ibtn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px}
-.ibtn:hover{border-color:var(--accent2)}
-.ibtn small{color:var(--dim);margin-left:4px}
-.stat{display:flex;gap:18px;flex-wrap:wrap;margin:8px 0}
-.stat div{font-size:12px;color:var(--dim)}.stat b{display:block;font-size:16px;color:var(--text)}
-.hidden{display:none}
+.chip{--c:var(--t1);display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg2);border-radius:999px;padding:4px 10px 4px 8px;cursor:pointer;font-size:12.5px;transition:.12s}
+.chip i{width:8px;height:8px;border-radius:50%;background:var(--c);box-shadow:0 0 6px var(--c)}
+.chip small{color:var(--faint);font-size:10.5px;font-weight:600}
+.chip:hover{border-color:var(--c)}
+.chip.on{background:color-mix(in srgb,var(--c) 22%,var(--bg2));border-color:var(--c);color:#fff;font-weight:600}
+.chip.on small{color:color-mix(in srgb,var(--c) 60%,#fff)}
+.tray{display:flex;flex-wrap:wrap;gap:6px;min-height:42px;padding:8px;border:1px dashed var(--line2);border-radius:10px;background:var(--bg2);align-items:center}
+.tray .empty{color:var(--faint);font-size:12px;padding-left:4px}
+.tray .chip::after{content:"×";margin-left:2px;opacity:.7;font-size:14px;line-height:1}
+
+/* segmented */
+.seg{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:4px}
+.seg.wrap{flex-wrap:wrap}
+.seg button{flex:1 1 auto;border:0;background:transparent;color:var(--dim);border-radius:7px;padding:8px 10px;cursor:pointer;font-size:12.5px;font-weight:600;white-space:nowrap;transition:.12s}
+.seg button:hover{color:var(--text)}
+.seg button small{font-weight:400;opacity:.8}
+.seg button.on{background:var(--panel2);color:var(--text);box-shadow:0 0 0 1px var(--acc) inset}
+input[type=range]{width:100%;accent-color:var(--acc);margin:4px 0 0}
+.ticks{display:flex;justify-content:space-between;color:var(--faint);font-size:11px;padding:0 5px}
+
+/* ingredient tiles */
+.ingtiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:6px}
+.itile{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid color-mix(in srgb,var(--acc) 30%,var(--line));border-radius:10px;background:var(--bg2);cursor:pointer;text-align:left;transition:.12s}
+.itile:hover{border-color:var(--acc)}
+.itile .ico{font-size:20px;line-height:1}
+.itile b{display:block;font-size:12px;font-weight:600}
+.itile small{color:var(--faint);font-size:10.5px;display:block;line-height:1.25}
+.itile.off{opacity:.33;filter:grayscale(1);border-color:var(--line)}
+.ico{font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
+
+/* go */
+.gobar{position:sticky;bottom:12px;display:flex;gap:8px;z-index:5;max-width:520px;width:100%;margin:0 auto}
+.go{flex:1;border:0;border-radius:12px;padding:14px;background:linear-gradient(180deg,#b4ff92,var(--acc));color:var(--acc-ink);font-weight:800;font-size:15px;letter-spacing:.02em;cursor:pointer;box-shadow:0 10px 30px -8px color-mix(in srgb,var(--acc) 70%,transparent);transition:.15s}
+.go:hover{transform:translateY(-1px)}
+.go:disabled{opacity:.7;cursor:wait;transform:none}
+.ghost{background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:10px 14px;cursor:pointer;color:var(--text);font-weight:600;transition:.12s}
+.ghost:hover{border-color:var(--acc)}
+.ghost.sm{padding:5px 10px;font-size:12px;border-radius:8px}
+.progress{display:flex;gap:10px;align-items:center;color:var(--dim);font-size:12.5px}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--line2);border-top-color:var(--acc);animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* results */
+.rhead{display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap;color:var(--dim);font-size:12.5px}
+.rhead h2{margin:0;font-size:22px;color:var(--text);font-family:"Bebas Neue",Impact,sans-serif;font-weight:400;letter-spacing:.03em}
+.rcard{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:12px;animation:in .3s both}
+.rcard.top{border-color:color-mix(in srgb,var(--acc) 55%,var(--line));box-shadow:0 0 34px -16px var(--acc)}
+@keyframes in{from{opacity:0;transform:translateY(8px)}}
+.rtop{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rank{font-family:"Bebas Neue",Impact,sans-serif;font-size:26px;color:var(--faint);line-height:1}
+.badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--acc) 16%,transparent);color:var(--acc)}
+.badge.alt{background:color-mix(in srgb,var(--t2) 16%,transparent);color:var(--t2)}
+.rtop .ghost{margin-left:auto}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.fnode{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 5px;border-radius:10px;background:var(--bg2);border:1px solid var(--line);font-size:12.5px;font-weight:600;white-space:nowrap}
+.fnode em{font-style:normal;font-size:10px;font-weight:800;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--acc);color:var(--acc-ink)}
+.fnode .ico{font-size:17px;line-height:1}
+.fnode.base{border-style:dashed;background:transparent;padding-left:4px}
+.farr{color:var(--faint);font-weight:800}
+.effs{display:flex;flex-wrap:wrap;gap:5px}
+.eff{--c:var(--t1);display:inline-flex;align-items:center;gap:5px;border-radius:7px;padding:2px 8px;font-size:12px;border:1px solid color-mix(in srgb,var(--c) 40%,transparent);background:color-mix(in srgb,var(--c) 11%,transparent)}
+.eff i{width:7px;height:7px;border-radius:50%;background:var(--c)}
+.eff.want{background:color-mix(in srgb,var(--c) 26%,transparent);border-color:var(--c);font-weight:700}
+.eff.want i{display:none}
+.eff.want::before{content:"✓";color:var(--c);font-weight:900}
+.eff.extra{opacity:.55}
+.eff.old{text-decoration:line-through;opacity:.55}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media(max-width:560px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.stat{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.stat small{display:block;color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:700}
+.stat b{font-size:17px;font-variant-numeric:tabular-nums}
+.meter{height:5px;border-radius:9px;background:var(--line);margin-top:4px;overflow:hidden}
+.meter i{display:block;height:100%;background:linear-gradient(90deg,var(--warn),var(--bad))}
+.good{color:var(--good)}.bad{color:var(--bad)}
+.note{border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 9%,transparent);border-radius:10px;padding:10px 12px;font-size:12.5px}
+.foot{color:var(--faint);font-size:12px;text-align:center;padding:4px 10px}
+
+/* empty state */
+.empty{text-align:center;padding:36px 24px}
+.empty .logo{width:110px;height:110px}
+.empty h3{font-family:"Bebas Neue",Impact,sans-serif;font-weight:400;font-size:32px;margin:8px 0 2px;letter-spacing:.03em}
+.empty > p{color:var(--dim);margin:0}
+.howto{list-style:none;padding:0;margin:20px auto 0;max-width:460px;display:grid;gap:8px;text-align:left;counter-reset:s}
+.howto li{counter-increment:s;display:flex;gap:10px;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--dim)}
+.howto li::before{content:counter(s);flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--acc);color:var(--acc-ink);font-weight:800;font-size:12px}
+.howto b{color:var(--text)}
+.bub{animation:bub 2.6s ease-in infinite;opacity:0}
+.bub:nth-of-type(2){animation-delay:.9s}.bub:nth-of-type(3){animation-delay:1.7s}
+@keyframes bub{0%{transform:translateY(0);opacity:0}20%{opacity:1}100%{transform:translateY(-22px);opacity:0}}
+
+/* simulator */
+.ingbtns{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:8px}
+.ibtn{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--bg2);cursor:pointer;text-align:left;transition:.12s;position:relative}
+.ibtn:hover,.ibtn:focus-visible{border-color:var(--acc);transform:translateY(-2px);outline:none;box-shadow:0 6px 18px -10px var(--acc)}
+.ibtn:active{transform:translateY(0)}
+.ibtn .ico{font-size:26px;line-height:1.1;margin-bottom:3px}
+.ibtn b{font-size:13px}
+.ibtn small{font-size:11px;color:var(--faint);display:flex;align-items:center;gap:4px}
+.ibtn small i{width:7px;height:7px;border-radius:50%;background:var(--c)}
+.ibtn .price{position:absolute;top:8px;right:10px;font-size:12px;font-weight:800;color:var(--acc)}
+.simhead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}
+.simhead .h{margin:0}
+.simhead div{display:flex;gap:6px}
+.preview{margin-top:14px;border:1px dashed var(--line2);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--dim);min-height:48px;background:var(--bg2)}
+.preview > b{color:var(--text)}
+.preview .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 0}
+.plus{color:var(--acc);font-weight:900}
+.map{width:100%;max-width:560px;display:block;margin:0 auto}
+.map .rim{fill:url(#rimg);stroke:var(--line2);stroke-width:1.5}
+.map .axis{stroke:var(--line);stroke-width:1;stroke-dasharray:2 4}
+.mc circle{fill:color-mix(in srgb,var(--c) 9%,transparent);stroke:color-mix(in srgb,var(--c) 45%,transparent);stroke-width:1;transition:.2s}
+.mc text{fill:var(--dim);font-size:7.5px;text-anchor:middle;font-weight:600;pointer-events:none;font-family:Inter,sans-serif}
+.mc.on circle{fill:color-mix(in srgb,var(--c) 55%,transparent);stroke:var(--c);stroke-width:2;filter:drop-shadow(0 0 6px var(--c))}
+.mc.on text{fill:#fff;font-weight:800}
+.mc.new circle{stroke:var(--acc);stroke-dasharray:3 2;stroke-width:2;fill:color-mix(in srgb,var(--acc) 22%,transparent)}
+.mc.new text{fill:var(--acc)}
+.arr{stroke:var(--faint);stroke-width:1.5;stroke-dasharray:4 3;fill:none}
+.arr.chg{stroke:var(--acc);stroke-width:2.4;stroke-dasharray:none}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:center;font-size:11.5px;color:var(--dim);margin-top:10px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:9px;height:9px;border-radius:50%;background:var(--c)}
+
+/* help */
+.help{display:grid;gap:18px}
+.explain{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media(max-width:900px){.explain{grid-template-columns:minmax(0,1fr)}}
+.explain h3{margin:6px 0;font-size:15px}
+.explain p{color:var(--dim);font-size:13px;margin:0}
+.big{font-size:32px;line-height:1}
 .tablewrap{overflow-x:auto}
+.cheat{width:100%;border-collapse:collapse;font-size:13px}
+.cheat th{text-align:left;color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.cheat td{padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.cheat tr:hover td{background:color-mix(in srgb,var(--acc) 4%,transparent)}
+.barw{display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+.bar{height:8px;border-radius:9px;background:var(--c);min-width:2px;box-shadow:0 0 8px -2px var(--c)}
+.about p{color:var(--dim);font-size:13px}
+.about b{color:var(--text)}
+code{background:var(--bg2);padding:1px 5px;border-radius:4px;font-size:12px}
 </style>
 </head>
 <body>
-<header>
-  <h1>Schedule I Recipe Calculator</h1>
-  <div class="sub" id="meta"></div>
+<header class="top">
+  <div class="brand">
+    <span id="logo"></span>
+    <div>
+      <h1>Schedule I <span>Mixing Lab</span></h1>
+      <div class="sub" id="meta"></div>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button data-t="find" class="on">🔍 Recipe Finder</button>
+    <button data-t="sim">🧪 Mix Simulator</button>
+    <button data-t="help">❓ How mixing works</button>
+  </nav>
 </header>
+
 <main>
-  <section class="card" id="goal">
-    <h2>Goal</h2>
-    <label class="f">Base product</label>
-    <select id="product"></select>
-    <label class="f">Target effects <span id="tcount" class="small"></span></label>
-    <div id="effects"></div>
-    <label class="f">Result must contain</label>
-    <div class="seg" id="mode"><button data-v="any" class="on">These effects (extras allowed)</button><button data-v="exact">Only these effects</button></div>
-    <label class="f">Max ingredients to add: <b id="stepsv">5</b></label>
-    <input type="range" id="steps" min="1" max="7" value="5">
-    <div class="small" id="stepsnote"></div>
-    <label class="f">Rank results by</label>
-    <select id="rank">
-      <option value="cost">Cheapest ingredients</option>
-      <option value="profit">Highest value minus ingredient cost</option>
-      <option value="value">Highest market value</option>
-      <option value="steps">Fewest ingredients</option>
-    </select>
-    <label class="f">Ingredients allowed <a href="#" id="allnone" class="small">toggle all</a></label>
-    <div class="ing" id="ings"></div>
-    <div class="row" style="margin-top:14px"><button class="go" id="find">Find recipes</button><button class="ghost hidden" id="stop">Stop</button></div>
-    <div class="small" id="progress" style="margin-top:8px"></div>
+  <!-- ============ FINDER ============ -->
+  <section id="view-find" class="col">
+    <div class="pickrow">
+      <div class="card">
+        <div class="stephead"><span class="num">1</span><div><h2>Pick your base product</h2><p>What are you starting with?</p></div></div>
+        <div class="prods" id="prods"></div>
+      </div>
+
+      <div class="card">
+        <div class="stephead"><span class="num">2</span><div><h2>Pick the effects you want <span class="hint">(optional)</span></h2><p>Skip this to just find the most profitable mix. Higher tiers sell for more. The <b>+%</b> is how much each effect adds to the price.</p></div></div>
+        <div class="tray" id="tray"></div>
+        <input class="search" id="esearch" placeholder="🔎  Search effects…" autocomplete="off">
+        <div id="effects"></div>
+        <div class="lbl">The final product should have…</div>
+        <div class="seg" id="mode"><button data-v="any" class="on">These effects <small>(extras OK)</small></button><button data-v="exact">Only these effects</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stephead"><span class="num">3</span><div><h2>Fine-tune <span class="hint">(optional)</span></h2><p>The defaults work for most searches.</p></div></div>
+      <div class="tunerow">
+        <div>
+          <div class="lbl" style="margin-top:0">Max ingredients to add <b id="stepsv">5</b></div>
+          <input type="range" id="steps" min="1" max="7" value="5">
+          <div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div>
+          <div class="hint" id="stepsnote"></div>
+          <div class="lbl">Sort results by</div>
+          <div class="seg wrap" id="rank"><button data-v="cost" class="on">💸 Cheapest</button><button data-v="profit">📈 Most profit</button><button data-v="value">💰 Highest value</button><button data-v="steps">⚡ Fewest steps</button></div>
+        </div>
+        <div>
+          <div class="lbl" style="margin-top:0">Ingredients you can use <span class="links"><a href="#" id="ingAll">all</a> · <a href="#" id="ingNone">none</a></span></div>
+          <div class="ingtiles" id="ings"></div>
+          <div class="hint">Tap an ingredient to exclude it (e.g. ones you haven't unlocked yet).</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="gobar">
+      <button class="go" id="find">🧪 Find recipes</button>
+      <button class="ghost hidden" id="stop">Stop</button>
+      <div class="progress hidden" id="progress"><div class="spin"></div><span id="progtxt"></span></div>
+    </div>
+
+    <div class="col" id="out"></div>
   </section>
 
-  <section>
-    <div class="tabs"><button id="tabR" class="on">Recipes</button><button id="tabS">Mix simulator</button></div>
-    <div id="viewR" class="card">
-      <div id="out"><div class="small">Pick a product and the effects you want, then press Find recipes.</div></div>
+  <!-- ============ SIMULATOR ============ -->
+  <section id="view-sim" class="grid hidden">
+    <div class="col">
+      <div class="card">
+        <h2 class="h">Start from</h2>
+        <div class="prods" id="sprods"></div>
+      </div>
+      <div class="card">
+        <h2 class="h">Add an ingredient</h2>
+        <p class="hint" style="margin:-6px 0 12px">Hover to preview what it does. Click to drop it in the mixer.</p>
+        <div class="ingbtns" id="sbtns"></div>
+      </div>
     </div>
-    <div id="viewS" class="card sim hidden">
-      <h2>Mix simulator</h2>
-      <div class="small">Add ingredients one at a time, in the order you would put them in the mixer. Use this to check a recipe against the game.</div>
-      <label class="f">Start from</label><select id="sproduct"></select>
-      <div class="steps" id="sseq"></div>
-      <div id="sstate"></div>
-      <div class="row" style="margin:8px 0"><button class="ghost" id="sundo">Undo</button><button class="ghost" id="sreset">Reset</button></div>
-      <div class="ing" id="sbtns"></div>
+    <div class="col">
+      <div class="card">
+        <div class="simhead"><h2 class="h">Your mix</h2><div><button class="ghost sm" id="sundo">↶ Undo</button><button class="ghost sm" id="sreset">⟲ Reset</button></div></div>
+        <div class="flow" id="sseq"></div>
+        <div id="sstate"></div>
+        <div class="preview" id="spreview"></div>
+      </div>
+      <div class="card">
+        <h2 class="h">Effect map</h2>
+        <p class="hint" style="margin:-6px 0 10px">Glowing circles are your current effects. Hover an ingredient: a <b class="good">green arrow</b> shows an effect that will turn into another one. Effects with no arrow stay the same.</p>
+        <div id="map"></div>
+        <div class="legend" id="legend"></div>
+      </div>
     </div>
-    <details class="card" style="margin-top:16px" open>
-      <summary>How this works, and what is and isn't verified</summary>
-      <div id="about" class="small" style="margin-top:8px"></div>
-    </details>
+  </section>
+
+  <!-- ============ HELP ============ -->
+  <section id="view-help" class="help hidden">
+    <div class="explain">
+      <div class="card"><div class="big">🗺️</div><h3>Every effect has a spot on a map</h3><p>The game places all 35 effects as circles on a hidden 2D map. Your product's effects are points on that map. Open the Mix Simulator to see it.</p></div>
+      <div class="card"><div class="big">➡️</div><h3>Ingredients push effects around</h3><p>Each ingredient pushes <i>every</i> effect on the product the same direction. If an effect lands in another effect's circle, it turns into that one. Then the ingredient adds its own effect, if there's room (max <span id="maxp"></span>).</p><div id="example" class="preview"></div></div>
+      <div class="card"><div class="big">💰</div><h3>Effects raise the price</h3><p>Each effect adds a percent of the base price, and higher tiers add more. <b>Order matters</b>, so always add ingredients in exactly the order shown.</p></div>
+    </div>
+    <div class="card">
+      <h2 class="h">Effect cheat sheet</h2>
+      <p class="hint" style="margin:-6px 0 10px">Sorted by how much each effect adds to the price. Tap <b>Find</b> to search for a recipe with that effect.</p>
+      <div class="tablewrap"><table class="cheat" id="cheat"></table></div>
+    </div>
+    <div class="card about">
+      <h2 class="h">What is and isn't verified</h2>
+      <div id="about"></div>
+    </div>
   </section>
 </main>
+
 <script>
 const DATA = {"meta":{"build":"Schedule I beta, GameAssembly build 1791043358"},"maxProperties":8,"effects":[{"name":"Energizing","tier":2,"addictiveness":0.3400000035762787,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.2199999988079071,"mixDirection":[-0.9663099050521851,0.2573815882205963],"mixMagnitude":2.2146105766296387},{"name":"Calorie-Dense","tier":2,"addictiveness":0.10000000149011612,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.2800000011920929,"mixDirection":[0.6944828629493713,0.7195092439651489],"mixMagnitude":1.5983115434646606},{"name":"Sedating","tier":2,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.25999999046325684,"mixDirection":[0.9823386073112488,-0.18711212277412415],"mixMagnitude":2.1377556324005127},{"name":"Toxic","tier":2,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[0.9545568227767944,0.2980290353298187],"mixMagnitude":2.3152105808258057},{"name":"Athletic","tier":3,"addictiveness":0.6069999933242798,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.3199999928474426,"mixDirection":[-0.9678013920783997,-0.25171515345573425],"mixMagnitude":2.304191827774048},{"name":"Balding","tier":3,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.30000001192092896,"mixDirection":[-0.04677150025963783,-0.998905599117279],"mixMagnitude":2.9932758808135986},{"name":"Gingeritis","tier":2,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.20000000298023224,"mixDirection":[-0.28382715582847595,-0.9588754773139954],"mixMagnitude":2.0857765674591064},{"name":"Spicy","tier":3,"addictiveness":0.6650000214576721,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.3799999952316284,"mixDirection":[0.7509380578994751,0.6603726148605347],"mixMagnitude":2.6500189304351807},{"name":"Slippery","tier":3,"addictiveness":0.3089999854564667,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.3400000035762787,"mixDirection":[0.7756485342979431,-0.6311649680137634],"mixMagnitude":2.6300570964813232},{"name":"Jennerising","tier":4,"addictiveness":0.34299999475479126,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.41999998688697815,"mixDirection":[-0.4293588101863861,-0.9031340479850769],"mixMagnitude":3.377128839492798},{"name":"Sneaky","tier":2,"addictiveness":0.3269999921321869,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.23999999463558197,"mixDirection":[0.3640427887439728,-0.9313822388648987],"mixMagnitude":2.115135908126831},{"name":"Tropic Thunder","tier":4,"addictiveness":0.8029999732971191,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.46000000834465027,"mixDirection":[0.9358153939247131,-0.35249045491218567],"mixMagnitude":3.2057604789733887},{"name":"Long faced","tier":5,"addictiveness":0.6069999933242798,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.5199999809265137,"mixDirection":[-0.06810091435909271,0.9976783990859985],"mixMagnitude":2.9368181228637695},{"name":"Foggy","tier":3,"addictiveness":0.10000000149011612,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.36000001430511475,"mixDirection":[0.22389750182628632,0.9746126532554626],"mixMagnitude":2.2778279781341553},{"name":"Thought-Provoking","tier":4,"addictiveness":0.3700000047683716,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.4399999976158142,"mixDirection":[-0.8621033430099487,-0.5067325234413147],"mixMagnitude":3.039078712463379},{"name":"Bright-Eyed","tier":4,"addictiveness":0.20000000298023224,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.4000000059604645,"mixDirection":[0.9999129176139832,-0.013200170360505581],"mixMagnitude":3.030263900756836},{"name":"Calming","tier":1,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.10000000149011612,"mixDirection":[0.9998114705085754,0.019413815811276436],"mixMagnitude":1.0301941633224487},{"name":"Refreshing","tier":1,"addictiveness":0.10400000214576721,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.14000000059604645,"mixDirection":[-0.7039849162101746,0.7102149128913879],"mixMagnitude":1.6051479578018188},{"name":"Euphoric","tier":1,"addictiveness":0.23499999940395355,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.18000000715255737,"mixDirection":[0,1],"mixMagnitude":1.0700000524520874},{"name":"Focused","tier":1,"addictiveness":0.10400000214576721,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.1599999964237213,"mixDirection":[-0.9988462924957275,0.048021458089351654],"mixMagnitude":1.0412012338638306},{"name":"Munchies","tier":1,"addictiveness":0.09600000083446503,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.11999999731779099,"mixDirection":[0.02911386825144291,-0.9995760917663574],"mixMagnitude":1.0304367542266846},{"name":"Paranoia","tier":1,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[-0.7382098436355591,-0.6745710968971252],"mixMagnitude":1.5713688135147095},{"name":"Smelly","tier":1,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[0.7500101327896118,-0.661426305770874],"mixMagnitude":1.6933103799819946},{"name":"Disorienting","tier":2,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[-0.27533742785453796,0.9613476991653442],"mixMagnitude":2.142825126647949},{"name":"Laxative","tier":3,"addictiveness":0.10000000149011612,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[-0.8041761517524719,0.5943910479545593],"mixMagnitude":2.5740628242492676},{"name":"Seizure-Inducing","tier":3,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[-0.6242390871047974,-0.7812333106994629],"mixMagnitude":2.6752569675445557},{"name":"Glowing","tier":4,"addictiveness":0.47200000286102295,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.47999998927116394,"mixDirection":[0.47551706433296204,0.8797065019607544],"mixMagnitude":2.9441635608673096},{"name":"Lethal","tier":4,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[-0.9998242855072021,0.01874670386314392],"mixMagnitude":3.2005624771118164},{"name":"Schizophrenic","tier":4,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[0.6421300172805786,-0.7665957808494568],"mixMagnitude":3.535109519958496},{"name":"Anti-gravity","tier":5,"addictiveness":0.6110000014305115,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.5400000214576721,"mixDirection":[0.30850470066070557,-0.951222836971283],"mixMagnitude":3.111783981323242},{"name":"Cyclopean","tier":5,"addictiveness":0.10000000149011612,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.5600000023841858,"mixDirection":[-0.5215896964073181,0.8531964421272278],"mixMagnitude":2.89499568939209},{"name":"Electrifying","tier":5,"addictiveness":0.23499999940395355,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.5,"mixDirection":[-0.9188331365585327,0.3946463465690613],"mixMagnitude":3.319427490234375},{"name":"Explosive","tier":5,"addictiveness":0,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0,"mixDirection":[0.6752105951309204,0.737625002861023],"mixMagnitude":3.5248262882232666},{"name":"Shrinking","tier":5,"addictiveness":0.335999995470047,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.6000000238418579,"mixDirection":[-0.9646955132484436,-0.26336777210235596],"mixMagnitude":3.3793046474456787},{"name":"Zombifying","tier":5,"addictiveness":0.5979999899864197,"valueChange":0,"valueMultiplier":1,"addBaseValueMultiple":0.5799999833106995,"mixDirection":[0.9299857020378113,0.3675956726074219],"mixMagnitude":3.182844638824463}],"map":{"radius":4,"circles":[{"pos":[1.0299999713897705,0.019999999552965164],"radius":0.4000000059604645,"effect":"Calming"},{"pos":[0,1.0700000524520874],"radius":0.4000000059604645,"effect":"Euphoric"},{"pos":[-1.0399999618530273,0.05000000074505806],"radius":0.4000000059604645,"effect":"Focused"},{"pos":[0.029999999329447746,-1.0299999713897705],"radius":0.4000000059604645,"effect":"Munchies"},{"pos":[-1.159999966621399,-1.059999942779541],"radius":0.4000000059604645,"effect":"Paranoia"},{"pos":[-1.1299999952316284,1.1399999856948853],"radius":0.4000000059604645,"effect":"Refreshing"},{"pos":[1.2699999809265137,-1.1200000047683716],"radius":0.4000000059604645,"effect":"Smelly"},{"pos":[1.1100000143051147,1.149999976158142],"radius":0.4000000059604645,"effect":"Calorie-Dense"},{"pos":[-0.5899999737739563,2.059999942779541],"radius":0.4000000059604645,"effect":"Disorienting"},{"pos":[-2.140000104904175,0.5699999928474426],"radius":0.4000000059604645,"effect":"Energizing"},{"pos":[-0.5920000076293945,-2],"radius":0.4000000059604645,"effect":"Gingeritis"},{"pos":[2.0999999046325684,-0.4000000059604645],"radius":0.4000000059604645,"effect":"Sedating"},{"pos":[0.7699999809265137,-1.9700000286102295],"radius":0.4000000059604645,"effect":"Sneaky"},{"pos":[2.2100000381469727,0.6899999976158142],"radius":0.4000000059604645,"effect":"Toxic"},{"pos":[-2.2300000190734863,-0.5799999833106995],"radius":0.4000000059604645,"effect":"Athletic"},{"pos":[-0.14000000059604645,-2.990000009536743],"radius":0.4000000059604645,"effect":"Balding"},{"pos":[0.5099999904632568,2.2200000286102295],"radius":0.4000000059604645,"effect":"Foggy"},{"pos":[-2.069999933242798,1.5299999713897705],"radius":0.4000000059604645,"effect":"Laxative"},{"pos":[-1.6699999570846558,-2.0899999141693115],"radius":0.4000000059604645,"effect":"Seizure-Inducing"},{"pos":[2.0399999618530273,-1.659999966621399],"radius":0.4000000059604645,"effect":"Slippery"},{"pos":[1.9900000095367432,1.75],"radius":0.4000000059604645,"effect":"Spicy"},{"pos":[3.0299999713897705,-0.03999999910593033],"radius":0.4000000059604645,"effect":"Bright-Eyed"},{"pos":[1.399999976158142,2.5899999141693115],"radius":0.4000000059604645,"effect":"Glowing"},{"pos":[-1.4500000476837158,-3.049999952316284],"radius":0.4000000059604645,"effect":"Jennerising"},{"pos":[-3.200000047683716,0.05999999865889549],"radius":0.4000000059604645,"effect":"Lethal"},{"pos":[2.2699999809265137,-2.7100000381469727],"radius":0.4000000059604645,"effect":"Schizophrenic"},{"pos":[-2.619999885559082,-1.5399999618530273],"radius":0.4000000059604645,"effect":"Thought-Provoking"},{"pos":[3,-1.1299999952316284],"radius":0.4000000059604645,"effect":"Tropic Thunder"},{"pos":[0.9599999785423279,-2.9600000381469727],"radius":0.4000000059604645,"effect":"Anti-gravity"},{"pos":[-1.5099999904632568,2.4700000286102295],"radius":0.4000000059604645,"effect":"Cyclopean"},{"pos":[-3.049999952316284,1.309999942779541],"radius":0.4000000059604645,"effect":"Electrifying"},{"pos":[2.380000114440918,2.5999999046325684],"radius":0.4000000059604645,"effect":"Explosive"},{"pos":[-0.20000000298023224,2.930000066757202],"radius":0.4000000059604645,"effect":"Long faced"},{"pos":[-3.259999990463257,-0.8899999856948853],"radius":0.4000000059604645,"effect":"Shrinking"},{"pos":[2.9600000381469727,1.1699999570846558],"radius":0.4000000059604645,"effect":"Zombifying"}]},"ingredients":[{"name":"Cuke","price":2,"effect":"Energizing"},{"name":"Donut","price":3,"effect":"Calorie-Dense"},{"name":"Flu Medicine","price":5,"effect":"Sedating"},{"name":"Gasoline","price":5,"effect":"Toxic"},{"name":"Energy Drink","price":6,"effect":"Athletic"},{"name":"Mouth Wash","price":4,"effect":"Balding"},{"name":"Banana","price":2,"effect":"Gingeritis"},{"name":"Chili","price":7,"effect":"Spicy"},{"name":"Motor Oil","price":6,"effect":"Slippery"},{"name":"Iodine","price":8,"effect":"Jennerising"},{"name":"Paracetamol","price":3,"effect":"Sneaky"},{"name":"Viagor","price":4,"effect":"Tropic Thunder"},{"name":"Horse Semen","price":9,"effect":"Long faced"},{"name":"Mega Bean","price":7,"effect":"Foggy"},{"name":"Addy","price":9,"effect":"Thought-Provoking"},{"name":"Battery","price":8,"effect":"Bright-Eyed"}],"products":[{"name":"OG Kush","basePrice":35,"marketValue":38,"baseAddictiveness":0,"properties":["Calming"]},{"name":"Sour Diesel","basePrice":35,"marketValue":40,"baseAddictiveness":0,"properties":["Refreshing"]},{"name":"Green Crack","basePrice":35,"marketValue":43,"baseAddictiveness":0,"properties":["Energizing"]},{"name":"Granddaddy Purple","basePrice":35,"marketValue":44,"baseAddictiveness":0,"properties":["Sedating"]},{"name":"Meth","basePrice":70,"marketValue":70,"baseAddictiveness":0.6000000238418579,"properties":[]},{"name":"Cocaine","basePrice":150,"marketValue":150,"baseAddictiveness":0.4000000059604645,"properties":[]},{"name":"Shroom","basePrice":65,"marketValue":65,"baseAddictiveness":0.05000000074505806,"properties":[]}]};
 // Schedule I mixing engine. Pure functions over DATA; no DOM.
@@ -213,39 +435,153 @@ function makeEngine(DATA) {
 
 const en = makeEngine(DATA);
 const $ = (s) => document.querySelector(s);
-const fmt = (n) => '$' + Math.round(n).toLocaleString()
+const fmt = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString()
 const eName = (i) => en.E[i].name
+const tierOf = (i) => en.E[i].tier
+const pct = (i) => Math.round(en.E[i].addBaseValueMultiple * 100)
+const prodList = DATA.products
+const startOf = (p) => p.properties.map((n) => en.eIdx[n])
+const addPct = (p, list) => Math.round(en.addictiveness(p.baseAddictiveness, list) * 100)
+const costOf = (seq) => seq.reduce((s, i) => s + en.ings[i].price, 0)
 
-$('#meta').textContent = `Data read from the game: ${DATA.meta.build}. ${en.E.length} effects, ${en.ings.length} ingredients, ${DATA.products.length} base products.`
+// ---- graphics
+const ING_ICON = { 'Cuke': '🥒', 'Donut': '🍩', 'Flu Medicine': '🤒', 'Gasoline': '⛽', 'Energy Drink': '🥤', 'Mouth Wash': '🫧', 'Banana': '🍌', 'Chili': '🌶️', 'Motor Oil': '🛢️', 'Iodine': '🧪', 'Paracetamol': '💊', 'Viagor': '🍆', 'Horse Semen': '🐴', 'Mega Bean': '🫘', 'Addy': '🧠', 'Battery': '🔋' }
+const ingIcon = (i) => `<span class="ico">${ING_ICON[en.ings[i].name] || '🧂'}</span>`
+const PROD_STYLE = { 'OG Kush': ['leaf', '#5fd068'], 'Sour Diesel': ['leaf', '#d8e45a'], 'Green Crack': ['leaf', '#2ff08a'], 'Granddaddy Purple': ['leaf', '#a77bff'], 'Meth': ['crystal', '#7fd8ff'], 'Cocaine': ['powder', '#f4f4f4'], 'Shroom': ['shroom', '#e0704a'] }
+function prodIcon(p, s = 44) {
+  const [k, c] = PROD_STYLE[p.name] || ['leaf', '#7f7']
+  let g = ''
+  if (k === 'leaf') {
+    const L = [[90, 11], [-90, 11], [60, 19], [-60, 19], [30, 25], [-30, 25], [0, 31]]
+    g = `<line x1="22" y1="42" x2="22" y2="33" stroke="${c}" stroke-width="2.2" stroke-linecap="round"/>` +
+      L.map(([a, l]) => `<ellipse cx="22" cy="${33 - l / 2}" rx="${(l * 0.15).toFixed(1)}" ry="${l / 2}" fill="${c}" stroke="rgba(0,0,0,.3)" stroke-width=".6" transform="rotate(${a} 22 33)"/>`).join('') +
+      L.map(([a, l]) => `<line x1="22" y1="33" x2="22" y2="${33 - l * 0.85}" stroke="rgba(0,0,0,.25)" stroke-width=".6" transform="rotate(${a} 22 33)"/>`).join('')
+  } else if (k === 'crystal') {
+    g = `<polygon points="8,24 14,19 17,40 6,40" fill="${c}" opacity=".7"/><polygon points="34,21 39,26 38,40 29,40" fill="${c}" opacity=".7"/>
+      <polygon points="22,3 31,15 28,40 15,40 12,16" fill="${c}"/><polygon points="22,3 31,15 22,40 15,40 22,16" fill="#fff" opacity=".35"/>
+      <polygon points="22,3 12,16 22,16" fill="#fff" opacity=".6"/>`
+  } else if (k === 'powder') {
+    g = `<rect x="5" y="9" width="20" height="5" rx="1.2" fill="#b9c4c8" transform="rotate(-18 15 11)"/><rect x="5" y="9" width="20" height="2" rx="1" fill="#e7eef0" transform="rotate(-18 15 11)"/>
+      <path d="M3 40 Q12 22 22 19 Q32 22 41 40 Z" fill="${c}"/><path d="M22 19 Q32 22 41 40 L28 40 Z" fill="#000" opacity=".13"/>
+      <circle cx="9" cy="37" r="1" fill="${c}"/><circle cx="38" cy="33" r=".8" fill="${c}"/>`
+  } else {
+    g = `<path d="M17 22 h10 l1.5 16 a3 3 0 0 1 -3 3 h-7 a3 3 0 0 1 -3 -3z" fill="#efe6d6"/>
+      <path d="M3 25 Q4 5 22 4 Q40 5 41 25 Q22 29 3 25 Z" fill="${c}"/><path d="M22 4 Q40 5 41 25 Q32 27 26 27 Q34 14 22 4Z" fill="#000" opacity=".15"/>
+      <circle cx="13" cy="15" r="3" fill="#fff" opacity=".9"/><circle cx="24" cy="10" r="2.2" fill="#fff" opacity=".9"/><circle cx="31" cy="19" r="2.6" fill="#fff" opacity=".9"/><circle cx="20" cy="21" r="1.6" fill="#fff" opacity=".9"/>`
+  }
+  return `<svg class="picon" viewBox="0 0 44 44" width="${s}" height="${s}" aria-hidden="true">${g}</svg>`
+}
+function flaskSVG() {
+  return `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+    <path d="M18 41h28l6 10a5 5 0 0 1-4.3 7.5H16.3A5 5 0 0 1 12 51z" fill="currentColor" opacity=".85"/>
+    <circle class="bub" cx="27" cy="48" r="2.4" fill="#eaffde"/><circle class="bub" cx="36" cy="51" r="1.8" fill="#eaffde"/><circle class="bub" cx="31" cy="45" r="1.4" fill="#eaffde"/>
+    <path d="M24 6h16M27 6v18L12 51a5 5 0 0 0 4.3 7.5h31.4A5 5 0 0 0 52 51L37 24V6" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M27 15h4M27 21h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".7"/></svg>`
+}
+const chip = (e, cls = '') => `<span class="eff ${cls}" style="--c:var(--t${tierOf(e)})"><i></i>${eName(e)}</span>`
+const srcOf = {}
+en.ings.forEach((g, i) => { srcOf[g.eff] = i })
+const srcTitle = (e) => srcOf[e] != null ? `Added directly by ${en.ings[srcOf[e]].name}` : 'Only reachable by mixing'
+function flowHtml(p, seq) {
+  return `<span class="fnode base">${prodIcon(p, 22)}${p.name}</span>` +
+    seq.map((i, k) => `<span class="farr">›</span><span class="fnode"><em>${k + 1}</em>${ingIcon(i)}${en.ings[i].name}</span>`).join('')
+}
+function diffHtml(p, list, i) {
+  const next = en.mix(list, i), rows = []
+  list.forEach((e, k) => { if (next[k] !== e) rows.push(`<div class="row">${chip(e, 'old')}<span class="farr">→</span>${chip(next[k])}</div>`) })
+  for (let k = list.length; k < next.length; k++) rows.push(`<div class="row"><span class="plus">＋</span>${chip(next[k])}</div>`)
+  if (!rows.length) rows.push(`<div class="row">Nothing changes${list.length >= DATA.maxProperties ? ` (already at the ${DATA.maxProperties}-effect max)` : ''}.</div>`)
+  const v0 = en.value(p.basePrice, list), v1 = en.value(p.basePrice, next)
+  rows.push(`<div class="row">Value ${fmt(v0)} <span class="farr">→</span> <b class="${v1 >= v0 ? 'good' : 'bad'}">${fmt(v1)}</b> · ingredient costs ${fmt(en.ings[i].price)}</div>`)
+  return rows.join('')
+}
+
+// ---- map
+const MS = 50, circ = {}
+DATA.map.circles.forEach((c) => { const e = en.eIdx[c.effect]; if (!(e in circ)) circ[e] = { x: c.pos[0] * MS, y: -c.pos[1] * MS, r: c.radius * MS } })
+function ingVec(i) { const m = en.E[en.ings[i].eff]; return [m.mixMagnitude * m.mixDirection[0] * MS, -m.mixMagnitude * m.mixDirection[1] * MS] }
+function labelSvg(name, x, y) {
+  const m = name.length > 9 ? name.match(/^(.+?[- ])(.+)$/) : null
+  if (!m) return `<text x="${x}" y="${y + 2.6}">${name}</text>`
+  return `<text x="${x}" y="${y - 1.8}">${m[1].trim()}<tspan x="${x}" dy="8">${m[2]}</tspan></text>`
+}
+function mapSVG(list, hi) {
+  const have = new Set(list), next = hi != null ? en.mix(list, hi) : null, nextSet = new Set(next || [])
+  const R = DATA.map.radius * MS
+  let s = `<svg class="map" viewBox="${-R - 14} ${-R - 14} ${2 * R + 28} ${2 * R + 28}" role="img" aria-label="Effect map">
+    <defs><radialGradient id="rimg"><stop offset="0" stop-color="#1c2a19"/><stop offset="1" stop-color="#0d120c"/></radialGradient>
+    <marker id="ahc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--acc)"/></marker>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--faint)"/></marker></defs>
+    <circle class="rim" r="${R}"/><line class="axis" x1="${-R}" x2="${R}"/><line class="axis" y1="${-R}" y2="${R}"/>`
+  for (const e in circ) {
+    const c = circ[e], ei = +e, cls = have.has(ei) ? 'on' : (next && nextSet.has(ei) ? 'new' : '')
+    s += `<g class="mc ${cls}" style="--c:var(--t${tierOf(ei)})"><title>${eName(ei)} · tier ${tierOf(ei)} · +${pct(ei)}% value · ${srcTitle(ei)}</title><circle cx="${c.x}" cy="${c.y}" r="${c.r}"/>${labelSvg(eName(ei), c.x, c.y)}</g>`
+  }
+  if (next) {
+    const [vx, vy] = ingVec(hi)
+    list.forEach((e, k) => {
+      const c = circ[e]; if (!c) return
+      if (next[k] === e) return // miss: effect stays, no arrow
+      s += `<line class="arr chg" x1="${c.x}" y1="${c.y}" x2="${c.x + vx}" y2="${c.y + vy}" marker-end="url(#ahc)"/>`
+    })
+  }
+  return s + '</svg>'
+}
+
+// ---- static text
+$('#logo').innerHTML = flaskSVG()
+$('#meta').textContent = `Data read from the game: ${DATA.meta.build} · ${en.E.length} effects · ${en.ings.length} ingredients · ${prodList.length} base products`
+$('#maxp').textContent = DATA.maxProperties
+$('#legend').innerHTML = [1, 2, 3, 4, 5].map((t) => `<span style="--c:var(--t${t})"><i></i>Tier ${t}</span>`).join('')
 $('#about').innerHTML = `
 <p><b>Rules (read from the game's code).</b> Ingredients are added one at a time. Each ingredient shifts every effect on the product by a fixed direction on a map. If the shifted point lands inside another effect's circle, that effect is replaced by the circle's effect (unless the product already has it). Then the ingredient's own effect is added if the product doesn't have it and there are fewer than ${DATA.maxProperties} effects. Market value is the product's base price scaled by each effect's price multiplier, rounded to the nearest whole number.</p>
 <p><b>Verified against the game:</b> the value formula reproduces the market value of all 7 base products, and the mixing rules reproduce both mixes stored in the game's data. Both of those mixes only <i>add</i> an effect, so no effect replacement was covered by that check. The replacement rule, the ${DATA.maxProperties}-effect cap and the one-at-a-time ordering come from reading the game's code and have not been compared with an in-game mix. <b>Check a recipe in the game before you buy ingredients in bulk</b>, and tell me if one is wrong.</p>
 <p><b>Not covered:</b> the game has a setting (<code>UseRandomizedMixMaps</code>) that rotates the map by a seeded angle. It was off in the save I read, so the results here assume it is off. Prices are the shop price of one of each ingredient listed; I did not check how many product units one ingredient covers. Market value is the base value, not the final sell price a customer pays. The search merges recipes that reach the same set of effects, so in rare cases (about 1 in 60 steps) it can miss a recipe that depends on effect order. Every recipe shown is re-run exactly in game order.</p>`
 
-// ---- state
-let targets = new Set(), mode = 'any', allowed = new Set(en.ings.map((_, i) => i)), running = false, stopFlag = false
-const prodList = DATA.products
-function startOf(p) { return p.properties.map((n) => en.eIdx[n]) }
+// ---- tabs
+function showTab(t) {
+  for (const b of $('#tabs').children) b.classList.toggle('on', b.dataset.t === t)
+  for (const v of ['find', 'sim', 'help']) $('#view-' + v).classList.toggle('hidden', v !== t)
+}
+$('#tabs').onclick = (ev) => { const b = ev.target.closest('button'); if (b) showTab(b.dataset.t) }
 
-// ---- goal UI
-for (const sel of ['#product', '#sproduct']) $(sel).innerHTML = prodList.map((p, i) => `<option value="${i}">${p.name} (base ${fmt(p.basePrice)})</option>`).join('')
+// ---- finder state
+let fp = 0, sp = 0, targets = new Set(), mode = 'any', rank = 'cost', allowed = new Set(en.ings.map((_, i) => i))
+let running = false, stopFlag = false, last = null, lastRows = []
+
+const prodCards = (cur) => prodList.map((p, i) => `<button class="prod ${i === cur ? 'on' : ''}" data-i="${i}">${prodIcon(p)}<b>${p.name}</b><small>base ${fmt(p.basePrice)}${p.properties.length ? '<br>' + p.properties.join(', ') : ''}</small></button>`).join('')
+function renderProds() { $('#prods').innerHTML = prodCards(fp); $('#sprods').innerHTML = prodCards(sp) }
+$('#prods').onclick = (ev) => { const b = ev.target.closest('.prod'); if (!b) return; fp = +b.dataset.i; renderProds() }
+$('#sprods').onclick = (ev) => { const b = ev.target.closest('.prod'); if (!b) return; sp = +b.dataset.i; renderProds(); simRender() }
+
 function renderEffects() {
-  const byTier = {}
-  en.E.forEach((e, i) => (byTier[e.tier] ||= []).push(i))
-  $('#effects').innerHTML = Object.keys(byTier).sort().map((t) => `<div class="tier">Tier ${t}</div><div class="chips">${byTier[t].map((i) => `<span class="chip t${t} ${targets.has(i) ? 'on' : ''}" data-i="${i}">${eName(i)}</span>`).join('')}</div>`).join('')
-  $('#tcount').textContent = targets.size ? `(${targets.size} selected)` : ''
+  const q = $('#esearch').value.trim().toLowerCase(), byTier = {}
+  en.E.forEach((e, i) => { if (!q || e.name.toLowerCase().includes(q)) (byTier[e.tier] ||= []).push(i) })
+  $('#effects').innerHTML = Object.keys(byTier).sort().map((t) => `<div class="tier" style="--c:var(--t${t})">Tier ${t}</div><div class="chips">${byTier[t].map((i) =>
+    `<button class="chip ${targets.has(i) ? 'on' : ''}" style="--c:var(--t${t})" data-i="${i}" title="${srcTitle(i)}"><i></i>${eName(i)}<small>+${pct(i)}%</small></button>`).join('')}</div>`).join('') || '<p class="hint">No effects match that search.</p>'
+  $('#tray').innerHTML = targets.size
+    ? [...targets].map((i) => `<button class="chip on" style="--c:var(--t${tierOf(i)})" data-i="${i}" title="Remove"><i></i>${eName(i)}</button>`).join('')
+    : '<span class="empty">Nothing picked: any effects allowed. Leave this empty to find the most profitable mix, or tap effects below 👇</span>'
 }
-$('#effects').onclick = (ev) => { const c = ev.target.closest('.chip'); if (!c) return; const i = +c.dataset.i; targets.has(i) ? targets.delete(i) : targets.add(i); renderEffects() }
-$('#mode').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; mode = b.dataset.v; for (const x of $('#mode').children) x.classList.toggle('on', x === b) }
+const toggleTarget = (ev) => { const c = ev.target.closest('.chip'); if (!c) return; const i = +c.dataset.i; targets.has(i) ? targets.delete(i) : targets.add(i); renderEffects() }
+$('#effects').onclick = toggleTarget
+$('#tray').onclick = toggleTarget
+$('#esearch').oninput = renderEffects
+
+function seg(id, cb) { $(id).onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; for (const x of $(id).children) x.classList.toggle('on', x === b); cb(b.dataset.v) } }
+seg('#mode', (v) => { mode = v })
+seg('#rank', (v) => { rank = v; if (last) renderResults() })
+
 function renderIngs() {
-  $('#ings').innerHTML = en.ings.map((g, i) => `<label><input type="checkbox" data-i="${i}" ${allowed.has(i) ? 'checked' : ''}>${g.name} <span class="small">${fmt(g.price)} · ${eName(g.eff)}</span></label>`).join('')
+  $('#ings').innerHTML = en.ings.map((g, i) => `<button class="itile ${allowed.has(i) ? '' : 'off'}" data-i="${i}" title="${allowed.has(i) ? 'Click to exclude' : 'Click to allow'}">${ingIcon(i)}<span><b>${g.name}</b><small>${fmt(g.price)} · ${eName(g.eff)}</small></span></button>`).join('')
 }
-$('#ings').onchange = (ev) => { const i = +ev.target.dataset.i; ev.target.checked ? allowed.add(i) : allowed.delete(i) }
-$('#allnone').onclick = (ev) => { ev.preventDefault(); allowed = allowed.size ? new Set() : new Set(en.ings.map((_, i) => i)); renderIngs() }
+$('#ings').onclick = (ev) => { const b = ev.target.closest('.itile'); if (!b) return; const i = +b.dataset.i; allowed.has(i) ? allowed.delete(i) : allowed.add(i); renderIngs() }
+$('#ingAll').onclick = (ev) => { ev.preventDefault(); allowed = new Set(en.ings.map((_, i) => i)); renderIngs() }
+$('#ingNone').onclick = (ev) => { ev.preventDefault(); allowed = new Set(); renderIngs() }
 function stepsNote() {
   const s = +$('#steps').value
   $('#stepsv').textContent = s
-  $('#stepsnote').textContent = s >= 7 ? 'Up to 7 can take 10 to 30 seconds and a lot of memory.' : s === 6 ? '6 can take a few seconds.' : ''
+  $('#stepsnote').textContent = s >= 7 ? '🐢 7 can take 10–30 seconds and a lot of memory.' : s === 6 ? '⏳ 6 can take a few seconds.' : '⚡ Instant.'
 }
 $('#steps').oninput = stepsNote
 
@@ -257,83 +593,149 @@ function rankKey(r, how) {
   return [r.seq.length, r.cost, -r.value]
 }
 const cmp = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0 }
-function recipeHtml(seq) {
-  const out = []
-  seq.forEach((i, k) => out.push(`<span class="pill"><b>${k + 1}</b>${en.ings[i].name}</span>`))
-  return out.join('') || '<span class="small">nothing to add</span>'
-}
-function effHtml(list, tset) {
-  return list.map((e) => `<span class="eff ${tset.has(e) ? 'want' : 'extra'}">${eName(e)}</span>`).join('')
-}
-$('#find').onclick = async () => {
+const emptyHtml = () => `<div class="card ready">${flaskSVG()}<p><b>Your recipes will show up here.</b> Pick a base and the effects you want, then hit <b>Find recipes</b>. 💡 The <b>Mix Simulator</b> tab lets you test any recipe step by step.</p></div>`
+
+// partial = "closest matches": search every reachable effect set, then keep the ones with the most target effects.
+async function runSearch(partial) {
   if (running) return
-  if (!targets.size) { $('#out').innerHTML = '<div class="note">Select at least one target effect.</div>'; return }
-  if (!allowed.size) { $('#out').innerHTML = '<div class="note">Allow at least one ingredient.</div>'; return }
-  const p = prodList[+$('#product').value], start = startOf(p), tl = [...targets]
-  const maxSteps = +$('#steps').value, how = $('#rank').value
+  if (!allowed.size) { $('#out').innerHTML = '<div class="note">👆 Allow at least one ingredient in step 3.</div>' + emptyHtml(); return }
+  // No target effects = "find the most profitable mix": every reachable effect set counts.
+  // Search keeps the cheapest recipe per effect set, and value depends only on the set, so that is also the max profit per set.
+  if (!targets.size && (rank === 'cost' || rank === 'steps')) $('#rank').querySelector('[data-v="profit"]').click()
+  const p = prodList[fp], start = startOf(p), tl = [...targets], maxSteps = +$('#steps').value, exact = mode === 'exact' && tl.length > 0
   running = true; stopFlag = false
-  $('#find').disabled = true; $('#stop').classList.remove('hidden'); $('#progress').textContent = 'Searching...'
+  $('#find').disabled = true; $('#find').textContent = '⚗️ Mixing…'
+  $('#stop').classList.remove('hidden'); $('#progress').classList.remove('hidden'); $('#progtxt').textContent = 'Searching…'
   const t0 = performance.now()
-  const res = await en.search({ start, targets: tl, exact: mode === 'exact', maxSteps, allowed: [...allowed],
-    onProgress: (d, n) => { $('#progress').textContent = `Searching step ${d} of ${maxSteps}, ${n.toLocaleString()} mixes tried...` },
+  const res = await en.search({ start, targets: partial ? [] : tl, exact: partial ? false : exact, maxSteps, allowed: [...allowed],
+    onProgress: (d, n) => { $('#progtxt').textContent = `Trying ${d}-ingredient mixes · ${n.toLocaleString()} combos checked` },
     shouldStop: () => stopFlag })
-  const tset = new Set(tl)
-  const rows = []; let dropped = 0
-  const bySet = new Map()
+  const tset = new Set(tl), cand = []
   for (const f of res.found) {
     const list = en.run(start, f.seq) // exact game-order replay
-    const okExact = tl.every((t) => list.includes(t)) && (mode !== 'exact' || list.every((x) => tset.has(x)))
-    if (!okExact) { dropped++; continue }
-    const row = { seq: f.seq, cost: f.seq.reduce((s, i) => s + en.ings[i].price, 0), list, value: en.value(p.basePrice, list) }
-    const k = en.sk(list), prev = bySet.get(k)
-    if (!prev || cmp(rankKey(row, how), rankKey(prev, how)) < 0) bySet.set(k, row)
+    const hit = list.filter((x) => tset.has(x)).length, extra = list.length - hit
+    if (partial ? !hit : !(hit === tl.length && (!exact || !extra))) continue
+    cand.push({ seq: f.seq, cost: costOf(f.seq), list, value: en.value(p.basePrice, list), hit, extra })
   }
-  rows.push(...bySet.values())
-  rows.sort((a, b) => cmp(rankKey(a, how), rankKey(b, how)))
-  const shown = rows.slice(0, 15)
-  const secs = ((performance.now() - t0) / 1000).toFixed(1)
-  let h = ''
-  if (res.stopped) h += '<div class="note">Stopped early. Results below are partial.</div>'
-  else if (res.truncated) h += '<div class="note">The search hit its memory limit before finishing, so cheaper or better recipes may exist. Lower the ingredient count or untick some ingredients.</div>'
-  if (!shown.length) {
-    h += `<div class="note">No recipe found within ${maxSteps} ingredient${maxSteps > 1 ? 's' : ''}${mode === 'exact' ? ' with only those effects' : ''}. Try more ingredients${mode === 'exact' ? ', or allow extra effects' : ''}.</div>`
-  } else {
-    h += `<div class="small" style="margin-bottom:8px">${rows.length.toLocaleString()} different outcomes found${rows.length > shown.length ? `, showing the best ${shown.length}` : ''} in ${secs}s. Each outcome shows its best recipe for the ranking you chose.</div>`
-    h += `<div class="tablewrap"><table class="res"><thead><tr><th>#</th><th>Add in this order</th><th>Resulting effects</th><th class="num">Ingredients</th><th class="num">Value</th><th class="num">Value − cost</th><th class="num">Addiction</th></tr></thead><tbody>`
-    shown.forEach((r, i) => {
-      const pr = r.value - r.cost
-      h += `<tr><td>${i + 1}</td><td>${recipeHtml(r.seq)}</td><td>${effHtml(r.list, tset)}</td><td class="num">${fmt(r.cost)}<div class="small">${r.seq.length} item${r.seq.length === 1 ? '' : 's'}</div></td><td class="num">${fmt(r.value)}</td><td class="num ${pr >= 0 ? 'good' : 'bad'}">${fmt(pr)}</td><td class="num">${Math.round(en.addictiveness(p.baseAddictiveness, r.list) * 100)}%</td></tr>`
-    })
-    h += '</tbody></table></div>'
-    h += '<div class="small" style="margin-top:8px">Ingredient cost = shop price of one of each ingredient listed. Value = the game\'s market value for one unit of the finished product. Use the Mix simulator tab to replay a recipe.</div>'
-  }
-  $('#out').innerHTML = h
-  $('#progress').textContent = ''
-  $('#find').disabled = false; $('#stop').classList.add('hidden'); running = false
-  if (dropped) console.warn('recipes dropped after exact replay:', dropped)
+  last = { p, tl, exact, maxSteps, res, cand, partial, secs: ((performance.now() - t0) / 1000).toFixed(1) }
+  renderResults()
+  $('#find').disabled = false; $('#find').textContent = '🧪 Find recipes'
+  $('#stop').classList.add('hidden'); $('#progress').classList.add('hidden'); running = false
+  $('#out').scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
+$('#find').onclick = () => runSearch(false)
 $('#stop').onclick = () => { stopFlag = true }
 
-// ---- tabs
-function tab(r) { $('#viewR').classList.toggle('hidden', !r); $('#viewS').classList.toggle('hidden', r); $('#tabR').classList.toggle('on', r); $('#tabS').classList.toggle('on', !r) }
-$('#tabR').onclick = () => tab(true); $('#tabS').onclick = () => tab(false)
+function renderResults() {
+  const { p, tl, exact, maxSteps, res, cand, secs, partial } = last, tset = new Set(tl), bySet = new Map()
+  // closest matches: most target effects first, then fewest extras if "only these" is on, then the chosen ranking
+  const key = (r) => partial ? [-r.hit, exact ? r.extra : 0, ...rankKey(r, rank)] : rankKey(r, rank)
+  for (const row of cand) {
+    const k = en.sk(row.list), prev = bySet.get(k)
+    if (!prev || cmp(key(row), key(prev)) < 0) bySet.set(k, row)
+  }
+  const rows = [...bySet.values()].sort((a, b) => cmp(key(a), key(b)))
+  lastRows = rows.slice(0, 15)
+  let h = `<div class="rhead"><h2>${prodIcon(p, 22)} ${partial ? 'Closest matches' : 'Recipes'} for ${p.name}</h2><span>${rows.length ? `${rows.length.toLocaleString()} outcomes found in ${secs}s${rows.length > lastRows.length ? ` · top ${lastRows.length} shown` : ''}` : ''}</span></div>`
+  h += tl.length
+    ? `<div class="effs">${tl.map((e) => chip(e, 'want')).join('')}${exact ? '<span class="hint">&nbsp;· only these</span>' : ''}</div>`
+    : '<div class="hint">Any effects · no target picked, so every possible mix was compared.</div>'
+  if (res.stopped) h += '<div class="note">⏹ Stopped early. Results below are partial.</div>'
+  else if (res.truncated) h += '<div class="note">⚠️ The search hit its memory limit before finishing, so cheaper or better recipes may exist. Lower the max ingredients or exclude some ingredients.</div>'
+  if (partial && lastRows.length) h += `<div class="note">🧩 No recipe gets all ${tl.length} effects${exact ? ' (and nothing else)' : ''} within ${maxSteps} ingredient${maxSteps > 1 ? 's' : ''}. These get the most of them. Missing effects are crossed out on each card.</div>`
+  if (!lastRows.length) {
+    h += `<div class="card empty"><div class="big">🤷</div><h3>No recipe found</h3><p>Nothing within ${maxSteps} ingredient${maxSteps > 1 ? 's' : ''}${exact ? ' with only those effects' : ''}${partial ? ' has any of those effects' : ''}.</p>
+      ${!partial && tl.length > 1 ? '<p style="margin-top:16px"><button class="go" id="closest" style="flex:none;padding:12px 20px">🧩 Show recipes with the most of these effects</button></p>' : ''}
+      <ol class="howto"><li><span>Raise <b>Max ingredients</b> in step 3.</span></li>${exact ? '<li><span>Switch to <b>These effects (extras OK)</b>.</span></li>' : ''}<li><span>Allow more ingredients, or pick fewer effects.</span></li></ol></div>`
+  } else {
+    const best = {
+      cost: Math.min(...lastRows.map((r) => r.cost)),
+      profit: Math.max(...lastRows.map((r) => r.value - r.cost)),
+      steps: Math.min(...lastRows.map((r) => r.seq.length)),
+    }
+    h += '<div class="rgrid">'
+    lastRows.forEach((r, i) => {
+      const pr = r.value - r.cost, ad = addPct(p, r.list), extras = r.list.filter((e) => !tset.has(e)).length
+      const badges = [partial ? `<span class="badge">🧩 ${r.hit} / ${tl.length} effects</span>` : '', i === 0 ? '<span class="badge">🏆 Top pick</span>' : '',
+        r.cost === best.cost ? '<span class="badge alt">💸 Cheapest</span>' : '',
+        pr === best.profit ? '<span class="badge alt">📈 Best profit</span>' : '',
+        tl.length && !extras ? '<span class="badge alt">🎯 No extras</span>' : ''].join('')
+      h += `<article class="rcard ${i === 0 ? 'top' : ''}" style="animation-delay:${Math.min(i, 8) * 40}ms">
+        <div class="rtop"><span class="rank">#${i + 1}</span>${badges}<button class="ghost sm" data-sim="${i}">▶ Try in simulator</button></div>
+        <div class="flow">${flowHtml(p, r.seq)}${r.seq.length ? '' : '<span class="hint">Already has these effects. Nothing to add!</span>'}</div>
+        <div class="effs">${r.list.map((e) => chip(e, tset.has(e) ? 'want' : 'extra')).join('')}${partial ? tl.filter((t) => !r.list.includes(t)).map((t) => chip(t, 'old')).join('') : ''}</div>
+        <div class="stats">
+          <div class="stat"><small>Ingredients</small><b>${fmt(r.cost)}</b> <span class="hint">${r.seq.length} item${r.seq.length === 1 ? '' : 's'}</span></div>
+          <div class="stat"><small>Market value</small><b>${fmt(r.value)}</b></div>
+          <div class="stat"><small>Value − cost</small><b class="${pr >= 0 ? 'good' : 'bad'}">${fmt(pr)}</b></div>
+          <div class="stat"><small>Addiction</small><b>${ad}%</b><div class="meter"><i style="width:${ad}%"></i></div></div>
+        </div></article>`
+    })
+    h += `</div><div class="foot">Ingredient cost = shop price of one of each ingredient. Market value = the game's value for one unit of the finished product.</div>`
+  }
+  $('#out').innerHTML = h
+}
+$('#out').onclick = (ev) => {
+  if (ev.target.closest('#closest')) return runSearch(true)
+  const b = ev.target.closest('[data-sim]'); if (!b || !last) return
+  sp = prodList.indexOf(last.p); sseq = lastRows[+b.dataset.sim].seq.slice(); hover = null
+  renderProds(); simRender(); showTab('sim'); scrollTo({ top: 0, behavior: 'smooth' })
+}
 
 // ---- simulator
-let sseq = []
+let sseq = [], hover = null
+const simList = () => en.run(startOf(prodList[sp]), sseq)
 function simRender() {
-  const p = prodList[+$('#sproduct').value], start = startOf(p), list = en.run(start, sseq)
-  $('#sseq').innerHTML = sseq.map((i, k) => `<span class="pill"><b>${k + 1}</b>${en.ings[i].name}</span>`).join('') || '<span class="small">No ingredients added yet.</span>'
-  const cost = sseq.reduce((s, i) => s + en.ings[i].price, 0), v = en.value(p.basePrice, list)
-  $('#sstate').innerHTML = `<div>${list.map((e) => `<span class="eff want">${eName(e)}</span>`).join('') || '<span class="small">No effects</span>'}</div>
-  <div class="stat"><div>Market value<b>${fmt(v)}</b></div><div>Ingredient cost<b>${fmt(cost)}</b></div><div>Value − cost<b>${fmt(v - cost)}</b></div><div>Addiction<b>${Math.round(en.addictiveness(p.baseAddictiveness, list) * 100)}%</b></div><div>Effects<b>${list.length} / ${DATA.maxProperties}</b></div></div>`
+  const p = prodList[sp], list = simList(), cost = costOf(sseq), v = en.value(p.basePrice, list), ad = addPct(p, list)
+  $('#sseq').innerHTML = flowHtml(p, sseq) + (sseq.length ? '' : '<span class="hint">← Click ingredients to add them.</span>')
+  $('#sstate').innerHTML = `<div class="lbl">Current effects <span>${list.length} / ${DATA.maxProperties}</span></div>
+    <div class="effs">${list.map((e) => chip(e)).join('') || '<span class="hint">No effects yet.</span>'}</div>
+    <div class="stats" style="margin-top:12px">
+      <div class="stat"><small>Market value</small><b>${fmt(v)}</b></div>
+      <div class="stat"><small>Ingredients</small><b>${fmt(cost)}</b></div>
+      <div class="stat"><small>Value − cost</small><b class="${v - cost >= 0 ? 'good' : 'bad'}">${fmt(v - cost)}</b></div>
+      <div class="stat"><small>Addiction</small><b>${ad}%</b><div class="meter"><i style="width:${ad}%"></i></div></div>
+    </div>`
+  renderPreview()
 }
-$('#sbtns').innerHTML = en.ings.map((g, i) => `<button class="ibtn" data-i="${i}">${g.name}<small>${eName(g.eff)}</small></button>`).join('')
+function renderPreview() {
+  const p = prodList[sp], list = simList()
+  $('#map').innerHTML = mapSVG(list, hover)
+  $('#spreview').innerHTML = hover == null
+    ? '💡 Hover over an ingredient to preview what it will change before you add it.'
+    : `<b>If you add ${ingIcon(hover)} ${en.ings[hover].name}:</b>${diffHtml(p, list, hover)}`
+}
+$('#sbtns').innerHTML = en.ings.map((g, i) => `<button class="ibtn" data-i="${i}">${ingIcon(i)}<span class="price">${fmt(g.price)}</span><b>${g.name}</b><small style="--c:var(--t${tierOf(g.eff)})"><i></i>${eName(g.eff)}</small></button>`).join('')
+const setHover = (ev) => { const b = ev.target.closest('.ibtn'); const i = b ? +b.dataset.i : null; if (i !== hover) { hover = i; renderPreview() } }
+$('#sbtns').onmouseover = setHover
+$('#sbtns').addEventListener('focusin', setHover)
+$('#sbtns').onmouseleave = () => { hover = null; renderPreview() }
 $('#sbtns').onclick = (ev) => { const b = ev.target.closest('.ibtn'); if (!b) return; sseq.push(+b.dataset.i); simRender() }
 $('#sundo').onclick = () => { sseq.pop(); simRender() }
 $('#sreset').onclick = () => { sseq = []; simRender() }
-$('#sproduct').onchange = simRender
 
-renderEffects(); renderIngs(); stepsNote(); simRender()
+// ---- help
+;(function () {
+  const p = prodList[0], list = startOf(p)
+  const i = en.ings.findIndex((_, k) => en.mix(list, k).some((e, j) => j < list.length && e !== list[j]))
+  if (i >= 0) $('#example').innerHTML = `<b>Example: ${p.name} + ${ingIcon(i)} ${en.ings[i].name}</b>${diffHtml(p, list, i)}`
+  else $('#example').remove()
+  const order = en.E.map((_, k) => k).sort((a, b) => pct(b) - pct(a) || tierOf(b) - tierOf(a))
+  const mx = Math.max(...order.map(pct))
+  $('#cheat').innerHTML = `<thead><tr><th>Effect</th><th>Tier</th><th>Adds to price</th><th>Addiction</th><th>Comes from</th><th></th></tr></thead><tbody>` +
+    order.map((e) => `<tr><td>${chip(e)}</td><td style="color:var(--t${tierOf(e)});font-weight:700">T${tierOf(e)}</td>
+      <td><div class="barw"><div class="bar" style="--c:var(--t${tierOf(e)});width:${Math.max(2, pct(e) / mx * 120)}px"></div>+${pct(e)}%</div></td>
+      <td>${Math.round(en.E[e].addictiveness * 100)}%</td>
+      <td>${srcOf[e] != null ? `${ingIcon(srcOf[e])} ${en.ings[srcOf[e]].name}` : '<span class="hint">mixing only</span>'}</td>
+      <td><button class="ghost sm" data-e="${e}">Find 🔍</button></td></tr>`).join('') + '</tbody>'
+  $('#cheat').onclick = (ev) => {
+    const b = ev.target.closest('[data-e]'); if (!b) return
+    targets.add(+b.dataset.e); renderEffects(); showTab('find'); scrollTo({ top: 0, behavior: 'smooth' })
+  }
+})()
+
+$('#out').innerHTML = emptyHtml()
+renderProds(); renderEffects(); renderIngs(); stepsNote(); simRender()
 </script>
 </body>
 </html>

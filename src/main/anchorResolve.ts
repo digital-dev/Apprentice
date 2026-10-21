@@ -21,11 +21,20 @@ export interface AnchorShape {
   // absent or empty means "no extra hops", exactly as before this field
   // existed.
   derefOffsets?: string[]
+  // The captured object is a UnityEngine.Object (MonoBehaviour etc.): its
+  // native backing pointer at +0x10 reads zero once the engine has destroyed
+  // it. A capture pins the first object seen for the session, so after a
+  // save reload or scene change the slot can point at freed memory the game
+  // has since reused. When set, resolution refuses a destroyed object so the
+  // freeze loop never writes through a dangling pointer. Only valid for
+  // classes that derive from UnityEngine.Object -- on a plain C# class +0x10
+  // is an ordinary field and may legitimately read zero.
+  requireLiveUnityObject?: boolean
 }
 
 export type AnchorResolution =
   | { ok: true; address: string }
-  | { ok: false; reason: 'no-slot' | 'slot-unreadable' | 'not-captured' | 'deref-unreadable' | 'deref-null' }
+  | { ok: false; reason: 'no-slot' | 'slot-unreadable' | 'not-captured' | 'deref-unreadable' | 'deref-null' | 'object-destroyed' }
 
 export type ReadFn = (address: string, length: number) => string | null
 
@@ -44,6 +53,13 @@ export function resolveAnchorAddress(target: AnchorShape, slot: string | null, r
   let base = littleEndianPointer(slotHex)
   // Zero means the game has not run the hooked instruction yet this session.
   if (base === 0n) return { ok: false, reason: 'not-captured' }
+
+  if (target.requireLiveUnityObject) {
+    const nativeHex = read('0x' + (base + 0x10n).toString(16), 8)
+    // Unreadable means the managed object's page is gone entirely; zero means
+    // the engine destroyed it. Either way the pointer is dangling.
+    if (nativeHex === null || littleEndianPointer(nativeHex) === 0n) return { ok: false, reason: 'object-destroyed' }
+  }
 
   const hops = target.derefOffsets !== undefined && target.derefOffsets.length > 0
     ? target.derefOffsets

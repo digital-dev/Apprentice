@@ -65,6 +65,10 @@ export interface AnchorTarget {
   // anchorResolve.ts's AnchorShape.derefOffsets for the exact resolution
   // order; takes priority over derefOffset when both are set.
   derefOffsets?: string[]
+  // See anchorResolve.ts's AnchorShape.requireLiveUnityObject: skip the write
+  // (and any offValue restore) while the captured UnityEngine.Object has been
+  // destroyed. Only set for classes known to derive from UnityEngine.Object.
+  requireLiveUnityObject?: boolean
   // See MonoTarget.value/dataType below — the same per-target override,
   // available on every target kind.
   value?: number

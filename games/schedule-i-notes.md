@@ -408,3 +408,54 @@ Both compute `delta = amount / divisor * const` and pass it to the virtual `NPCR
 `games/schedule-i-recipe-calculator.html` is a single-file offline page (open it in a browser). Its data and rules were read from the beta build: 35 effects, 16 ingredients, 7 base products, one shared `MixerMap`.
 Mixing (`EffectMixCalculator.MixProperties`, RVA `0x99e3d0`): each ingredient adds `MixDirection * MixMagnitude` to every existing effect's circle position; if that lands in another circle (first in map order, radius 0.4, within map radius 4) the effect is replaced unless already present; then the ingredient's effect is appended if absent and fewer than 8 effects. Value = `round(base * product(valueMultiplier) ...)` per `ProductManager.CalculateProductValue`; all `valueChange` are 0 and all multipliers 1, so value = `round(base * (1 + sum addBaseValueMultiple))`.
 Verified: value formula 7/7 base products; the 2 recipes stored in the game (both only add an effect). **Not verified in-game:** effect replacement, the 8-effect cap, sequential ordering. `UseRandomizedMixMaps` (rotates the map by a seeded angle) was off; the calculator assumes off. The Python-free engine and tests are not in the repo (scratch work).
+
+## Movement Speed re-derived for the beta build (2026-10-10)
+
+The `0x69918f` site no longer existed after the beta rebuild, so `factory-movespeed-scale` matched nothing and did nothing.
+In the new `PlayerMovement.Move` (`0x67a680`) the speed factor lives in `xmm7` (`[rcx+0x10] * xmm6` → `mulss xmm7,xmm6`), and the vector is scaled right after the processing call by `movaps xmm0,xmm7; mulss xmm7,[rdi+0x9c]; mulss xmm0,[rdi+0xa4]`.
+Patch is now `scale` of `xmm7` at `movaps xmm0,xmm7` (RVA `0x67b36f`, unique 64-byte signature, `checkPatches.js` OK). Untested in-game.
+
+### Remaining stale patches re-derived (2026-10-10)
+
+`checkPatches.js` (all cheats off) listed 13 GONE and 2 CHANGED after the beta rebuild; all are re-derived and now report OK (signature x1). All untested in-game.
+
+| Cheat | New RVA | What changed |
+|---|---|---|
+| Captures: PlayerInventory / CurfewManager / ItemUIManager | `0x675450` / `0x639350` / `0xa901f0` | New prologues (`makeCapture.js`) |
+| Max Relationship (`GetRelationshipChange`) | `0x6dbd50` | Only the rip-relative displacements in `originalBytes` changed |
+| Supplier meetup / debt | `0x6edfc9` / `0x6f1763` | `rdx` now holds the vtable for `call [rdx+0x178]`, so the old `mov edx,10.0f` would break the call; replacement uses `r10d` (`41 ba 00 00 20 41 66 41 0f 6e ca`; the first profile entry omitted the `41` REX prefix on the movd, which fed `edx` (the vtable pointer) into `xmm1` and zeroed Albert Hoover and Shirley Watts, fixed 2026-10-13) |
+| Clone drag / shift-click | `0xa8d658` / `0xa8f19d` | `neg edx` in `EndDrag` (`this` is rdi), `neg ebp` in `SlotClicked` |
+| Instant Mixing Complete | `0x885f38` | `jl` displacement `0x18c` |
+| Instant Growth | `0x7fc322` | Same `mulss xmm6,[rax+0x3a8]`, new surrounding code |
+| ATM: buttons / clamp / MAX enabled | `0x9a88ac` / `0x9a81e8` / `0x9a8926` | `setnb dl`; `minss xmm6,xmm0` (was xmm7); MAX branch is `setnbe dl` (was r14b), so replacement is `mov dl,1; nop` |
+| Dealer limit / label | `0xa3a729` / `0xa3a02a` | `cmp [rcx+0x18],0x0A` in `SetDisplayedDealer`; label immediate is `[rsp+0x158]` |
+
+## Instant Drying (2026-10-10)
+
+`factory-instant-drying` (`scale`, `xmm6` x 10000 at `mulss xmm6,xmm0`, `DryingRack.OnTimePass`, RVA `0x87145f`).
+`OnMinPass` just tail-jumps to `OnTimePass(minutes, ...)`. There `xmm6 = minutes * dry multiplier` is added to each `DryingOperation.Time` (`+0x20`); when `Time >= DRY_MINS_PER_TIER` (720, read live) the operation gets `Quality++` (`+0x1c`) and `Time = 0`, and at tier 3 it calls `TryEndOperation`. Scaling the step makes every tick cross the threshold: one tier per game minute, so a whole operation finishes in about four game minutes rather than in the same tick. Rate (not threshold) is scaled, but the compare is `Time >= threshold`, so a bigger step cannot stall it. Untested in-game.
+
+## Always Open: sewer door (2026-10-11)
+
+`factory-alwaysopen-sewer` (`replace`, `internal`, companion of `factory-alwaysopen-doors`, `SewerDoorController.CanPlayerAccess` entry, RVA `0x709060`) returns true at entry.
+`SewerDoorController` overrides `CanPlayerAccess` and never calls the `DoorController` overload, so the base Always Open patch did not reach it. On the exterior side, with `SewerManager.IsSewerUnlocked` false and the door closed, it required `GetAmountOfItem(SewerKeyItem) != 0`.
+`ExteriorHandleInteracted` still runs its own unlock path (`SetSewerUnlocked_Server`, sound) and `RemoveAmountOfItem(key, 1)`, which just walks the slots and does nothing without the key. Untested in-game.
+
+## Special customer desired effects (2026-10-11)
+
+`SpecialCustomerManager.UpdateDesiredEffects` shuffles `SpecialCustomerData.Effects` (`+0x68`, a `List<Property>`) in place and takes the first `min(count, MaxDesiredEffects=5)`; it runs from `RunWaitingForArrivalPhase` and `ActivateGroup` (also reached from `SetData` on load when the phase is 2). Every group pool has exactly 5 entries, so the selected set is always the whole pool and only the order changes.
+Pools read live (element class names):
+
+| Group | Effects |
+|---|---|
+| Party Bus | Electrifying, Smelly, Slippery, Gingeritis, Glowie |
+| Hippies | Zombifying, Calming, Foggy, Calorie-Dense, Bright-Eyed |
+| Businessmen | Focused, Energizing, Balding, Anti-Gravity, Thought-Provoking |
+| Bikers | Disorienting, Paranoia, Long Faced, Spicy, Schizophrenic |
+
+Read from memory, not observed in-game.
+
+## Recruit Any Dealer (2026-10-12)
+
+`factory-dealer-recruit-any` (`replace`, `test al,al` -> `jmp` over the checks in `Dealer.CanOfferRecruitment`, RVA `0x6dd6c8`).
+`CanOfferRecruitment(out reason)` returns false when `IsRecruited`, otherwise requires `NPCRelationData.IsMutuallyKnown(dealer NPC)` (unlocked) and then `HasBeenRecommended` (`+0x300`, set by `Customer.RecommendDealer` / `MarkAsRecommended`). It has no direct callers: the Recruit dialogue choice holds it as a delegate, so this is the single choke point. `DialogueController_Dealer.CheckChoice` still compares cash with the dealer's `SigningFee`. Untested in-game; whether a not-yet-known dealer can be talked to at all was not checked.

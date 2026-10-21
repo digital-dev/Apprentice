@@ -66,4 +66,38 @@ describe('resolveAnchorAddress', () => {
       expect(resolveAnchorAddress({ offset: '0x48' }, SLOT, read)).toEqual({ ok: true, address: '0x5048' })
     })
   })
+
+  describe('requireLiveUnityObject (refuse a destroyed captured object)', () => {
+    const live = { offset: '0x30', requireLiveUnityObject: true }
+
+    it('resolves while the native pointer at +0x10 is non-zero', () => {
+      const read = memory({ '1000': 0x5000n, '5010': 0xdeadn })
+      expect(resolveAnchorAddress(live, SLOT, read)).toEqual({ ok: true, address: '0x5030' })
+    })
+
+    it('reports object-destroyed when the native pointer is zero', () => {
+      const read = memory({ '1000': 0x5000n, '5010': 0n })
+      expect(resolveAnchorAddress(live, SLOT, read)).toEqual({ ok: false, reason: 'object-destroyed' })
+    })
+
+    it('reports object-destroyed when the object memory is unreadable', () => {
+      expect(resolveAnchorAddress(live, SLOT, memory({ '1000': 0x5000n }))).toEqual({
+        ok: false,
+        reason: 'object-destroyed'
+      })
+    })
+
+    it('does not read +0x10 when the flag is absent', () => {
+      const read = memory({ '1000': 0x5000n })
+      expect(resolveAnchorAddress({ offset: '0x30' }, SLOT, read)).toEqual({ ok: true, address: '0x5030' })
+    })
+
+    it('checks the captured holder, not the dereferenced object', () => {
+      const read = memory({ '1000': 0x5000n, '5010': 0n, '5048': 0x9000n })
+      expect(resolveAnchorAddress({ ...live, derefOffset: '0x48' }, SLOT, read)).toEqual({
+        ok: false,
+        reason: 'object-destroyed'
+      })
+    })
+  })
 })
