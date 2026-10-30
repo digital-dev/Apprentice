@@ -106,11 +106,16 @@ input[type=range]{width:100%;accent-color:var(--acc);margin:4px 0 0}
 .ingtiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:6px}
 .itile{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid color-mix(in srgb,var(--acc) 30%,var(--line));border-radius:10px;background:var(--bg2);cursor:pointer;text-align:left;transition:.12s}
 .itile:hover{border-color:var(--acc)}
-.itile .ico{font-size:20px;line-height:1}
+.itile .ico{font-size:24px;line-height:1}
 .itile b{display:block;font-size:12px;font-weight:600}
 .itile small{color:var(--faint);font-size:10.5px;display:block;line-height:1.25}
 .itile.off{opacity:.33;filter:grayscale(1);border-color:var(--line)}
-.ico{font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
+.ico{display:inline-flex;flex:none;vertical-align:middle}
+.ico svg,.ico img{width:1.3em;height:1.3em;display:block;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}
+.itile .ico{font-size:24px}.fnode .ico{font-size:20px}.ibtn .ico{font-size:30px}
+.iconedit{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.iconedit .itile{cursor:pointer}
+.iconedit input{display:none}
 
 /* go */
 .gobar{position:sticky;bottom:12px;display:flex;gap:8px;z-index:5;max-width:520px;width:100%;margin:0 auto}
@@ -138,7 +143,7 @@ input[type=range]{width:100%;accent-color:var(--acc);margin:4px 0 0}
 .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .fnode{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 5px;border-radius:10px;background:var(--bg2);border:1px solid var(--line);font-size:12.5px;font-weight:600;white-space:nowrap}
 .fnode em{font-style:normal;font-size:10px;font-weight:800;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--acc);color:var(--acc-ink)}
-.fnode .ico{font-size:17px;line-height:1}
+.fnode .ico{font-size:20px;line-height:1}
 .fnode.base{border-style:dashed;background:transparent;padding-left:4px}
 .farr{color:var(--faint);font-weight:800}
 .effs{display:flex;flex-wrap:wrap;gap:5px}
@@ -178,7 +183,7 @@ input[type=range]{width:100%;accent-color:var(--acc);margin:4px 0 0}
 .ibtn{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--bg2);cursor:pointer;text-align:left;transition:.12s;position:relative}
 .ibtn:hover,.ibtn:focus-visible{border-color:var(--acc);transform:translateY(-2px);outline:none;box-shadow:0 6px 18px -10px var(--acc)}
 .ibtn:active{transform:translateY(0)}
-.ibtn .ico{font-size:26px;line-height:1.1;margin-bottom:3px}
+.ibtn .ico{font-size:30px;line-height:1.1;margin-bottom:3px}
 .ibtn b{font-size:13px}
 .ibtn small{font-size:11px;color:var(--faint);display:flex;align-items:center;gap:4px}
 .ibtn small i{width:7px;height:7px;border-radius:50%;background:var(--c)}
@@ -235,6 +240,7 @@ code{background:var(--bg2);padding:1px 5px;border-radius:4px;font-size:12px}
   </div>
   <nav class="tabs" id="tabs">
     <button data-t="find" class="on">🔍 Recipe Finder</button>
+    <button data-t="area">📍 Area Mix</button>
     <button data-t="sim">🧪 Mix Simulator</button>
     <button data-t="help">❓ How mixing works</button>
   </nav>
@@ -287,6 +293,52 @@ code{background:var(--bg2);padding:1px 5px;border-radius:4px;font-size:12px}
     <div class="col" id="out"></div>
   </section>
 
+  <!-- ============ AREA MIX ============ -->
+  <section id="view-area" class="col hidden">
+    <div class="pickrow">
+      <div class="card">
+        <div class="stephead"><span class="num">1</span><div><h2>Pick an area</h2><p>Find the mix that the most customers there will like.</p></div></div>
+        <div class="seg wrap" id="areas"></div>
+        <div id="ainfo" class="hint" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <div class="stephead"><span class="num">2</span><div><h2>Pick your base product</h2><p>What are you starting with?</p></div></div>
+        <div class="prods" id="aprods"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="h">Most-wanted effects in this area</div>
+      <p class="hint" style="margin:-6px 0 10px">Number of customers who list each effect as a favorite (each customer has up to 3).</p>
+      <div id="apop"></div>
+    </div>
+
+    <div class="card">
+      <div class="stephead"><span class="num">3</span><div><h2>Fine-tune <span class="hint">(optional)</span></h2><p>Same ingredient filter as the Recipe Finder.</p></div></div>
+      <div class="tunerow">
+        <div>
+          <div class="lbl" style="margin-top:0">Max ingredients to add <b id="astepsv">4</b></div>
+          <input type="range" id="asteps" min="1" max="7" value="4">
+          <div class="ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span></div>
+          <div class="hint" id="astepsnote"></div>
+          <div class="lbl">Sort results by</div>
+          <div class="seg wrap" id="arank"><button data-v="pleased" class="on">👥 Most customers pleased</button><button data-v="hits">❤️ Most favorite hits</button><button data-v="profit">📈 Profit</button></div>
+        </div>
+        <div>
+          <div class="lbl" style="margin-top:0">Ingredients you can use <span class="links"><a href="#" id="aingAll">all</a> · <a href="#" id="aingNone">none</a></span></div>
+          <div class="ingtiles" id="aings"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="gobar">
+      <button class="go" id="afind">📍 Find best mix for this area</button>
+      <button class="ghost hidden" id="astop">Stop</button>
+      <div class="progress hidden" id="aprogress"><div class="spin"></div><span id="aprogtxt"></span></div>
+    </div>
+    <div class="col" id="aout"></div>
+  </section>
+
   <!-- ============ SIMULATOR ============ -->
   <section id="view-sim" class="grid hidden">
     <div class="col">
@@ -327,6 +379,13 @@ code{background:var(--bg2);padding:1px 5px;border-radius:4px;font-size:12px}
       <h2 class="h">Effect cheat sheet</h2>
       <p class="hint" style="margin:-6px 0 10px">Sorted by how much each effect adds to the price. Tap <b>Find</b> to search for a recipe with that effect.</p>
       <div class="tablewrap"><table class="cheat" id="cheat"></table></div>
+    </div>
+    <div class="card">
+      <h2 class="h">Ingredient icons</h2>
+      <p class="hint" style="margin:-6px 0 10px">The exact in-game icons for all 16 ingredients load from the <code>icons</code> folder next to this file. If a file is missing, a built-in look-alike is shown instead. You can also click an ingredient to use your own image; it is shrunk and stored only in this browser.</p>
+      <div class="iconedit" id="iconedit"></div>
+      <p class="hint" style="margin:12px 0 0">Faster: <b>load many at once</b>. Name each file after the ingredient (<code>Cuke.png</code>, <code>Mega Bean.png</code>, <code>Horse Semen.png</code>…) and select them all. Or put them in an <code>icons</code> folder next to this HTML file and reload; they load automatically.</p>
+      <p style="margin:8px 0 0;display:flex;gap:8px;flex-wrap:wrap"><label class="ghost sm" style="cursor:pointer">Load many icons…<input type="file" id="iconbulk" accept="image/*" multiple hidden></label><button class="ghost sm" id="iconreset">Reset all icons</button></p>
     </div>
     <div class="card about">
       <h2 class="h">What is and isn't verified</h2>
@@ -396,7 +455,8 @@ function makeEngine(DATA) {
   // every reported recipe is re-simulated exactly in game order afterwards.
   // opts: {start, targets:int[], exact:bool, maxSteps, allowed:int[] (ingredient idx), stateCap, onProgress(depth,states), shouldStop()}
   async function search(opts) {
-    const { start, targets, exact, maxSteps, allowed, stateCap = 1500000 } = opts
+    const { start, targets, exact, maxSteps, allowed, stateCap = 1500000, fullTargets } = opts
+    let cap = Infinity // with fullTargets: once a mix has them all, costlier mixes can't beat it, so stop growing them
     const tset = new Set(targets)
     const ok = (l) => targets.every((t) => l.includes(t)) && (!exact || l.every((x) => tset.has(x)))
     const best = new Map() // set key -> best cost reached so far
@@ -409,13 +469,16 @@ function makeEngine(DATA) {
       const next = []
       for (const st of layer) {
         for (const i of allowed) {
-          const l = mix(st.l, i), cost = st.cost + ings[i].price, k = sk(l)
+          const cost = st.cost + ings[i].price
+          if (cost > cap) continue
+          const l = mix(st.l, i), k = sk(l)
           const b = best.get(k)
           if (b !== undefined && b <= cost) continue
           best.set(k, cost)
           const node = { l, cost, seq: st.seq.concat(i) }
           next.push(node)
           if (ok(l)) found.push({ seq: node.seq, cost })
+          if (fullTargets && cost < cap && fullTargets.every((t) => l.includes(t))) cap = cost
         }
         if (++tick % 4000 === 0) {
           if (opts.onProgress) opts.onProgress(d, total + next.length)
@@ -445,8 +508,31 @@ const addPct = (p, list) => Math.round(en.addictiveness(p.baseAddictiveness, lis
 const costOf = (seq) => seq.reduce((s, i) => s + en.ings[i].price, 0)
 
 // ---- graphics
-const ING_ICON = { 'Cuke': '🥒', 'Donut': '🍩', 'Flu Medicine': '🤒', 'Gasoline': '⛽', 'Energy Drink': '🥤', 'Mouth Wash': '🫧', 'Banana': '🍌', 'Chili': '🌶️', 'Motor Oil': '🛢️', 'Iodine': '🧪', 'Paracetamol': '💊', 'Viagor': '🍆', 'Horse Semen': '🐴', 'Mega Bean': '🫘', 'Addy': '🧠', 'Battery': '🔋' }
-const ingIcon = (i) => `<span class="ico">${ING_ICON[en.ings[i].name] || '🧂'}</span>`
+// Hand-drawn item icons (drawn from the shop items' look, not ripped from the game). Users can override any of them with their own screenshot (How mixing works tab).
+const ING_SVG = {
+  'Cuke': '<rect x="13" y="7" width="18" height="31" rx="3" fill="#d62f2f"/><rect x="13" y="7" width="18" height="4" rx="2" fill="#c9ced3"/><rect x="13" y="34" width="18" height="4" rx="2" fill="#c9ced3"/><path d="M13 20Q22 14 31 21L31 27Q22 21 13 27Z" fill="#fff"/><rect x="16" y="9" width="3" height="27" fill="#fff" opacity=".25"/>',
+  'Donut': '<ellipse cx="22" cy="25" rx="17" ry="12" fill="#d9a066"/><ellipse cx="22" cy="22" rx="17" ry="12" fill="#f3b6cf"/><ellipse cx="22" cy="22" rx="5.5" ry="3.8" fill="#10150f"/><g stroke-width="1.8" stroke-linecap="round"><path d="M10 20l2-1" stroke="#fff"/><path d="M15 15l2 1" stroke="#ffe14a"/><path d="M26 14l2 1" stroke="#6fe3ff"/><path d="M33 19l-2 1" stroke="#fff"/><path d="M32 26l-2-1" stroke="#ffe14a"/><path d="M24 30l1-2" stroke="#6fe3ff"/><path d="M14 27l2-1" stroke="#fff"/></g>',
+  'Flu Medicine': '<rect x="17" y="5" width="10" height="6" rx="1.5" fill="#eee"/><rect x="18" y="11" width="8" height="4" fill="#cfd6dc"/><rect x="12" y="15" width="20" height="25" rx="4" fill="#e8742a"/><rect x="14" y="22" width="16" height="12" rx="1.5" fill="#fff"/><path d="M22 25v6M19 28h6" stroke="#d33" stroke-width="2" stroke-linecap="round"/>',
+  'Gasoline': '<rect x="8" y="14" width="26" height="25" rx="3" fill="#cf2a2a"/><path d="M11 14V9h12v5" fill="none" stroke="#a11" stroke-width="3"/><path d="M30 14l5-6h4v4l-4 4z" fill="#e8c23a"/><path d="M12 22l18 12M30 22L12 34" stroke="#9c1c1c" stroke-width="2"/>',
+  'Energy Drink': '<rect x="14" y="6" width="16" height="33" rx="3" fill="#1f6fe0"/><rect x="14" y="6" width="16" height="4" rx="2" fill="#c9ced3"/><rect x="14" y="35" width="16" height="4" rx="2" fill="#c9ced3"/><path d="M24 12l-7 13h5l-2 9 8-14h-5z" fill="#ffe14a"/>',
+  'Mouth Wash': '<rect x="17" y="5" width="10" height="6" rx="1.5" fill="#f2f2f2"/><path d="M18 11h8v4l5 5v17a3 3 0 0 1-3 3H16a3 3 0 0 1-3-3V20l5-5z" fill="#2fb7d6"/><rect x="15" y="23" width="14" height="11" rx="1.5" fill="#fff"/><path d="M19 29Q22 24 25 29Q22 33 19 29Z" fill="#2fb7d6"/>',
+  'Banana': '<path d="M10 12Q8 30 24 36Q34 38 38 30Q30 33 24 28Q16 22 17 10Z" fill="#f6d33a" stroke="#b8901a" stroke-width="1.2" stroke-linejoin="round"/><rect x="9" y="7" width="7" height="6" rx="1.5" fill="#6b5a22" transform="rotate(-8 12 10)"/><path d="M21 14Q22 24 32 32" stroke="#e1b920" fill="none" stroke-width="1.2"/>',
+  'Chili': '<path d="M30 12Q38 18 30 30Q22 40 9 38Q18 34 22 26Q26 18 26 12Z" fill="#d82a1c"/><path d="M28 15Q33 20 28 27" stroke="#fff" opacity=".3" fill="none" stroke-width="1.5"/><path d="M25 12q4-4 9 0q-4 3-9 0z" fill="#2f8f2f"/><path d="M30 9q2-3 5-3" stroke="#2f8f2f" stroke-width="2.5" stroke-linecap="round" fill="none"/>',
+  'Motor Oil': '<path d="M14 14h14l3 4v19a3 3 0 0 1-3 3H14a3 3 0 0 1-3-3V18z" fill="#e9b52a"/><rect x="15" y="8" width="8" height="6" rx="1.5" fill="#222"/><rect x="13" y="22" width="16" height="11" rx="1.5" fill="#222"/><path d="M21 24q3 4 0 7q-3-3 0-7z" fill="#e9b52a"/>',
+  'Iodine': '<rect x="18" y="5" width="8" height="6" rx="1.5" fill="#222"/><rect x="19" y="11" width="6" height="4" fill="#6b3a12"/><rect x="13" y="15" width="18" height="25" rx="4" fill="#8a4a14"/><rect x="15" y="23" width="14" height="11" rx="1.5" fill="#f1eadb"/><rect x="17" y="26" width="10" height="1.8" fill="#8a4a14"/><rect x="17" y="29.5" width="7" height="1.8" fill="#8a4a14"/>',
+  'Paracetamol': '<rect x="9" y="12" width="26" height="23" rx="3" fill="#f4f4f4"/><path d="M9 15a3 3 0 0 1 3-3h20a3 3 0 0 1 3 3v4H9z" fill="#e23b3b"/><rect x="14" y="24" width="10" height="5" rx="2.5" fill="#e23b3b" transform="rotate(-20 19 26)"/><circle cx="29" cy="27" r="3.6" fill="#fff" stroke="#b9b9b9"/>',
+  'Viagor': '<rect x="9" y="11" width="26" height="24" rx="3" fill="#2a58d8"/><path d="M9 14a3 3 0 0 1 3-3h20a3 3 0 0 1 3 3v3H9z" fill="#1a3da0"/><path d="M22 20l9 5.5-9 5.5-9-5.5z" fill="#8fd5ff"/><path d="M22 20l9 5.5H22z" fill="#fff" opacity=".45"/>',
+  'Horse Semen': '<rect x="13" y="5" width="18" height="7" rx="1.5" fill="#8d8f93"/><path d="M14 12h16l2 4v20a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4V16z" fill="#e3ebf0"/><path d="M12 24h20v12a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4z" fill="#fff"/><path d="M17 21v7a5 5 0 0 0 10 0v-7" stroke="#8a5a2a" stroke-width="2.4" fill="none" stroke-linecap="round"/>',
+  'Mega Bean': '<path d="M12 28Q6 16 18 10Q32 4 36 18Q40 32 26 36Q16 38 12 28Z" fill="#8a5b2e"/><path d="M16 14Q26 10 31 18" stroke="#c99a5b" stroke-width="2.4" fill="none" stroke-linecap="round" opacity=".7"/><path d="M22 20l1.7 3.4 3.7.5-2.7 2.6.6 3.7-3.3-1.8-3.3 1.8.6-3.7-2.7-2.6 3.7-.5z" fill="#ffd34a"/>',
+  'Addy': '<rect x="14" y="4" width="16" height="8" rx="2" fill="#f4f4f4"/><rect x="13" y="12" width="18" height="28" rx="3" fill="#f08a1c"/><rect x="13" y="19" width="18" height="15" fill="#fff"/><rect x="16" y="22" width="12" height="2.2" fill="#f08a1c"/><rect x="16" y="26.5" width="9" height="1.8" fill="#bbb"/><rect x="16" y="30" width="11" height="1.8" fill="#bbb"/>',
+  'Battery': '<rect x="17" y="3" width="10" height="5" rx="1" fill="#c9ced3"/><rect x="13" y="8" width="18" height="32" rx="3" fill="#1c1c1c"/><path d="M13 11a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v7H13z" fill="#d89b2c"/><rect x="13" y="33" width="18" height="4" fill="#d89b2c"/><path d="M23 20l-4 6h3l-1 5 4-6h-3z" fill="#ffd34a"/>',
+}
+let ICON_OVR = {}, ICON_FILE = {}
+try { ICON_OVR = JSON.parse(localStorage.getItem('s1icons') || '{}') || {} } catch (e) { ICON_OVR = {} }
+const ingIcon = (i) => {
+  const n = en.ings[i].name, o = ICON_OVR[n] || ICON_FILE[n]
+  return `<span class="ico">${o ? `<img src="${o}" alt="">` : `<svg viewBox="0 0 44 44" aria-hidden="true">${ING_SVG[n] || '<rect x="12" y="10" width="20" height="28" rx="4" fill="#889"/>'}</svg>`}</span>`
+}
 const PROD_STYLE = { 'OG Kush': ['leaf', '#5fd068'], 'Sour Diesel': ['leaf', '#d8e45a'], 'Green Crack': ['leaf', '#2ff08a'], 'Granddaddy Purple': ['leaf', '#a77bff'], 'Meth': ['crystal', '#7fd8ff'], 'Cocaine': ['powder', '#f4f4f4'], 'Shroom': ['shroom', '#e0704a'] }
 function prodIcon(p, s = 44) {
   const [k, c] = PROD_STYLE[p.name] || ['leaf', '#7f7']
@@ -536,12 +622,13 @@ $('#legend').innerHTML = [1, 2, 3, 4, 5].map((t) => `<span style="--c:var(--t${t
 $('#about').innerHTML = `
 <p><b>Rules (read from the game's code).</b> Ingredients are added one at a time. Each ingredient shifts every effect on the product by a fixed direction on a map. If the shifted point lands inside another effect's circle, that effect is replaced by the circle's effect (unless the product already has it). Then the ingredient's own effect is added if the product doesn't have it and there are fewer than ${DATA.maxProperties} effects. Market value is the product's base price scaled by each effect's price multiplier, rounded to the nearest whole number.</p>
 <p><b>Verified against the game:</b> the value formula reproduces the market value of all 7 base products, and the mixing rules reproduce both mixes stored in the game's data. Both of those mixes only <i>add</i> an effect, so no effect replacement was covered by that check. The replacement rule, the ${DATA.maxProperties}-effect cap and the one-at-a-time ordering come from reading the game's code and have not been compared with an in-game mix. <b>Check a recipe in the game before you buy ingredients in bulk</b>, and tell me if one is wrong.</p>
-<p><b>Not covered:</b> the game has a setting (<code>UseRandomizedMixMaps</code>) that rotates the map by a seeded angle. It was off in the save I read, so the results here assume it is off. Prices are the shop price of one of each ingredient listed; I did not check how many product units one ingredient covers. Market value is the base value, not the final sell price a customer pays. The search merges recipes that reach the same set of effects, so in rare cases (about 1 in 60 steps) it can miss a recipe that depends on effect order. Every recipe shown is re-run exactly in game order.</p>`
+<p><b>Not covered:</b> the game has a setting (<code>UseRandomizedMixMaps</code>) that rotates the map by a seeded angle. It was off in the save I read, so the results here assume it is off. Prices are the shop price of one of each ingredient listed; I did not check how many product units one ingredient covers. Market value is the base value, not the final sell price a customer pays. The search merges recipes that reach the same set of effects, so in rare cases (about 1 in 60 steps) it can miss a recipe that depends on effect order. Every recipe shown is re-run exactly in game order.</p>
+<p><b>Area Mix data:</b> each customer's area and favorite effects were read from the game's own files (the customer data assets and each customer's region), covering all 70 customers. Randy Caulfield has no favorite effects in the game and is ignored. Andy, Doug and Joe are listed by first name because that is all the game gives them, and Chelsey has only two favorites. The <b>special groups</b> (Party Bus, Hippies, Businessmen, Bikers, each selectable on its own) come from the game's special-customer data; each group's pool of 5 wanted effects was read from the game. How a group actually reacts to a mix was not checked. Later game updates may change this data. Area <i>standards</i> (Low, Moderate, High) were not re-checked against the game. A customer counts as pleased when the mix has at least one of their favorites. Area <i>standards</i> (Low, Moderate, High) and each customer's favorite product type are not modeled. To fix a customer, edit the <code>CUST_RAW</code> list in the file.</p>`
 
 // ---- tabs
 function showTab(t) {
   for (const b of $('#tabs').children) b.classList.toggle('on', b.dataset.t === t)
-  for (const v of ['find', 'sim', 'help']) $('#view-' + v).classList.toggle('hidden', v !== t)
+  for (const v of ['find', 'area', 'sim', 'help']) $('#view-' + v).classList.toggle('hidden', v !== t)
 }
 $('#tabs').onclick = (ev) => { const b = ev.target.closest('button'); if (b) showTab(b.dataset.t) }
 
@@ -550,7 +637,9 @@ let fp = 0, sp = 0, targets = new Set(), mode = 'any', rank = 'cost', allowed = 
 let running = false, stopFlag = false, last = null, lastRows = []
 
 const prodCards = (cur) => prodList.map((p, i) => `<button class="prod ${i === cur ? 'on' : ''}" data-i="${i}">${prodIcon(p)}<b>${p.name}</b><small>base ${fmt(p.basePrice)}${p.properties.length ? '<br>' + p.properties.join(', ') : ''}</small></button>`).join('')
-function renderProds() { $('#prods').innerHTML = prodCards(fp); $('#sprods').innerHTML = prodCards(sp) }
+let ap = 0
+function renderProds() { $('#prods').innerHTML = prodCards(fp); $('#sprods').innerHTML = prodCards(sp); $('#aprods').innerHTML = prodCards(ap) }
+$('#aprods').onclick = (ev) => { const b = ev.target.closest('.prod'); if (!b) return; ap = +b.dataset.i; renderProds() }
 $('#prods').onclick = (ev) => { const b = ev.target.closest('.prod'); if (!b) return; fp = +b.dataset.i; renderProds() }
 $('#sprods').onclick = (ev) => { const b = ev.target.closest('.prod'); if (!b) return; sp = +b.dataset.i; renderProds(); simRender() }
 
@@ -573,11 +662,14 @@ seg('#mode', (v) => { mode = v })
 seg('#rank', (v) => { rank = v; if (last) renderResults() })
 
 function renderIngs() {
-  $('#ings').innerHTML = en.ings.map((g, i) => `<button class="itile ${allowed.has(i) ? '' : 'off'}" data-i="${i}" title="${allowed.has(i) ? 'Click to exclude' : 'Click to allow'}">${ingIcon(i)}<span><b>${g.name}</b><small>${fmt(g.price)} · ${eName(g.eff)}</small></span></button>`).join('')
+  const h = en.ings.map((g, i) => `<button class="itile ${allowed.has(i) ? '' : 'off'}" data-i="${i}" title="${allowed.has(i) ? 'Click to exclude' : 'Click to allow'}">${ingIcon(i)}<span><b>${g.name}</b><small>${fmt(g.price)} · ${eName(g.eff)}</small></span></button>`).join('')
+  $('#ings').innerHTML = h; $('#aings').innerHTML = h
 }
-$('#ings').onclick = (ev) => { const b = ev.target.closest('.itile'); if (!b) return; const i = +b.dataset.i; allowed.has(i) ? allowed.delete(i) : allowed.add(i); renderIngs() }
-$('#ingAll').onclick = (ev) => { ev.preventDefault(); allowed = new Set(en.ings.map((_, i) => i)); renderIngs() }
-$('#ingNone').onclick = (ev) => { ev.preventDefault(); allowed = new Set(); renderIngs() }
+const ingClick = (ev) => { const b = ev.target.closest('.itile'); if (!b) return; const i = +b.dataset.i; allowed.has(i) ? allowed.delete(i) : allowed.add(i); renderIngs() }
+$('#ings').onclick = ingClick; $('#aings').onclick = ingClick
+const ingAllNone = (all) => (ev) => { ev.preventDefault(); allowed = all ? new Set(en.ings.map((_, i) => i)) : new Set(); renderIngs() }
+$('#ingAll').onclick = ingAllNone(true); $('#aingAll').onclick = ingAllNone(true)
+$('#ingNone').onclick = ingAllNone(false); $('#aingNone').onclick = ingAllNone(false)
 function stepsNote() {
   const s = +$('#steps').value
   $('#stepsv').textContent = s
@@ -705,7 +797,8 @@ function renderPreview() {
     ? '💡 Hover over an ingredient to preview what it will change before you add it.'
     : `<b>If you add ${ingIcon(hover)} ${en.ings[hover].name}:</b>${diffHtml(p, list, hover)}`
 }
-$('#sbtns').innerHTML = en.ings.map((g, i) => `<button class="ibtn" data-i="${i}">${ingIcon(i)}<span class="price">${fmt(g.price)}</span><b>${g.name}</b><small style="--c:var(--t${tierOf(g.eff)})"><i></i>${eName(g.eff)}</small></button>`).join('')
+const renderSBtns = () => { $('#sbtns').innerHTML = en.ings.map((g, i) => `<button class="ibtn" data-i="${i}">${ingIcon(i)}<span class="price">${fmt(g.price)}</span><b>${g.name}</b><small style="--c:var(--t${tierOf(g.eff)})"><i></i>${eName(g.eff)}</small></button>`).join('') }
+renderSBtns()
 const setHover = (ev) => { const b = ev.target.closest('.ibtn'); const i = b ? +b.dataset.i : null; if (i !== hover) { hover = i; renderPreview() } }
 $('#sbtns').onmouseover = setHover
 $('#sbtns').addEventListener('focusin', setHover)
@@ -734,8 +827,319 @@ $('#sreset').onclick = () => { sseq = []; simRender() }
   }
 })()
 
+// ---- icon overrides
+function refreshIcons() { renderIngs(); renderSBtns(); renderIconEdit(); simRender(); if (last) renderResults(); if (alast) aRender() }
+function renderIconEdit() {
+  $('#iconedit').innerHTML = en.ings.map((g, i) => `<label class="itile" title="Click to choose an image for ${g.name}">${ingIcon(i)}<span><b>${g.name}</b><small>${ICON_OVR[g.name] ? 'custom image' : 'built-in'}</small></span><input type="file" accept="image/*" data-n="${g.name}"></label>`).join('')
+}
+function saveIcon(name, file) {
+  return new Promise((res) => {
+    const rd = new FileReader()
+    rd.onload = () => {
+      const im = new Image()
+      im.onload = () => {
+        const c = document.createElement('canvas'); c.width = c.height = 96
+        const k = Math.min(96 / im.width, 96 / im.height), w = im.width * k, h = im.height * k
+        c.getContext('2d').drawImage(im, (96 - w) / 2, (96 - h) / 2, w, h)
+        ICON_OVR[name] = c.toDataURL('image/png')
+        try { localStorage.setItem('s1icons', JSON.stringify(ICON_OVR)) } catch (e) {}
+        res(true)
+      }
+      im.onerror = () => res(false)
+      im.src = rd.result
+    }
+    rd.readAsDataURL(file)
+  })
+}
+$('#iconedit').onchange = async (ev) => {
+  const inp = ev.target.closest('input[type=file]'); if (!inp || !inp.files[0]) return
+  await saveIcon(inp.dataset.n, inp.files[0]); refreshIcons()
+}
+$('#iconbulk').onchange = async (ev) => {
+  const byNorm = Object.fromEntries(en.ings.map((g) => [norm(g.name), g.name])), miss = []
+  for (const f of ev.target.files) {
+    const n = byNorm[norm(f.name.replace(/\.[^.]+$/, ''))]
+    if (n) await saveIcon(n, f); else miss.push(f.name)
+  }
+  refreshIcons()
+  if (miss.length) alert('No ingredient matched these file names:\n' + miss.join('\n'))
+}
+// optional: icons/<Ingredient>.png next to this file
+en.ings.forEach((g) => {
+  const im = new Image()
+  im.onload = () => { ICON_FILE[g.name] = im.src; clearTimeout(refreshIcons.t); refreshIcons.t = setTimeout(refreshIcons, 50) }
+  im.src = 'icons/' + encodeURIComponent(g.name) + '.png'
+})
+$('#iconreset').onclick = () => { ICON_OVR = {}; try { localStorage.removeItem('s1icons') } catch (e) {} refreshIcons() }
+
+// ---- area mix (customer data read from the game files; see "What is and isn't verified")
+const AREA_ORDER = ['Northtown', 'Westville', 'Downtown', 'Docks', 'Suburbia', 'Uptown']
+const AREA_STD = { Northtown: 'Low', Westville: 'Low', Downtown: 'Moderate', Docks: 'Moderate', Suburbia: 'High', Uptown: 'High' }
+const CUST_RAW = `Northtown|Kyle Cooley|Calming,Munchies,Smelly
+Northtown|Austin Steiner|Calorie-Dense,Euphoric,Munchies
+Northtown|Jessi Waters|Energizing,Paranoia,Sneaky
+Northtown|Kathy Henderson|Athletic,Energizing,Focused
+Northtown|Sam Thompson|Munchies,Athletic,Smelly
+Northtown|Geraldine Poon|Balding,Long faced,Sedating
+Northtown|Mick Lubbin|Euphoric,Bright-Eyed,Sneaky
+Northtown|Peter File|Focused,Refreshing,Sneaky
+Northtown|Chloe Bowers|Euphoric,Shrinking,Munchies
+Northtown|Donna Martin|Refreshing,Lethal,Munchies
+Northtown|Peggy Myers|Bright-Eyed,Refreshing,Energizing
+Northtown|Mrs. Ming|Gingeritis,Shrinking,Electrifying
+Northtown|Ludwig Meyer|Euphoric,Refreshing,Energizing
+Northtown|Beth Penn|Schizophrenic,Lethal,Seizure-Inducing
+Westville|Trent Sherman|Athletic,Balding,Calorie-Dense
+Westville|Meg Cooley|Sneaky,Slippery,Thought-Provoking
+Westville|Joyce Ball|Euphoric,Thought-Provoking,Calorie-Dense
+Westville|Keith Wagner|Slippery,Sneaky,Tropic Thunder
+Westville|Doris Lubbin|Spicy,Tropic Thunder,Balding
+Westville|Kim Delaney|Shrinking,Jennerising,Focused
+Westville|Charles Rowland|Sedating,Disorienting,Foggy
+Westville|Jerry Montero|Gingeritis,Smelly,Thought-Provoking
+Westville|Dean Webster|Glowing,Laxative,Spicy
+Westville|George Greene|Energizing,Focused,Thought-Provoking
+Downtown|Elizabeth Homley|Sedating,Tropic Thunder,Toxic
+Downtown|Jennifer Rivera|Shrinking,Slippery,Toxic
+Downtown|Lucy Pennington|Calorie-Dense,Euphoric,Glowing
+Downtown|Kevin Oakley|Schizophrenic,Munchies,Calming
+Downtown|Louis Fourier|Shrinking,Seizure-Inducing,Paranoia
+Downtown|Eugene Buckley|Schizophrenic,Toxic,Calming
+Downtown|Philip Wentworth|Refreshing,Shrinking,Foggy
+Downtown|Randy Caulfield|
+Downtown|Greg Figgle|Euphoric,Tropic Thunder,Toxic
+Downtown|Jeff Gilmore|Sedating,Long faced,Laxative
+Downtown|Bruce Norton|Energizing,Paranoia,Spicy
+Downtown|Doug|Calorie-Dense,Energizing,Sneaky
+Downtown|Chelsey|Calming,Focused
+Downtown|Joe|Laxative,Calming,Balding
+Downtown|Andy|Sedating,Munchies,Smelly
+Docks|Anna Chesterfield|Refreshing,Thought-Provoking,Euphoric
+Docks|Lisa Gardener|Laxative,Schizophrenic,Anti-gravity
+Docks|Javier Perez|Cyclopean,Sedating,Bright-Eyed
+Docks|Genghis Barn|Electrifying,Gingeritis,Athletic
+Docks|Cranky Frank|Laxative,Toxic,Tropic Thunder
+Docks|Marco Barone|Sneaky,Long faced,Refreshing
+Docks|Mac Cooper|Focused,Spicy,Long faced
+Docks|Melissa Wood|Anti-gravity,Refreshing,Slippery
+Docks|Billy Kramer|Spicy,Schizophrenic,Long faced
+Docks|Sherman Giles|Explosive,Paranoia,Bright-Eyed
+Docks|Kelly Reynolds|Thought-Provoking,Smelly,Zombifying
+Suburbia|Chris Sullivan|Sneaky,Euphoric,Electrifying
+Suburbia|Karen Kennedy|Tropic Thunder,Sedating,Jennerising
+Suburbia|Hank Stevenson|Sneaky,Toxic,Schizophrenic
+Suburbia|Jackie Stevenson|Toxic,Sedating,Long faced
+Suburbia|Dennis Kennedy|Athletic,Focused,Bright-Eyed
+Suburbia|Jack Knight|Shrinking,Thought-Provoking,Lethal
+Suburbia|Carl Bundy|Glowing,Athletic,Disorienting
+Suburbia|Harold Colt|Foggy,Spicy,Jennerising
+Suburbia|Jeremy Wilkinson|Balding,Slippery,Calorie-Dense
+Suburbia|Alison Knight|Electrifying,Toxic,Euphoric
+Uptown|Lily Turner|Shrinking,Energizing,Athletic
+Uptown|Fiona Hancock|Lethal,Thought-Provoking,Tropic Thunder
+Uptown|Ray Hoffman|Thought-Provoking,Glowing,Zombifying
+Uptown|Jen Heard|Disorienting,Energizing,Sneaky
+Uptown|Walter Cussler|Schizophrenic,Calming,Balding
+Uptown|Herbert Bleuball|Slippery,Foggy,Explosive
+Uptown|Michael Boog|Jennerising,Calming,Schizophrenic
+Uptown|Tobias Wentworth|Lethal,Disorienting,Spicy
+Uptown|Pearl Moore|Schizophrenic,Gingeritis,Explosive
+Uptown|Irene Meadows|Euphoric,Thought-Provoking,Sneaky`
+const norm = (s) => s.toLowerCase().replace(/[^a-z]/g, '')
+const effByNorm = Object.fromEntries(en.E.map((e, i) => [norm(e.name), i]))
+const CUSTOMERS = CUST_RAW.split('\n').map((l) => {
+  const [a, n, fx] = l.split('|')
+  return { area: a, name: n, eff: fx ? fx.split(',').map((x) => effByNorm[norm(x)]) : [] }
+})
+// Special customer groups (read from the game's SpecialCustomerData assets). Each group wants its whole pool of 5 effects.
+const SPECIAL_RAW = `Party Bus|Electrifying,Smelly,Slippery,Gingeritis,Glowing
+Hippies|Zombifying,Calming,Foggy,Calorie-Dense,Bright-Eyed
+Businessmen|Focused,Energizing,Balding,Anti-gravity,Thought-Provoking
+Bikers|Disorienting,Paranoia,Long faced,Spicy,Schizophrenic`
+for (const l of SPECIAL_RAW.split('\n')) {
+  const [n, fx] = l.split('|')
+  CUSTOMERS.push({ area: n, special: true, name: n, eff: fx.split(',').map((x) => effByNorm[norm(x)]) })
+}
+const SPECIAL_NAMES = CUSTOMERS.filter((c) => c.special).map((c) => c.name)
+const areaIn = (c, a) => (a === 'All' ? !c.special : c.area === a)
+let area = 'Northtown', asteps = 4, arank = 'pleased', alast = null, arunning = false, astopFlag = false
+const areaCust = () => CUSTOMERS.filter((c) => areaIn(c, area))
+const areaLabel = () => (area === 'All' ? 'all areas' : area)
+const isSpecialName = (a) => SPECIAL_NAMES.includes(a)
+const isSpecial = () => isSpecialName(area)
+
+function renderAreas() {
+  const opts = ['All', ...AREA_ORDER, ...SPECIAL_NAMES]
+  $('#areas').innerHTML = opts.map((a) => {
+    const n = CUSTOMERS.filter((c) => areaIn(c, a)).length
+    return `<button data-v="${a}" class="${a === area ? 'on' : ''}">${a === 'All' ? 'All areas' : isSpecialName(a) ? '⭐ ' + a : a} <small>${n}</small></button>`
+  }).join('')
+  const cs = areaCust(), withPref = cs.filter((c) => c.eff.length).length
+  $('#ainfo').innerHTML = isSpecial()
+    ? `Special group · wants ${cs[0].eff.map(eName).join(', ')}. The more of those a mix has, the better.`
+    : `${cs.length} customers${area === 'All' ? '' : ` · ${AREA_STD[area]} standards`} · ${withPref} with favorite effects${cs.length - withPref ? `, ${cs.length - withPref} with no preference (ignored when scoring)` : ''}.`
+  const pop = new Map()
+  for (const c of cs) for (const e of c.eff) pop.set(e, (pop.get(e) || 0) + 1)
+  const rows = [...pop.entries()].sort((a, b) => b[1] - a[1] || pct(b[0]) - pct(a[0]))
+  const mx = rows.length ? rows[0][1] : 1
+  $('#apop').innerHTML = rows.map(([e, n]) => `<div class="barw" style="margin:3px 0">${chip(e)}<div class="bar" style="--c:var(--t${tierOf(e)});width:${Math.max(4, (n / mx) * 220)}px"></div><b>${n}</b><span class="hint">${srcOf[e] != null ? 'from ' + en.ings[srcOf[e]].name : 'mixing only'}</span></div>`).join('')
+  alast = null
+  $('#aout').innerHTML = areaEmpty()
+}
+const areaEmpty = () => `<div class="card ready">${flaskSVG()}<p><b>Pick an area and base, then hit Find.</b> Every reachable mix is scored by how many of that area's customers get at least one favorite effect.</p></div>`
+$('#areas').onclick = (ev) => {
+  const b = ev.target.closest('button'); if (!b) return
+  const wasSpecial = isSpecial(); area = b.dataset.v
+  // with only 4 groups, "most pleased" is a poor ranking; rank by effect hits instead
+  if (isSpecial() !== wasSpecial) { arank = isSpecial() ? 'hits' : 'pleased'; for (const x of $('#arank').children) x.classList.toggle('on', x.dataset.v === arank) }
+  renderAreas()
+}
+seg('#arank', (v) => { arank = v; if (alast) aRender() })
+$('#asteps').oninput = () => {
+  asteps = +$('#asteps').value; $('#astepsv').textContent = asteps
+  $('#astepsnote').textContent = asteps >= 7 ? '🐢 7 can take 10–30 seconds and a lot of memory.' : asteps === 6 ? '⏳ 6 can take a few seconds.' : '⚡ Instant.'
+}
+$('#asteps').oninput()
+
+// withWho builds the per-customer breakdown; it is only needed for the few rows that get shown.
+function scoreSet(list, cs, withWho) {
+  const s = new Set(list); let pleased = 0, hits = 0, full = 0; const who = withWho ? [] : null
+  for (const c of cs) {
+    if (!c.eff.length) continue
+    let n = 0
+    for (const e of c.eff) if (s.has(e)) n++
+    if (n) { pleased++; hits += n; if (n === c.eff.length) full++ }
+    if (withWho) who.push({ c, m: c.eff.filter((e) => s.has(e)) })
+  }
+  return withWho ? { pleased, hits, full, who } : { pleased, hits, full }
+}
+async function runArea() {
+  if (arunning) return
+  if (!allowed.size) { $('#aout').innerHTML = '<div class="note">👆 Allow at least one ingredient in step 3.</div>' + areaEmpty(); return }
+  const p = prodList[ap], start = startOf(p), cs = areaCust(), special = isSpecial()
+  arunning = true; astopFlag = false
+  $('#afind').disabled = true; $('#afind').textContent = '⚗️ Mixing…'
+  $('#astop').classList.remove('hidden'); $('#aprogress').classList.remove('hidden'); $('#aprogtxt').textContent = 'Searching…'
+  const t0 = performance.now()
+  const res = await en.search({ start, targets: [], exact: false, maxSteps: asteps, allowed: [...allowed], fullTargets: special ? cs[0].eff : null,
+    onProgress: (d, n) => { $('#aprogtxt').textContent = `Trying ${d}-ingredient mixes · ${n.toLocaleString()} combos checked` },
+    shouldStop: () => astopFlag })
+  // cheapest exact (game-order) recipe per reachable effect set, then score each set
+  // chunked, with progress, so a big search (7 ingredients) doesn't freeze the page
+  const bySet = new Map()
+  const nf = res.found.length
+  for (let i = 0; i < nf; i++) {
+    const f = res.found[i]
+    const list = en.run(start, f.seq), k = en.sk(list), cost = costOf(f.seq), prev = bySet.get(k)
+    if (!prev || cost < prev.cost || (cost === prev.cost && f.seq.length < prev.seq.length)) bySet.set(k, { seq: f.seq, cost, list })
+    if (i % 20000 === 19999) {
+      $('#aprogtxt').textContent = `Sorting mixes · ${(i + 1).toLocaleString()} / ${nf.toLocaleString()}`
+      await new Promise((r) => setTimeout(r, 0))
+      if (astopFlag) break
+    }
+  }
+  const rows = [...bySet.values()]
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    Object.assign(r, scoreSet(r.list, cs), { value: en.value(p.basePrice, r.list) })
+    if (special) { const s = new Set(r.list); r.gh = cs.map((c) => { let n = 0; for (const e of c.eff) if (s.has(e)) n++; return n }) }
+    if (i % 20000 === 19999) {
+      $('#aprogtxt').textContent = `Scoring mixes · ${(i + 1).toLocaleString()} / ${rows.length.toLocaleString()}`
+      await new Promise((r) => setTimeout(r, 0))
+      if (astopFlag) { rows.length = i + 1; res.stopped = true; break }
+    }
+  }
+  alast = { p, cs, area, asteps, res, rows, secs: ((performance.now() - t0) / 1000).toFixed(1) }
+  aRender()
+  $('#afind').disabled = false; $('#afind').textContent = '📍 Find best mix for this area'
+  $('#astop').classList.add('hidden'); $('#aprogress').classList.add('hidden'); arunning = false
+  $('#aout').scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+$('#afind').onclick = runArea
+$('#astop').onclick = () => { astopFlag = true }
+
+// Special groups: the best few mixes for EACH group on its own (one shared search).
+function aRenderSpecial() {
+  const { p, cs, res, rows, secs } = alast, PER = 6
+  let h = `<div class="rhead"><h2>${prodIcon(p, 22)} Best ${p.name} mixes for ${cs[0].name}</h2><span>${rows.length.toLocaleString()} outcomes checked in ${secs}s</span></div>`
+  if (res.stopped) h += '<div class="note">⏹ Stopped early. Results below are partial.</div>'
+  else if (res.truncated) h += '<div class="note">⚠️ The search hit its memory limit before finishing, so better mixes may exist. Lower the max ingredients or exclude some ingredients.</div>'
+  h += '<div class="note">Each group was read from the game\'s special-customer data (its pool of 5 wanted effects). How a group reacts to a mix and what it pays was not checked, so the score is just how many of its 5 wanted effects the mix has. Ties go to the cheaper recipe. The search stops growing mixes that cost more than the cheapest full match, so it is much faster than an area search.</div>'
+  alast.top = []
+  cs.forEach((g, gi) => {
+    const key = (r) => arank === 'profit' ? [-(r.value - r.cost), -r.gh[gi], r.cost, r.seq.length] : [-r.gh[gi], r.cost, r.seq.length]
+    const top = rows.slice().sort((a, b) => cmp(key(a), key(b))).slice(0, PER)
+    const want = new Set(g.eff)
+    h += `<div class="lbl" style="margin-top:18px">${g.name} <span class="links" style="text-transform:none;letter-spacing:0">wants ${g.eff.map(eName).join(', ')}</span></div><div class="rgrid">`
+    top.forEach((r, i) => {
+      const idx = alast.top.push(r) - 1, pr = r.value - r.cost, ad = addPct(p, r.list), hit = r.gh[gi]
+      h += `<article class="rcard ${i === 0 ? 'top' : ''}">
+        <div class="rtop"><span class="rank">#${i + 1}</span>${i === 0 ? '<span class="badge">🏆 Best for ' + g.name + '</span>' : ''}${hit === g.eff.length ? '<span class="badge alt">⭐ All ' + hit + ' effects</span>' : ''}<button class="ghost sm" data-asim="${idx}">▶ Try in simulator</button></div>
+        <div class="flow">${flowHtml(p, r.seq)}${r.seq.length ? '' : '<span class="hint">No ingredients. The base already does this.</span>'}</div>
+        <div class="effs">${r.list.map((e) => chip(e, want.has(e) ? 'want' : 'extra')).join('')}</div>
+        <div class="stats">
+          <div class="stat"><small>Wanted effects</small><b>${hit} / ${g.eff.length}</b><div class="meter"><i style="width:${Math.round(hit / g.eff.length * 100)}%"></i></div></div>
+          <div class="stat"><small>Cost</small><b>${fmt(r.cost)}</b> <span class="hint">${r.seq.length} ingredient${r.seq.length === 1 ? '' : 's'}</span></div>
+          <div class="stat"><small>Value − cost</small><b class="${pr >= 0 ? 'good' : 'bad'}">${fmt(pr)}</b> <span class="hint">${fmt(r.value)} − ${fmt(r.cost)}</span></div>
+          <div class="stat"><small>Addiction</small><b>${ad}%</b><div class="meter"><i style="width:${ad}%"></i></div></div>
+        </div></article>`
+    })
+    h += '</div>'
+  })
+  h += '<div class="foot">Ingredient cost = shop price of one of each ingredient.</div>'
+  $('#aout').innerHTML = h
+}
+function aRender() {
+  if (isSpecialName(alast.area)) return aRenderSpecial()
+  const { p, cs, res, rows, secs } = alast, total = cs.filter((c) => c.eff.length).length
+  const isSp = isSpecialName(alast.area), slots = cs.reduce((s, c) => s + c.eff.length, 0), who_ = isSp ? 'groups' : 'customers', Who = isSp ? 'Groups' : 'Customers'
+  const key = (r) => arank === 'hits' ? [-r.hits, -r.pleased, r.cost, r.seq.length]
+    : arank === 'profit' ? [-(r.value - r.cost), -r.pleased, r.cost, r.seq.length]
+    : [-r.pleased, -r.hits, r.cost, r.seq.length]
+  const top = rows.slice().sort((a, b) => cmp(key(a), key(b))).slice(0, 12)
+  for (const r of top) if (!r.who) r.who = scoreSet(r.list, cs, true).who
+  let h = `<div class="rhead"><h2>${prodIcon(p, 22)} Best ${p.name} mixes for ${alast.area === 'All' ? 'all areas' : alast.area}</h2><span>${rows.length.toLocaleString()} outcomes checked in ${secs}s · ${total} ${who_} with ${isSp ? 'desired' : 'favorite'} effects</span></div>`
+  if (res.stopped) h += '<div class="note">⏹ Stopped early. Results below are partial.</div>'
+  else if (res.truncated) h += '<div class="note">⚠️ The search hit its memory limit before finishing, so better mixes may exist. Lower the max ingredients or exclude some ingredients.</div>'
+  if (!total) h += '<div class="note">Nobody in this area lists favorite effects.</div>'
+  if (isSp) h += '<div class="note">Special groups were read from the game\'s data, but how a group reacts to a delivered mix (and how much it pays) was not checked. Treat the score as "how many of their 5 wanted effects the mix has".</div>'
+  h += '<div class="rgrid">'
+  const bestP = Math.max(...top.map((r) => r.pleased)), bestH = Math.max(...top.map((r) => r.hits))
+  top.forEach((r, i) => {
+    const pr = r.value - r.cost, ad = addPct(p, r.list), share = total ? Math.round(r.pleased / total * 100) : 0
+    const liked = new Set(); for (const w of r.who) for (const e of w.m) liked.add(e)
+    const badges = [i === 0 ? '<span class="badge">🏆 Top pick</span>' : '', r.pleased === bestP ? '<span class="badge alt">👥 Most pleased</span>' : '', r.hits === bestH ? '<span class="badge alt">❤️ Most hits</span>' : '', r.full ? `<span class="badge alt">⭐ ${r.full} fully matched</span>` : ''].join('')
+    const happy = r.who.filter((w) => w.m.length).sort((a, b) => b.m.length - a.m.length)
+    const sad = r.who.filter((w) => !w.m.length)
+    h += `<article class="rcard ${i === 0 ? 'top' : ''}" style="animation-delay:${Math.min(i, 8) * 40}ms">
+      <div class="rtop"><span class="rank">#${i + 1}</span>${badges}<button class="ghost sm" data-asim="${i}">▶ Try in simulator</button></div>
+      <div class="flow">${flowHtml(p, r.seq)}${r.seq.length ? '' : '<span class="hint">No ingredients. The base already does this.</span>'}</div>
+      <div class="effs">${r.list.map((e) => chip(e, liked.has(e) ? 'want' : 'extra')).join('')}</div>
+      <div class="stats">
+        <div class="stat"><small>${Who} pleased</small><b>${r.pleased} / ${total}</b> <span class="hint">${share}%</span><div class="meter"><i style="width:${share}%"></i></div></div>
+        <div class="stat"><small>${isSp ? 'Desired effects' : 'Favorite hits'}</small><b>${r.hits}</b> <span class="hint">of ${slots} slots</span></div>
+        <div class="stat"><small>Value − cost</small><b class="${pr >= 0 ? 'good' : 'bad'}">${fmt(pr)}</b> <span class="hint">${fmt(r.value)} − ${fmt(r.cost)}</span></div>
+        <div class="stat"><small>Addiction</small><b>${ad}%</b><div class="meter"><i style="width:${ad}%"></i></div></div>
+      </div>
+      <details><summary class="hint" style="cursor:pointer">${isSp ? 'Groups pleased' : 'Who likes it'} (${happy.length}) · ${isSp ? 'not pleased' : "who doesn't"} (${sad.length})</summary>
+        <div style="margin-top:8px;font-size:12.5px;color:var(--dim)">
+          ${happy.map((w) => `<div><b style="color:var(--text)">${w.c.name}</b>${alast.area === 'All' ? ` <span class="hint">${w.c.area}</span>` : ''} · ${w.m.map(eName).join(', ')}</div>`).join('') || '<div>Nobody.</div>'}
+          ${sad.length ? `<div style="margin-top:6px" class="hint">Not pleased: ${sad.map((w) => w.c.name).join(', ')}</div>` : ''}
+        </div></details>
+    </article>`
+  })
+  h += `</div><div class="foot">${isSp ? 'A group counts as pleased if the mix has at least one of its 5 desired effects; "Desired effects" counts every match, so rank by that to get the most.' : 'A customer counts as pleased if the mix has at least one of their 3 favorite effects.'} Ingredient cost = shop price of one of each ingredient.</div>`
+  $('#aout').innerHTML = h
+  alast.top = top
+}
+$('#aout').onclick = (ev) => {
+  const b = ev.target.closest('[data-asim]'); if (!b || !alast) return
+  sp = prodList.indexOf(alast.p); sseq = alast.top[+b.dataset.asim].seq.slice(); hover = null
+  renderProds(); simRender(); showTab('sim'); scrollTo({ top: 0, behavior: 'smooth' })
+}
+
 $('#out').innerHTML = emptyHtml()
-renderProds(); renderEffects(); renderIngs(); stepsNote(); simRender()
+renderProds(); renderEffects(); renderIngs(); stepsNote(); simRender(); renderIconEdit(); renderAreas()
 </script>
 </body>
 </html>

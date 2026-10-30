@@ -291,7 +291,7 @@
       "moduleName": "GameAssembly.dll",
       "moduleOffset": "0x67b36f",
       "sourceRegister": "xmm7",
-      "value": 4,
+      "value": 3,
       "dataType": "float"
     },
     {
