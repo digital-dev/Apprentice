@@ -44,3 +44,12 @@ cp -a "$UNPACKED" "$STAGE/apprentice"
 TARBALL="$DIST/Apprentice-${VERSION}-linux-x64.tar.gz"
 tar -czf "$TARBALL" -C "$STAGE" apprentice
 echo "Wrote $TARBALL"
+
+# Keep PKGBUILD's source filename in sync with the tarball this just produced.
+# PKGBUILD's source=() entry is built from _pkgver, so a hand-maintained literal
+# there would silently rot on the next version bump (makepkg "source file not
+# found") until someone remembered to edit it — rewrite it here instead, every
+# time, from the same package.json read above.
+PKGBUILD="Linux/packaging/arch/PKGBUILD"
+sed -i -E "s/^_pkgver=.*/_pkgver=${VERSION}/" "$PKGBUILD"
+echo "Synced $PKGBUILD's _pkgver to ${VERSION}"

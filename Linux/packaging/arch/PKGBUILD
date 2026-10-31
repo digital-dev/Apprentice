@@ -15,7 +15,13 @@
 #     (cd Linux/packaging/arch && makepkg -si)
 
 pkgname=apprentice
-_pkgver=0.2.5-beta
+# Linux/scripts/package-arch.sh overwrites this line (sed, matching
+# "^_pkgver=") every time it runs, setting it to the exact package.json
+# version it just baked into the tarball's filename below — so this literal
+# never has to be hand-kept in sync across a version bump. Do not edit it
+# by hand; re-run package-arch.sh instead. The placeholder below is only
+# what a fresh checkout shows before that script has ever run.
+_pkgver=0.0.0
 # makepkg's pkgver may not contain a hyphen; package.json's actual version
 # (used verbatim in the tarball's filename below) does.
 pkgver=${_pkgver//-/_}

@@ -123,6 +123,7 @@ supports today.
 
 ```
 bash Linux/scripts/package-arch.sh                    # writes Linux/dist/Apprentice-<version>-linux-x64.tar.gz
+                                                        # and syncs PKGBUILD's _pkgver to match
 cp Linux/dist/Apprentice-*-linux-x64.tar.gz Linux/packaging/arch/
 (cd Linux/packaging/arch && makepkg -si)              # build + install, asks for sudo for pacman -U
 bash Linux/scripts/smoke-arch.sh                       # optional: builds/installs/launches it in a clean archlinux:latest container
@@ -131,7 +132,10 @@ bash Linux/scripts/smoke-arch.sh                       # optional: builds/instal
 `package-arch.sh` reuses `electron-builder.linux.json` from the AppImage/deb build above,
 just with the `dir` target instead of `AppImage`/`deb` — that leaves the app as a plain
 unpacked directory (`Linux/dist/linux-unpacked`) rather than wrapping it in an installer, which
-is what a tarball needs. `Linux/packaging/arch/PKGBUILD` then only unpacks and installs that
+is what a tarball needs. `package-arch.sh` also rewrites `PKGBUILD`'s `_pkgver` line to match
+the version it just read from `package.json`, so the committed `PKGBUILD` and the tarball it
+names can never drift apart across a version bump — re-run `package-arch.sh` rather than
+hand-editing `_pkgver`. `Linux/packaging/arch/PKGBUILD` then only unpacks and installs that
 tarball: no separate Arch-specific build step. It installs to `/opt/apprentice` with a
 `/usr/bin/apprentice` symlink and a `.desktop` entry, same layout shape as the `.deb`.
 `Linux/packaging/arch/apprentice.install`'s `post_install`/`post_upgrade` run the same `setcap
