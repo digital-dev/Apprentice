@@ -360,6 +360,38 @@ void DetachOnTracer(SessionData& s) {
   DetachAll(s);
 }
 
+// Rescans /proc/<pid>/task for any tid not yet in `s.tids` and tries to pull
+// each one into the tracked set with a plain PTRACE_INTERRUPT+wait — never
+// PTRACE_SEIZE, since a tid this discovers is, by construction, one the
+// kernel already auto-attached via PTRACE_O_TRACECLONE the moment it was
+// cloned (re-seizing an already-traced tid would just fail "already traced
+// by this process"). Used by HandleClone's GETEVENTMSG-failure path below,
+// where the new tid can't be learned any other way: without this, that
+// thread would stay kernel-attached and completely unknown to this
+// SessionData, armed with nothing and never reached by DetachAll — a ptrace
+// attachment leaked until the whole process exits. Bounded (one sweep); a
+// tid that still can't be reached (interrupt fails, not because it's gone)
+// stays untracked, the same narrow, already-documented residual DetachAll's
+// own "can't stop in time" case accepts for a thread it is trying to
+// RELEASE — here it's a thread never successfully picked up in the first
+// place, but the shape of the risk (and the fact that there is no safer
+// fallback ptrace offers) is the same.
+void RecoverUntrackedClones(SessionData& s) {
+  std::vector<pid_t> tids;
+  if (!ReadTaskIds((uint32_t)s.pid, tids)) return;
+  for (pid_t tid : tids) {
+    if (IsTracked(s, tid)) continue;
+    bool gone = false;
+    if (InterruptRunningThread(tid, gone)) {
+      s.tids.push_back(tid);
+      s.stoppedTids.insert(tid);
+    }
+    // Else: exited before we could reach it (nothing to track), or genuinely
+    // unreachable within the bounded wait (documented above) — either way
+    // there is nothing further to do for this tid on this sweep.
+  }
+}
+
 // Brings a freshly-cloned thread into the session and, to satisfy the
 // ThreadCreated contract ("leave ALL threads stopped"), stops every other
 // tracked thread that is not already stopped. `parentTid` is the thread
@@ -367,8 +399,14 @@ void DetachOnTracer(SessionData& s) {
 bool HandleClone(SessionData& s, pid_t parentTid, WatchEvent& out) {
   unsigned long msg = 0;
   if (ptrace(PTRACE_GETEVENTMSG, parentTid, nullptr, &msg) != 0) {
-    // Could not learn the new tid: nothing to report. Resume the parent
-    // rather than leaving it stopped with no event ever delivered for it.
+    // Could not learn the new tid from the clone event itself — the tracee
+    // is definitely stopped at a clone-event stop when this runs, so this
+    // should essentially never happen, but if it does the new thread is
+    // STILL auto-attached by the kernel (PTRACE_O_TRACECLONE fired
+    // regardless of whether we could read its eventmsg) and must not be
+    // silently abandoned. Recover it the slow way: find it by re-listing
+    // /proc/<pid>/task instead of losing track of it entirely.
+    RecoverUntrackedClones(s);
     ptrace(PTRACE_CONT, parentTid, nullptr, nullptr);
     s.stoppedTids.erase(parentTid);
     return false;
@@ -382,9 +420,14 @@ bool HandleClone(SessionData& s, pid_t parentTid, WatchEvent& out) {
   bool gone = false;
   int childStatus = 0;
   if (!WaitForTidStop(child, childStatus, gone) && !gone) {
-    // Could not confirm the new thread ever stopped: never add an
-    // unconfirmed tid to the tracked set. Resume the parent and give up on
-    // this clone; the caller's loop keeps going.
+    // Have the tid but could not confirm its stop within budget. It is
+    // still kernel-attached regardless of that timeout, so track it
+    // (unconfirmed — NOT in stoppedTids) rather than abandoning it: every
+    // other call here already knows how to deal with a tracked tid that
+    // isn't (yet) known to be stopped (interrupt it first), and the next
+    // ordinary Wait() sweep will pick up whatever stop it eventually
+    // reports through the ordinary waitpid loop, same as any other thread.
+    s.tids.push_back(child);
     ptrace(PTRACE_CONT, parentTid, nullptr, nullptr);
     s.stoppedTids.erase(parentTid);
     return false;
