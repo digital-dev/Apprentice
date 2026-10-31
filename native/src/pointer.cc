@@ -365,7 +365,7 @@ Napi::Value GetModuleBase(const Napi::CallbackInfo& info) {
 
   auto modules = ListModules(h);
   for (const auto& m : modules) {
-    if (_stricmp(m.name.c_str(), moduleName.c_str()) == 0) {
+    if (platform::EqualsIgnoreCase(m.name, moduleName)) {
       return Napi::String::New(env, ToHex(m.base));
     }
   }

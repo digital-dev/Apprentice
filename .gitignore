@@ -9,3 +9,5 @@ mcp-server/node_modules/
 mcp-server/dist/
 release/
 fixtures/snapshots/
+Linux/dist/
+Linux/test-harness/harness

@@ -80,7 +80,7 @@ export function stripCommentsAndLiterals(src: string): string {
 // the identifier, e.g. `ProcessHandle OpenProcess(`) are allowed. Call-like
 // uses (`::OpenProcess(`, `= OpenProcess(`, `return OpenProcess(`, ...) are
 // still reported there.
-const API_EXEMPT_FILES = ['native/src/platform/platform.h', 'native/src/platform/platform_linux.cc']
+const API_EXEMPT_FILES = ['native/src/platform/platform.h']
 const DECLARATION_FORM =
   /^\s*(?!return\b)[A-Za-z_][\w:<>]*[\s*&]+(?:OpenProcess|CreateRemoteThread)\s*\(/
 

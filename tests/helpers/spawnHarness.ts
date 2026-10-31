@@ -12,7 +12,9 @@ export function ignoreClosedPipe(err: NodeJS.ErrnoException): void {
 }
 
 export function spawnHarness(): ChildProcessWithoutNullStreams {
-  const harness = spawn(path.resolve('test-harness/harness.exe'))
+  // Same stdin/stdout protocol on both: the PE harness on Windows, the ELF one (Linux/test-harness/harness.c) on Linux.
+  const exe = process.platform === 'win32' ? 'test-harness/harness.exe' : 'Linux/test-harness/harness'
+  const harness = spawn(path.resolve(exe))
   harness.stdin.on('error', ignoreClosedPipe)
   return harness
 }

@@ -75,7 +75,7 @@
       },
       "conditions": [
         ["OS=='win'", { "sources": [ "src/platform/platform_win32.cc" ], "libraries": ["-lpsapi.lib", "-lversion.lib"] }],
-        ["OS=='linux'", { "sources": [ "src/platform/platform_linux.cc" ], "defines": ["LUA_USE_LINUX"], "libraries": ["-ldl", "-lm"] }]
+        ["OS=='linux'", { "sources": [ "../Linux/native/platform_linux.cc" ], "defines": ["LUA_USE_LINUX"], "cflags_cc": ["-std=c++17", "-fexceptions"], "libraries": ["-ldl", "-lm"] }]
       ]
     }
   ]

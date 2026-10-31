@@ -40,7 +40,7 @@ inline std::optional<uintptr_t> FindModuleBase(platform::ProcessHandle h, const 
   std::vector<platform::ModuleRange> mods;
   if (!platform::ListModuleRanges(h, mods)) return std::nullopt;
   for (const auto& m : mods) {
-    if (_stricmp(m.name.c_str(), moduleName.c_str()) == 0) return m.base;
+    if (platform::EqualsIgnoreCase(m.name, moduleName)) return m.base;
   }
   return std::nullopt;
 }

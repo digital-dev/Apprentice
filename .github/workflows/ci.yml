@@ -119,6 +119,38 @@ jobs:
             tail -n 12 "$RUNNER_TEMP/vitest.log"
           } | awk 'BEGIN { ORS = "%0A"; printf "::error title=Tests failed::" } { gsub(/%/, "%25"); gsub(/\r/, ""); print }'
 
+  # Linux port: builds the addon and the ELF test harness on a real Linux runner and runs the
+  # tests that work against the current (stub) backend. Same two-Node split as above: the addon
+  # is built with Node 22 headers, the tests run on Node 26 (Node 22 rejects `.node` imports;
+  # verified on Linux). Grows as the Linux backend lands.
+  linux:
+    name: Linux build and tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build harness and native addon
+        run: |
+          gcc -O0 -g -pthread -rdynamic -o Linux/test-harness/harness Linux/test-harness/harness.c -ldl
+          cd native
+          npx node-gyp configure --target=22.12.0
+          npx node-gyp build --target=22.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: Linux tests
+        run: npx vitest run tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts
+
   release:
     name: Publish release
     needs: test

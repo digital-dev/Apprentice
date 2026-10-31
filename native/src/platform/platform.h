@@ -1,6 +1,10 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#ifndef _WIN32
+#include <strings.h>
+#endif
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,6 +16,15 @@
 // Callers are being moved onto this layer file by file (the linux-port
 // plan); write-watch goes through DebugSession and no longer calls Win32.
 namespace platform {
+
+// Case-insensitive name compare (module names); _stricmp on Windows, strcasecmp elsewhere.
+inline bool EqualsIgnoreCase(const std::string& a, const std::string& b) {
+#ifdef _WIN32
+  return _stricmp(a.c_str(), b.c_str()) == 0;
+#else
+  return strcasecmp(a.c_str(), b.c_str()) == 0;
+#endif
+}
 
 // A HANDLE on Windows, a pid on Linux. Opaque to callers.
 using ProcessHandle = uintptr_t;
