@@ -71,7 +71,15 @@ void RegisterExitRelease() {
   static bool registered = false;  // tracer thread only
   if (registered) return;
   registered = true;
-  linuxptrace::AtTracerExit([] { ReleaseHeld(); });
+  linuxptrace::AtTracerExit([] {
+    ReleaseHeld();
+    // Give pending detaches a last moment (bounded); whatever is left the kernel detaches
+    // when this process exits.
+    for (int i = 0; i < 100 && linuxptrace::DeferredDetachCount() > 0; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      linuxptrace::RetryDeferredDetaches();
+    }
+  });
 }
 
 // One round: stop every listed thread not yet held. False on a real failure (`err` set);
@@ -172,6 +180,7 @@ bool ListThreads(uint32_t pid, std::vector<ThreadInfo>& out) {
 
 bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out) {
   return linuxptrace::OnTracer([&] {
+    RegisterExitRelease();
     linuxptrace::RetryDeferredDetaches();
     user_regs_struct regs{};
     if (IsHeld((pid_t)tid)) {

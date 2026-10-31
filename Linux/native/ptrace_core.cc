@@ -37,7 +37,8 @@ constexpr auto kUnreportedStopGrace = std::chrono::milliseconds(100);
 constexpr useconds_t kPollUs = 500;
 
 StopObserver g_observer = nullptr;
-std::vector<pid_t> g_deferred;  // tracer thread only
+
+std::string StillDetaching(pid_t tid) { return "thread " + std::to_string(tid) + " still detaching"; }
 
 std::string ReadProc(pid_t tid, const char* leaf) {
   std::ifstream f("/proc/" + std::to_string(tid) + "/" + leaf);
@@ -63,6 +64,7 @@ std::string AttachError(pid_t tid, int e, bool& gone) {
   }
   if (e == EPERM) {
     long tracer = linuxproc::StatusField(ReadProc(tid, "status"), "TracerPid");
+    if (tracer == getpid()) return StillDetaching(tid);  // ours, never "a debugger"
     if (tracer > 0)
       return "thread " + std::to_string(tid) + " is already traced by process " + std::to_string(tracer) +
              " (a debugger?)";
@@ -111,38 +113,65 @@ bool IsOurChildLeader(pid_t tid) {
   return linuxproc::StatusField(st, "Tgid") == tid && linuxproc::StatusField(st, "PPid") == getpid();
 }
 
-// One attempt to end tracing `tid`. True when nothing of it is left to this tracer: detached,
+// A tracee being let go: the signal to hand back with PTRACE_DETACH, and whether a
+// PTRACE_INTERRUPT is already pending for it (one is enough: a second would re-arm a stop
+// after the first was consumed and leave the thread frozen with nobody to detach it).
+struct Detaching {
+  pid_t tid;
+  int signal;
+  bool interrupted;
+};
+
+// Detaches that could not finish yet; retried by the tracer thread every kIdleTickMs.
+std::vector<Detaching> g_deferred;  // tracer thread only
+
+// One attempt to end tracing `d.tid`. True when nothing of it is left to this tracer: detached,
 // exited and released, or not ours at all.
-bool TryDetach(pid_t tid, int signal) {
-  if (ptrace(PTRACE_DETACH, tid, nullptr, (void*)(long)signal) == 0) return true;
-  // ESRCH: running (a stop that never came), exited, or not traced by us.
+bool TryDetach(Detaching& d) {
+  // Look first: a stop not yet collected must be collected before detaching. PTRACE_DETACH
+  // succeeds on any stopped tracee and would silently drop the signal of an uncollected
+  // signal-delivery stop.
   siginfo_t info{};
-  if (waitid(P_PID, (id_t)tid, &info, WEXITED | WSTOPPED | WNOHANG | __WALL | WNOWAIT) != 0)
-    return errno == ECHILD;
+  if (waitid(P_PID, (id_t)d.tid, &info, WEXITED | WSTOPPED | WNOHANG | __WALL | WNOWAIT) != 0)
+    return errno == ECHILD;  // not (or no longer) ours
   if (info.si_pid == 0) {
-    // Nothing to report: still running, or a zombie leader waiting for its other threads.
-    if (!Gone(ThreadState(tid))) ptrace(PTRACE_INTERRUPT, tid, nullptr, nullptr);
+    // Nothing to collect: stopped in a stop we already collected (the guard's own), still
+    // running (blocked where no stop can reach it), or a zombie leader waiting for its threads.
+    if (ptrace(PTRACE_DETACH, d.tid, nullptr, (void*)(long)d.signal) == 0) return true;
+    // Make sure exactly one stop is on its way; never a second.
+    if (!d.interrupted && !Gone(ThreadState(d.tid)) && ptrace(PTRACE_INTERRUPT, d.tid, nullptr, nullptr) == 0)
+      d.interrupted = true;
     return false;
   }
   if (info.si_code == CLD_TRAPPED || info.si_code == CLD_STOPPED) {
-    int st;
-    waitpid(tid, &st, __WALL | WNOHANG);
-    return ptrace(PTRACE_DETACH, tid, nullptr, (void*)(long)signal) == 0;
+    int st = 0;
+    // A signal-delivery stop holds the target's own signal (a SIGSEGV its runtime handles, a GC
+    // suspend signal): it goes back with the detach. A trap/event stop keeps what we carry.
+    if (waitpid(d.tid, &st, __WALL | WNOHANG) == d.tid && WIFSTOPPED(st) && (st >> 16) == 0)
+      d.signal = WSTOPSIG(st);
+    return ptrace(PTRACE_DETACH, d.tid, nullptr, (void*)(long)d.signal) == 0;
   }
   // Exited. A traced thread that exits waits for its tracer to reap it; until then its
   // process cannot finish exiting.
-  if (!IsOurChildLeader(tid)) {
+  if (!IsOurChildLeader(d.tid)) {
     int st;
-    waitpid(tid, &st, __WALL | WNOHANG);
+    waitpid(d.tid, &st, __WALL | WNOHANG);
   }
   return true;
 }
 
-void Detach(pid_t tid, int signal) {
+bool IdleRetry() {
+  RetryDeferredDetaches();
+  return !g_deferred.empty();
+}
+
+void Detach(pid_t tid, int signal, bool interrupted) {
+  Detaching d{tid, signal, interrupted};
   const auto deadline = Clock::now() + kDetachTimeout;
-  while (!TryDetach(tid, signal)) {
+  while (!TryDetach(d)) {
     if (Clock::now() >= deadline) {
-      if (std::find(g_deferred.begin(), g_deferred.end(), tid) == g_deferred.end()) g_deferred.push_back(tid);
+      if (!DetachPending(tid)) g_deferred.push_back(d);
+      SetIdleTick(IdleRetry);  // the tracer thread keeps retrying on its own until it is done
       return;
     }
     usleep(kPollUs);
@@ -179,13 +208,18 @@ StopGuard::StopGuard(pid_t tid, std::string& err) : tid_(tid) {
     err = Exited(tid);
     return;
   }
+  if (DetachPending(tid)) {
+    err = StillDetaching(tid);
+    return;
+  }
   SuppressStopSigchld();
   if (ptrace(PTRACE_SEIZE, tid, nullptr, nullptr) != 0) {
     err = AttachError(tid, errno, gone_);
     return;
   }
   attached_ = true;
-  if (ptrace(PTRACE_INTERRUPT, tid, nullptr, nullptr) != 0) {
+  interrupted_ = ptrace(PTRACE_INTERRUPT, tid, nullptr, nullptr) == 0;
+  if (!interrupted_) {
     gone_ = errno == ESRCH;
     err = gone_ ? Exited(tid) : std::string("ptrace interrupt failed: ") + strerror(errno);
     return;
@@ -211,7 +245,7 @@ StopGuard::StopGuard(pid_t tid, std::string& err) : tid_(tid) {
 }
 
 StopGuard::~StopGuard() {
-  if (attached_) Detach(tid_, pendingSignal_);
+  if (attached_) Detach(tid_, pendingSignal_, interrupted_);
 }
 
 bool GetRegs(pid_t tid, user_regs_struct& out) {
@@ -231,8 +265,12 @@ void ToThreadRegisters(const user_regs_struct& in, platform::ThreadRegisters& ou
 }
 
 void RetryDeferredDetaches() {
-  g_deferred.erase(std::remove_if(g_deferred.begin(), g_deferred.end(), [](pid_t t) { return TryDetach(t, 0); }),
+  g_deferred.erase(std::remove_if(g_deferred.begin(), g_deferred.end(), [](Detaching& d) { return TryDetach(d); }),
                    g_deferred.end());
+}
+
+bool DetachPending(pid_t tid) {
+  return std::any_of(g_deferred.begin(), g_deferred.end(), [&](const Detaching& d) { return d.tid == tid; });
 }
 
 size_t DeferredDetachCount() { return g_deferred.size(); }

@@ -10,7 +10,9 @@
 #include "tracer_thread.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <sys/syscall.h>
 #include <sys/ptrace.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -378,6 +380,57 @@ static void TestAlreadyTraced() {
   KillChild(pid);
 }
 
+// A signal that puts a traced thread into a signal-delivery stop before the detach is the
+// target's own: the detach must hand it back, not drop it. The child's SIGUSR1 handler writes a
+// byte to a pipe per delivery.
+static int g_sigPipe = -1;
+static void OnUsr1(int) {
+  char c = 'x';
+  if (write(g_sigPipe, &c, 1) != 1) _exit(3);
+}
+static int CountBytes(int fd, int ms) {
+  int n = 0;
+  for (int i = 0; i < ms; ++i) {
+    char buf[16];
+    ssize_t r = read(fd, buf, sizeof buf);
+    if (r > 0) n += (int)r;
+    usleep(1000);
+  }
+  return n;
+}
+static void TestSignalSurvivesDetach() {
+  int pp[2];
+  CHECK(pipe(pp) == 0);
+  pid_t pid = fork();
+  if (pid == 0) {
+    g_sigPipe = pp[1];
+    signal(SIGUSR1, OnUsr1);
+    pthread_t t;
+    pthread_create(&t, nullptr, Spin, nullptr);
+    for (;;) pause();
+  }
+  close(pp[1]);
+  fcntl(pp[0], F_SETFL, O_NONBLOCK);
+  for (int i = 0; i < 200 && Tasks(pid).size() < 2; ++i) usleep(5000);
+  pid_t tid = Tasks(pid)[1];
+  bool setUp = linuxptrace::OnTracer([&] {
+    std::string err;
+    linuxptrace::StopGuard g(tid, err);
+    if (!g.ok()) return false;
+    // Let it run traced, then signal it: it enters a signal-delivery stop nobody has collected
+    // when the guard detaches.
+    if (ptrace(PTRACE_CONT, tid, nullptr, nullptr) != 0) return false;
+    syscall(SYS_tgkill, pid, tid, SIGUSR1);
+    for (int i = 0; i < 200 && TaskState(pid, tid) != 't'; ++i) usleep(1000);
+    return TaskState(pid, tid) == 't';
+  });
+  CHECK(setUp);
+  CHECK(CountBytes(pp[0], 500) == 1);  // delivered exactly once after the detach
+  CHECK(TaskState(pid, tid) != 't' && TracedCount(pid) == 0);
+  close(pp[0]);
+  KillChild(pid);
+}
+
 int main() {
   TestRegsConversion();
   TestDeniedMessage();
@@ -389,6 +442,7 @@ int main() {
   TestTargetDiesMidSuspend();
   TestTargetDiesWhileHeld();
   TestAlreadyTraced();
+  TestSignalSurvivesDetach();
   CHECK(!platform::SuspendAll((platform::ProcessHandle)getpid(), (uint32_t)getpid()));
   CHECK(platform::SuspendAllError().find("itself") != std::string::npos);
 

@@ -352,6 +352,62 @@ describe.skipIf(process.platform === 'win32')('Linux ptrace backend', () => {
     expect(await Promise.race([exited.then(() => true), sleep(5000).then(() => false)])).toBe(true)
   }, 20000)
 
+  it.skipIf(HARNESS_WINE)('a signal sent to the target while held is delivered exactly once after resume', async () => {
+    expect(await send('sighandler')).toBe('OK')
+    expect(a.suspendThreads(handle, pid)).toBe(true)
+    try {
+      process.kill(pid, 'SIGUSR1')
+      await sleep(100)
+      expect(allStopped(pid)).toBe(true)
+    } finally {
+      a.resumeThreads()
+    }
+    expect(await send('sigcount')).toBe('OK 1')
+  }, 20000)
+
+  it.skipIf(HARNESS_WINE)('a thread that cannot stop: SuspendAll fails, the tracer detaches it once it can, its signal survives', async () => {
+    expect(await send('sighandler')).toBe('OK')
+    // A thread blocked in vfork() for 3 s: PTRACE_INTERRUPT cannot stop it before the 2 s bound.
+    const reply = await send('vforkwait 3000')
+    expect(reply).toMatch(/^OK \d+$/)
+    const tid = Number(reply!.split(' ')[1])
+    const t0 = Date.now()
+    expect(() => a.suspendThreads(handle, pid)).toThrow(new RegExp(`thread ${tid} did not stop`))
+    expect(Date.now() - t0).toBeLessThan(5000)
+
+    // Its detach is still pending: a follow-up is refused for that reason, not "already traced".
+    let msg = ''
+    try {
+      a.suspendThreads(handle, pid)
+    } catch (e: any) {
+      msg = e.message
+    }
+    expect(msg).toBe(`thread ${tid} still detaching`)
+    // Everything else was released: the main thread answers.
+    expect(await send('ping')).toBe('OK')
+    // A signal for the blocked, still-traced thread must not be lost by the detach.
+    expect(await send(`tkill ${tid}`)).toBe('OK')
+
+    // Once vfork ends (~3 s) the thread reaches its pending stop and the tracer thread detaches it on
+    // its own, with no further addon call: not traced, not left in a trace stop.
+    const status = (field: string) => {
+      try {
+        const m = new RegExp(`${field}:\\s*(\\S+)`).exec(fs.readFileSync(`/proc/${pid}/task/${tid}/status`, 'utf8'))
+        return m ? m[1] : ''
+      } catch {
+        return ''
+      }
+    }
+    expect(await until(() => status('TracerPid') === '0' && status('State') !== 't', 5000)).toBe(true)
+    await sleep(100)
+    expect(status('State')).not.toBe('t')
+    expect(await send('sigcount')).toBe('OK 1')
+    expect(a.suspendThreads(handle, pid)).toBe(true)
+    a.resumeThreads()
+    expect(noneTraced(pid)).toBe(true)
+    expect(await send('ping')).toBe('OK')
+  }, 30000)
+
   it.skipIf(HARNESS_WINE)('catches threads created while suspending: all stopped, none appear while held', async () => {
     expect(await send('threadstorm')).toBe('OK')
     await sleep(100)

@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 
+#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <deque>
@@ -28,6 +29,7 @@ struct Tracer {
   std::vector<std::function<void()>> exitHooks;
   std::thread thread;
   State state = State::Idle;
+  bool (*idleTick)() = nullptr;
 };
 
 // Never destroyed: callers can still arrive (and be refused) after ShutdownTracer
@@ -65,10 +67,23 @@ void Loop() {
   tl_isTracer = true;
   Tracer& t = T();
   std::unique_lock<std::mutex> lk(t.m);
+  bool ticking = false;
+  auto ready = [&] { return !t.queue.empty() || t.state == State::Stopped; };
   for (;;) {
-    t.work.wait(lk, [&] { return !t.queue.empty() || t.state == State::Stopped; });
+    if (ticking) t.work.wait_for(lk, std::chrono::milliseconds(kIdleTickMs), ready);
+    else t.work.wait(lk, ready);
     Drain(lk);
     if (t.state == State::Stopped) break;
+    bool (*tick)() = t.idleTick;
+    ticking = false;
+    if (tick) {
+      lk.unlock();
+      try {
+        ticking = tick();
+      } catch (...) {
+      }
+      lk.lock();
+    }
   }
   std::vector<std::function<void()>> hooks = std::move(t.exitHooks);
   lk.unlock();
@@ -126,6 +141,12 @@ void RunPending() {
   if (!tl_isTracer) return;
   std::unique_lock<std::mutex> lk(T().m);
   Drain(lk);
+}
+
+void SetIdleTick(bool (*tick)()) {
+  if (!tl_isTracer) return;
+  std::lock_guard<std::mutex> lk(T().m);
+  T().idleTick = tick;
 }
 
 void AtTracerExit(std::function<void()> hook) {

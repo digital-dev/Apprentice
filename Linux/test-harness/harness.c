@@ -26,7 +26,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <signal.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #if defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
@@ -223,6 +226,27 @@ static void* storm_thread(void* arg) {
   return NULL;
 }
 
+//   vforkwait MS    a thread that vfork()s a child sleeping MS ms: the thread is blocked in
+//                   the vfork wait (killable only), so it cannot reach a ptrace stop; answers OK <tid>
+//   sighandler      installs a SIGUSR1 handler that counts; sigcount answers OK <count>
+//   tkill TID       sends SIGUSR1 to that one thread of the harness
+static unsigned g_vfork_ms = 0;
+static volatile pid_t g_vfork_tid = 0;
+static volatile int g_sigusr1_count = 0;
+static void count_sigusr1(int sig) { (void)sig; g_sigusr1_count++; }
+static void* vfork_thread(void* arg) {
+  (void)arg;
+  g_vfork_tid = (pid_t)syscall(SYS_gettid);
+  pid_t c = vfork();
+  if (c == 0) {
+    usleep(g_vfork_ms * 1000u);
+    _exit(0);
+  }
+  if (c > 0) waitpid(c, NULL, 0);
+  for (;;) sleep_ms(10); // stays alive, so tests can see it run (and take signals) afterwards
+  return NULL;
+}
+
 static void* map_big(int prot) {
   void* p = mmap(NULL, BIG_REGION_SIZE, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   return p == MAP_FAILED ? NULL : p;
@@ -241,7 +265,24 @@ int main(void) {
     unsigned char val8;
     long long val64;
     double dval;
-    if (sscanf(line, "spawnthreads %d", &val) == 1) {
+    if (sscanf(line, "vforkwait %d", &val) == 1) {
+      g_vfork_ms = (unsigned)val;
+      g_vfork_tid = 0;
+      start_thread(vfork_thread);
+      while (g_vfork_tid == 0) sleep_ms(1);
+      sleep_ms(50); // into the vfork wait
+      printf("OK %d\n", (int)g_vfork_tid);
+    } else if (strncmp(line, "sighandler", 10) == 0) {
+      struct sigaction sa;
+      memset(&sa, 0, sizeof(sa));
+      sa.sa_handler = count_sigusr1;
+      sa.sa_flags = SA_RESTART;
+      printf(sigaction(SIGUSR1, &sa, NULL) == 0 ? "OK\n" : "ERR\n");
+    } else if (strncmp(line, "sigcount", 8) == 0) {
+      printf("OK %d\n", g_sigusr1_count);
+    } else if (sscanf(line, "tkill %d", &val) == 1) {
+      printf(syscall(SYS_tgkill, getpid(), val, SIGUSR1) == 0 ? "OK\n" : "ERR\n");
+    } else if (sscanf(line, "spawnthreads %d", &val) == 1) {
       for (int i = 0; i < val; ++i) start_thread(idle_thread);
       printf("OK\n");
     } else if (strncmp(line, "threadstorm", 11) == 0) {

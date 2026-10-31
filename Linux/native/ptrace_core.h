@@ -30,7 +30,8 @@ bool PtraceDenied(const std::string& err);
 // Holds one thread stopped for the guard's lifetime: attaches and interrupts it,
 // waits (bounded) for the stop, and detaches in the destructor on every path,
 // re-delivering a signal the stop intercepted. On failure ok() is false and
-// `err` says why: kPtraceDeniedMessage, "already traced", "exited", a timeout.
+// `err` says why: kPtraceDeniedMessage, "already traced", "exited", a timeout,
+// "still detaching" (an earlier detach of this thread is still pending).
 class StopGuard {
  public:
   StopGuard(pid_t tid, std::string& err);
@@ -49,7 +50,8 @@ class StopGuard {
   bool attached_ = false;
   bool ok_ = false;
   bool gone_ = false;
-  int pendingSignal_ = 0;  // intercepted by the stop; delivered on detach
+  bool interrupted_ = false;  // our PTRACE_INTERRUPT is in (a stop is or was on its way)
+  int pendingSignal_ = 0;     // intercepted by the stop; delivered on detach
 };
 
 // PTRACE_GETREGS / PTRACE_SETREGS on a thread this tracer holds stopped.
@@ -59,11 +61,16 @@ bool SetRegs(pid_t tid, const user_regs_struct& regs);
 // The platform register file from a ptrace one.
 void ToThreadRegisters(const user_regs_struct& in, platform::ThreadRegisters& out);
 
-// Threads whose detach could not finish (still running after a stop timed out,
-// or exited but not yet reapable) are kept and retried here; every operation
-// retries them first. Tracer thread only.
+// Threads whose detach could not finish within 200 ms (blocked where the stop
+// cannot reach them after a stop timed out, or exited but not yet reapable) are
+// kept, with the signal to hand back, and retried by the tracer thread itself
+// every kIdleTickMs (tracer_thread.h) until done, so a thread is let go within
+// milliseconds of reaching its pending stop. A retry never sends a second
+// PTRACE_INTERRUPT. While a thread is pending, StopGuard refuses it with
+// "thread <tid> still detaching". Tracer thread only.
 void RetryDeferredDetaches();
 size_t DeferredDetachCount();
+bool DetachPending(pid_t tid);
 
 // Test seam: called on the tracer thread after each successful stop.
 using StopObserver = void (*)(pid_t tid);

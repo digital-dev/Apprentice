@@ -47,6 +47,14 @@ auto OnTracer(F f) -> decltype(f()) {
 // other callers between slices.
 void RunPending();
 
+// Background work for the tracer thread itself. After each batch of tasks, and
+// every kIdleTickMs while the last call returned true, the idle thread calls
+// `tick`; it returns whether it wants to be called again soon. Returning false
+// puts the thread back to sleeping until the next task. One tick at a time; a
+// later call replaces it. Tracer thread only.
+constexpr int kIdleTickMs = 5;
+void SetIdleTick(bool (*tick)());
+
 // Registers `hook` to run on the tracer thread just before it exits.
 void AtTracerExit(std::function<void()> hook);
 
