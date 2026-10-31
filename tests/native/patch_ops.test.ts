@@ -203,6 +203,41 @@ describe('writeBytes straddling into an unmapped page', () => {
   })
 })
 
+describe('data writes (writeValue) straddling a page boundary', () => {
+  // writeValue goes through ProtectedDataWrite, which handles a straddle per
+  // page — unlike writeBytes (ProtectedCodeWrite), which refuses it.
+  it('straddling two committed pages with different protections succeeds and both halves read back', () => {
+    // base+0x1000-4: last 4 bytes of the read-only header page and first 4
+    // of the read-execute .text page.
+    const straddle = '0x' + (BigInt(baseAddress) + 0x1000n - 4n).toString(16)
+    const original: string = (addon as any).readBytes(handle, straddle, 8)
+    expect((addon as any).writeValue(handle, straddle, [], 'int64', 1234567)).toBe(true)
+    expect((addon as any).readValue(handle, straddle, [], 'int64')).toBe(1234567)
+    // Restore byte by byte so each write stays within one page.
+    for (let i = 0; i < 8; i++) {
+      const byteAddr = '0x' + (BigInt(straddle) + BigInt(i)).toString(16)
+      const byte = parseInt(original.slice(i * 2, i * 2 + 2), 16)
+      expect((addon as any).writeValue(handle, byteAddr, [], 'int8', byte)).toBe(true)
+    }
+    expect((addon as any).readBytes(handle, straddle, 8)).toBe(original)
+  })
+
+  it('straddling into an unmapped page returns false and leaves the leading bytes unchanged', () => {
+    let end = BigInt(baseAddress)
+    for (;;) {
+      const r = (addon as any).platformQueryRegion(handle, '0x' + end.toString(16))
+      if (!r || r.free) break
+      end += BigInt(r.size)
+    }
+    const start = '0x' + (end - 4n).toString(16)
+    const before = (addon as any).readBytes(handle, start, 4)
+
+    expect((addon as any).writeValue(handle, start, [], 'int64', 0x7fffffff)).toBe(false)
+
+    expect((addon as any).readBytes(handle, start, 4)).toBe(before)
+  })
+})
+
 describe('readBytes on an unreadable address', () => {
   it('throws instead of returning garbage', () => {
     // Low, unmapped addresses in the target's address space are never

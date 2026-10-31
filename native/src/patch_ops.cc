@@ -107,14 +107,13 @@ std::vector<uintptr_t> RunScanAob(platform::ProcessHandle h, const std::vector<P
         // offset is still complete in the buffer.
         const size_t scanSpan = std::min(kChunkSize, regionSize - chunkOffset);
         const size_t readLen = std::min(kChunkSize + overlap, regionSize - chunkOffset);
-        // Exact-length read only: a short read is treated as a failed
-        // chunk (skipped), as it effectively was before, since a partial
-        // read of a committed region does not occur in practice.
+        // Intentional change from the Win32-direct version: a short read now
+        // counts as a failed chunk (skipped) rather than being scanned as far
+        // as it got; the platform read is all-or-nothing.
         if (!platform::ReadMemory(h, regionBase + chunkOffset, buffer.data(), readLen)) {
           continue;
         }
-        const size_t bytesRead = readLen;
-        for (size_t offset = 0; offset < scanSpan && offset + plen <= bytesRead; offset++) {
+        for (size_t offset = 0; offset < scanSpan && offset + plen <= readLen; offset++) {
           bool match = true;
           for (size_t k = 0; k < plen; k++) {
             if (pattern[k].wildcard) continue;

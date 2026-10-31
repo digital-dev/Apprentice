@@ -39,6 +39,7 @@ Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::SysV; }
 bool ListModuleRanges(ProcessHandle, std::vector<ModuleRange>&) { return false; }
 bool ReadMemory(ProcessHandle, uintptr_t, void*, size_t) { return false; }
 bool WriteMemory(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
+bool WriteMemoryUnprotected(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
 bool QueryRegion(ProcessHandle, uintptr_t, Region&) { return false; }
 uintptr_t PageSize() { return 4096; }
 uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }

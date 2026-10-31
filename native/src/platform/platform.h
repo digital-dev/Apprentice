@@ -20,6 +20,9 @@ struct Region {
   uintptr_t base = 0;
   size_t size = 0;
   bool free = false;
+  // Backed by committed memory (Windows MEM_COMMIT), whatever its protection:
+  // true for PAGE_NOACCESS and guard pages too, unlike `readable`.
+  bool committed = false;
   bool readable = false;
   bool writable = false;
   bool executable = false;
@@ -107,6 +110,10 @@ bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size)
 // Must succeed against read-execute pages: implementations handle whatever
 // protection dance their OS requires and leave protection as they found it.
 bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size_t size);
+// Plain write with no protection change, for pages WriteMemory could not
+// make writable but which are already writable as mapped. Flushes the
+// instruction cache where the OS needs it.
+bool WriteMemoryUnprotected(ProcessHandle handle, uintptr_t address, const void* data, size_t size);
 bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out);
 // The OS page size, in bytes (a power of two). Cached.
 uintptr_t PageSize();

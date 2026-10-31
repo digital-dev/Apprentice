@@ -164,6 +164,14 @@ bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size
   return ok;
 }
 
+bool WriteMemoryUnprotected(ProcessHandle handle, uintptr_t address, const void* data, size_t size) {
+  HANDLE h = (HANDLE)handle;
+  SIZE_T written = 0;
+  bool ok = WriteProcessMemory(h, (LPVOID)address, data, size, &written) && written == size;
+  FlushInstructionCache(h, (LPCVOID)address, size);
+  return ok;
+}
+
 bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
   MEMORY_BASIC_INFORMATION mbi;
   if (VirtualQueryEx((HANDLE)handle, (LPCVOID)address, &mbi, sizeof(mbi)) != sizeof(mbi))
@@ -171,6 +179,7 @@ bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
   out.base = (uintptr_t)mbi.BaseAddress;
   out.size = mbi.RegionSize;
   out.free = mbi.State == MEM_FREE;
+  out.committed = mbi.State == MEM_COMMIT;
   out.readable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
                  (mbi.Protect & (PAGE_READWRITE | PAGE_READONLY | PAGE_WRITECOPY |
                                  PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |

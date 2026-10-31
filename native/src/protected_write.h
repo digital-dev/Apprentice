@@ -95,29 +95,50 @@ inline bool ProtectedDataWrite(platform::ProcessHandle h, uintptr_t address, con
   const uintptr_t firstPage = address & ~(ps - 1);
   const uintptr_t lastPage = (address + size - 1) & ~(ps - 1);
 
-  // All-or-nothing: every page must be mapped before anything is written, so
-  // an unmapped trailing page cannot leave the leading bytes written.
+  // Refuse BEFORE writing anything if any page is free or uncommitted.
+  // Deliberately not `readable`: PAGE_NOACCESS and guard pages are committed
+  // and were writable once protected, so they must stay writable.
   for (uintptr_t page = firstPage; page <= lastPage; page += ps) {
     platform::Region r;
-    if (!platform::QueryRegion(h, page, r) || r.free) return false;
+    if (!platform::QueryRegion(h, page, r) || !r.committed) return false;
   }
 
-  // Best-effort backup so a write that fails partway can be undone.
-  std::vector<uint8_t> backup(size);
-  const bool haveBackup = platform::ReadMemory(h, address, backup.data(), size);
+  // One chunk per page. Each chunk is written through the protect dance; if
+  // that cannot make the page writable (e.g. a mapped section view without
+  // execute rights) fall back to a plain write, as the pre-port code did.
+  struct Chunk {
+    uintptr_t address;
+    size_t offset;
+    size_t size;
+    std::vector<uint8_t> backup; // empty when the page was unreadable
+  };
+  std::vector<Chunk> done;
 
   const uint8_t* src = static_cast<const uint8_t*>(data);
   uintptr_t cursor = address;
-  size_t done = 0;
-  while (done < size) {
+  size_t offset = 0;
+  while (offset < size) {
     const uintptr_t pageEnd = (cursor & ~(ps - 1)) + ps;
-    const size_t chunk = static_cast<size_t>(std::min<uintptr_t>(pageEnd - cursor, size - done));
-    if (!platform::WriteMemory(h, cursor, src + done, chunk)) {
-      if (haveBackup && done > 0) platform::WriteMemory(h, address, backup.data(), done);
+    const size_t len = static_cast<size_t>(std::min<uintptr_t>(pageEnd - cursor, size - offset));
+
+    Chunk c{cursor, offset, len, std::vector<uint8_t>(len)};
+    if (!platform::ReadMemory(h, cursor, c.backup.data(), len)) c.backup.clear();
+
+    bool ok = platform::WriteMemory(h, cursor, src + offset, len) ||
+              platform::WriteMemoryUnprotected(h, cursor, src + offset, len);
+    if (!ok) {
+      // Best-effort undo of the chunks already written.
+      for (size_t i = done.size(); i-- > 0;) {
+        const Chunk& d = done[i];
+        if (d.backup.empty()) continue;
+        if (!platform::WriteMemory(h, d.address, d.backup.data(), d.size))
+          platform::WriteMemoryUnprotected(h, d.address, d.backup.data(), d.size);
+      }
       return false;
     }
-    cursor += chunk;
-    done += chunk;
+    done.push_back(std::move(c));
+    cursor += len;
+    offset += len;
   }
   return true;
 }
