@@ -21,6 +21,7 @@ struct Region {
   size_t size = 0;
   bool free = false;
   bool readable = false;
+  bool writable = false;
   bool executable = false;
 };
 
@@ -57,6 +58,30 @@ ThreadHandle CreateRemoteThread(ProcessHandle handle, uintptr_t startAddress, ui
 // inside when this returns false; see the never-free-a-live-cave rule.
 bool WaitForRemoteThread(ThreadHandle thread, uint32_t timeoutMs);
 void CloseRemoteThread(ThreadHandle thread);
+
+// One running process, as ListProcesses enumerates it. `name` is the
+// executable's file name (including ".exe" on Windows).
+struct ProcessEntry {
+  uint32_t pid = 0;
+  std::string name;
+};
+
+// Every running process. False only if the enumeration itself failed.
+bool ListProcesses(std::vector<ProcessEntry>& out);
+// Opens `pid` with the rights memory read/write/query need. Returns 0 and
+// fills `error` on failure (access denied, no such process).
+ProcessHandle OpenProcess(uint32_t pid, std::string& error);
+void CloseProcess(ProcessHandle handle);
+// True while the process behind `handle` is still running.
+bool IsAlive(ProcessHandle handle);
+// Base address of the process's main executable image; 0 on failure.
+uintptr_t MainModuleBase(ProcessHandle handle);
+
+// Calling convention a target's native code uses for remote calls.
+enum class Abi { Ms64, SysV };
+// Which ABI the module at `moduleBase` in the target follows. Windows
+// targets are always Ms64.
+Abi PlatformAbiFor(ProcessHandle handle, uintptr_t moduleBase);
 
 bool IsSupported();
 const char* Name();

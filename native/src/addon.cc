@@ -30,6 +30,64 @@ Napi::Value PlatformName(const Napi::CallbackInfo& info) {
   return result;
 }
 
+// Test-only: expose the process/region primitives so tests can pin their
+// behaviour independent of the callers that use them.
+Napi::Value PlatformListProcesses(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::vector<platform::ProcessEntry> procs;
+  Napi::Array result = Napi::Array::New(env);
+  if (!platform::ListProcesses(procs)) return result;
+  uint32_t i = 0;
+  for (const auto& p : procs) {
+    Napi::Object item = Napi::Object::New(env);
+    item.Set("pid", Napi::Number::New(env, p.pid));
+    item.Set("name", Napi::String::New(env, p.name));
+    result.Set(i++, item);
+  }
+  return result;
+}
+
+// platformProbe(pid) -> { alive, mainModuleBase, abi } or { error }.
+// Opens, inspects and closes within the call.
+Napi::Value PlatformProbe(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  Napi::Object result = Napi::Object::New(env);
+  std::string error;
+  platform::ProcessHandle h =
+      platform::OpenProcess(info[0].As<Napi::Number>().Uint32Value(), error);
+  if (!h) {
+    result.Set("error", Napi::String::New(env, error));
+    return result;
+  }
+  uintptr_t base = platform::MainModuleBase(h);
+  result.Set("alive", Napi::Boolean::New(env, platform::IsAlive(h)));
+  char hex[32];
+  snprintf(hex, sizeof(hex), "0x%llx", (unsigned long long)base);
+  result.Set("mainModuleBase", Napi::String::New(env, hex));
+  result.Set("abi", Napi::String::New(
+      env, platform::PlatformAbiFor(h, base) == platform::Abi::Ms64 ? "ms64" : "sysv"));
+  platform::CloseProcess(h);
+  return result;
+}
+
+// platformQueryRegion(handle, "0xaddr") -> flags object, or null on failure.
+Napi::Value PlatformQueryRegion(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  platform::ProcessHandle h =
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value());
+  uintptr_t addr = static_cast<uintptr_t>(
+      std::stoull(info[1].As<Napi::String>().Utf8Value(), nullptr, 0));
+  platform::Region r;
+  if (!platform::QueryRegion(h, addr, r)) return env.Null();
+  Napi::Object o = Napi::Object::New(env);
+  o.Set("size", Napi::Number::New(env, static_cast<double>(r.size)));
+  o.Set("free", Napi::Boolean::New(env, r.free));
+  o.Set("readable", Napi::Boolean::New(env, r.readable));
+  o.Set("writable", Napi::Boolean::New(env, r.writable));
+  o.Set("executable", Napi::Boolean::New(env, r.executable));
+  return o;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // Cold-start workaround, confirmed reproducible on a clean tree (no
   // debug instrumentation) via tests/native/scanner.test.ts run in
@@ -75,7 +133,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("readBytes", Napi::Function::New(env, ReadBytes));
   exports.Set("writeBytes", Napi::Function::New(env, WriteBytes));
   exports.Set("scanAob", Napi::Function::New(env, ScanAob));
-  exports.Set("platformName", Napi::Function::New(env, PlatformName));
+  exports.Set("platformListProcesses", Napi::Function::New(env, PlatformListProcesses));
+  exports.Set("platformProbe", Napi::Function::New(env, PlatformProbe));
+  exports.Set("platformQueryRegion", Napi::Function::New(env, PlatformQueryRegion));
+  exports.Set("platformName",Napi::Function::New(env, PlatformName));
   exports.Set("allocateCave", Napi::Function::New(env, AllocateCave));
   exports.Set("freeMemory", Napi::Function::New(env, FreeCave));
   exports.Set("decodeRun", Napi::Function::New(env, DecodeRun));

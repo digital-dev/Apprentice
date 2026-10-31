@@ -57,6 +57,57 @@ std::string ReadFileVersion(const char* fullPath) {
 bool IsSupported() { return true; }
 const char* Name() { return "windows"; }
 
+bool ListProcesses(std::vector<ProcessEntry>& out) {
+  out.clear();
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) return false;
+  PROCESSENTRY32 entry;
+  entry.dwSize = sizeof(PROCESSENTRY32);
+  if (Process32First(snap, &entry)) {
+    do {
+      ProcessEntry e;
+      e.pid = entry.th32ProcessID;
+      e.name = entry.szExeFile;
+      out.push_back(std::move(e));
+    } while (Process32Next(snap, &entry));
+  }
+  CloseHandle(snap);
+  return true;
+}
+
+// Same access mask process_utils.cc's Attach has always used.
+ProcessHandle OpenProcess(uint32_t pid, std::string& error) {
+  HANDLE process = ::OpenProcess(
+      PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+      FALSE, pid);
+  if (process == NULL) {
+    error = "OpenProcess failed (access denied or process not found)";
+    return 0;
+  }
+  return reinterpret_cast<ProcessHandle>(process);
+}
+
+void CloseProcess(ProcessHandle handle) {
+  CloseHandle(reinterpret_cast<HANDLE>(handle));
+}
+
+bool IsAlive(ProcessHandle handle) {
+  DWORD exitCode = 0;
+  // The exit code, not GetExitCodeProcess's return value, says whether the
+  // process is still running.
+  if (!GetExitCodeProcess(reinterpret_cast<HANDLE>(handle), &exitCode)) return false;
+  return exitCode == STILL_ACTIVE;
+}
+
+uintptr_t MainModuleBase(ProcessHandle handle) {
+  HMODULE mod;
+  DWORD needed;
+  if (!EnumProcessModules(reinterpret_cast<HANDLE>(handle), &mod, sizeof(mod), &needed)) return 0;
+  return reinterpret_cast<uintptr_t>(mod);
+}
+
+Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::Ms64; }
+
 bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size) {
   SIZE_T read = 0;
   return ReadProcessMemory((HANDLE)handle, (LPCVOID)address, out, size, &read) &&
@@ -119,6 +170,9 @@ bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
                  (mbi.Protect & (PAGE_READWRITE | PAGE_READONLY | PAGE_WRITECOPY |
                                  PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
                                  PAGE_EXECUTE_WRITECOPY));
+  out.writable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                 (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                                 PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
   out.executable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
                    (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
                                    PAGE_EXECUTE_WRITECOPY));
