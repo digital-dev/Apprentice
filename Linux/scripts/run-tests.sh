@@ -61,18 +61,25 @@ g++ -std=c++17 -O0 -g -Wall -fsanitize=address,undefined -fno-sanitize-recover=u
   -o Linux/native/tests/module_parse_test Linux/native/tests/module_parse_test.cc -ldl
 (cd Linux/native/tests && ./module_parse_test)
 # The real backend against this process as target: module extents (.bss), image filter, exports.
-g++ -std=c++17 -O0 -g -Wall -Inative/src/platform -o Linux/native/tests/platform_memory_test   Linux/native/tests/platform_memory_test.cc Linux/native/platform_linux.cc   Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
+# ptrace/remote-exec are pulled in from here on because CloseProcess (platform_linux_process.cc)
+# calls DropRemoteState (platform_linux_remote.cc) now that AllocateNear keeps per-process state.
+LINUX_PLATFORM_SRCS=(Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc
+  Linux/native/platform_linux_write.cc Linux/native/platform_linux_ptrace.cc Linux/native/platform_linux_remote.cc
+  Linux/native/ptrace_core.cc Linux/native/remote_exec.cc Linux/native/tracer_thread.cc)
+g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/platform_memory_test   Linux/native/tests/platform_memory_test.cc "${LINUX_PLATFORM_SRCS[@]}" -ldl
 (cd Linux/native/tests && ./platform_memory_test)
 # Writes through /proc/<pid>/mem against this process and a forked child: r-x/PROT_NONE/r-- pages, all-or-nothing
 # refusal, rollback, fd leaks, threads.
-g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/platform_write_test Linux/native/tests/platform_write_test.cc Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
+g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/platform_write_test Linux/native/tests/platform_write_test.cc "${LINUX_PLATFORM_SRCS[@]}" -ldl
 (cd Linux/native/tests && ./platform_write_test)
 # ptrace: tracer thread, StopGuard/registers, SuspendAll/ResumeAll against forked children (thread storms,
 # a target killed mid-suspend, an already-traced target).
-LINUX_PLATFORM_SRCS=(Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc
-  Linux/native/platform_linux_write.cc Linux/native/platform_linux_ptrace.cc Linux/native/ptrace_core.cc Linux/native/tracer_thread.cc)
 g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/ptrace_core_test Linux/native/tests/ptrace_core_test.cc "${LINUX_PLATFORM_SRCS[@]}" -ldl
 (cd Linux/native/tests && ./ptrace_core_test)
+# Remote syscalls, AllocateNear/FreeMemory, and CreateRemoteThread's thread-hijack: forked
+# children of this process, same as the ptrace tests above.
+g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/remote_exec_test Linux/native/tests/remote_exec_test.cc "${LINUX_PLATFORM_SRCS[@]}" -ldl
+(cd Linux/native/tests && ./remote_exec_test)
 
 (cd native && npx node-gyp configure --target="${NODE_GYP_TARGET:-22.12.0}" \
   && npx node-gyp build --target="${NODE_GYP_TARGET:-22.12.0}")
@@ -80,20 +87,25 @@ g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Lin
 if [ -n "${TEST_NODE_BIN:-}" ]; then export PATH="$TEST_NODE_BIN:$PATH"; fi
 node -v
 
-# Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: cave_ops/cloneStackScript (caves),
-# write_watch/signature_golden/snapshot_ops (hardware watch), mono_*. patch_ops skips its two
-# write-watch tests on Linux (Task 15).
+# Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: cloneStackScript (patch
+# caves hooking a live instruction stream), write_watch/signature_golden/snapshot_ops (hardware
+# watch, Task 15), mono_bridge (Mono metadata walking, Task 14). patch_ops skips its two
+# write-watch tests on Linux (Task 15); cave_ops and mono_call skip their Microsoft-x64-stub-only
+# cases (callRemoteFunction) on Linux outside Wine (Task 13 builds the System V stub).
 DEFAULT_TESTS=(tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts
   tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts
   tests/native/linux_memory.test.ts tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts
-  tests/native/script_ops.test.ts tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts)
+  tests/native/script_ops.test.ts tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts
+  tests/native/cave_ops.test.ts tests/native/mono_call.test.ts)
 # Step 2: the Proton path, test-harness/harness.c built with mingw and run under Wine
-# (APPRENTICE_HARNESS=wine, see Linux/test-harness/README.md).
+# (APPRENTICE_HARNESS=wine, see Linux/test-harness/README.md). The Microsoft-x64 stub
+# (callRemoteFunction) already works here: a real PE target, same ABI as Windows.
 WINE_TESTS=(tests/native/platform.test.ts tests/native/module_info.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts
   tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts
-  tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts)
+  tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts tests/native/cave_ops.test.ts
+  tests/native/mono_call.test.ts)
 
 run_wine_step() {
   wine_env

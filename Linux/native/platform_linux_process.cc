@@ -1,6 +1,7 @@
 #include "platform.h"
 #include "proc_parse.h"
 #include "procmem_fd.h"
+#include "remote_state.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -100,7 +101,10 @@ ProcessHandle OpenProcess(uint32_t pid, std::string& error) {
   return (ProcessHandle)pid;
 }
 
-void CloseProcess(ProcessHandle handle) { DropProcMemFd(handle); }
+void CloseProcess(ProcessHandle handle) {
+  DropProcMemFd(handle);
+  DropRemoteState(handle);
+}
 
 bool IsAlive(ProcessHandle handle) {
   char state = State((uint32_t)handle);

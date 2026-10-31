@@ -1,22 +1,24 @@
 #include "platform.h"
 
-// Linux backend: declared, not implemented. A Linux build of the addon
-// compiles and loads, and every injection operation refuses with
-// IsSupported() == false, so the app can say "not on this platform yet"
-// instead of appearing to work.
+// Linux backend: most of it real now, the rest declared but not yet
+// implemented. `IsSupported()` stays false until the whole chain this flag
+// gates (including Mono/IL2CPP remote calls, Task 13-14, and the hardware
+// write-watch, Task 15) is real — flipping it early would tell the app
+// features work that do not yet.
 //
-// Implementing this needs a Linux machine to test on; writing it blind
-// would produce code indistinguishable from working code until someone ran
-// it. Rough shape when someone does:
-//   ReadMemory/WriteMemory  process_vm_readv/writev, or /proc/<pid>/mem,
-//                           which can write pages that are not writable
-//   QueryRegion             parse /proc/<pid>/maps
-//   SuspendAll/ResumeAll    done: platform_linux_ptrace.cc (PTRACE_SEIZE per
-//                           thread in /proc/<pid>/task, on the tracer thread)
-//   AllocateNear            the hard one. Linux has no VirtualAllocEx:
-//                           hijack a thread, save its registers, point them
-//                           at mmap with MAP_FIXED_NOREPLACE near the
-//                           target, single-step it, restore the registers.
+//   ReadMemory/WriteMemory, QueryRegion, ListModules, ResolveExport,
+//   PlatformAbiFor            platform_linux_memory.cc / platform_linux_remote.cc
+//   SuspendAll/ResumeAll, ListThreads, GetThreadRegisters
+//                             platform_linux_ptrace.cc (PTRACE_SEIZE per
+//                             thread in /proc/<pid>/task, on the tracer thread)
+//   AllocateNear/FreeMemory/CreateRemoteThread/WaitForRemoteThread/
+//   CloseRemoteThread         platform_linux_remote.cc, on remote_exec.h's
+//                             thread-hijack primitive (no VirtualAllocEx or
+//                             CreateRemoteThread equivalent exists on Linux;
+//                             a stopped thread of the target runs the mmap/
+//                             munmap syscall or the caller's own code for a
+//                             few instructions, then is restored exactly as
+//                             found — see remote_exec.h)
 namespace platform {
 
 bool IsSupported() { return false; }
@@ -24,17 +26,11 @@ const char* Name() { return "linux"; }
 
 // ListProcesses, OpenProcess, CloseProcess, IsAlive and MainModuleBase live in
 // platform_linux_process.cc; ReadMemory, QueryRegion, PageSize, ListModules,
-// ListModuleRanges and ResolveExport in platform_linux_memory.cc.
-// Stub; a later task replaces this with a real ABI probe.
-Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::SysV; }
-
-uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }
-bool FreeMemory(ProcessHandle, uintptr_t) { return false; }
-// SuspendAll, ResumeAll, SuspendAllError, SleepMs, ListThreads and
-// GetThreadRegisters live in platform_linux_ptrace.cc.
-ThreadHandle CreateRemoteThread(ProcessHandle, uintptr_t, uintptr_t) { return 0; }
-bool WaitForRemoteThread(ThreadHandle, uint32_t) { return false; }
-void CloseRemoteThread(ThreadHandle) {}
+// ListModuleRanges and ResolveExport in platform_linux_memory.cc; AllocateNear,
+// FreeMemory, CreateRemoteThread, WaitForRemoteThread, CloseRemoteThread and
+// PlatformAbiFor in platform_linux_remote.cc; SuspendAll, ResumeAll,
+// SuspendAllError, SleepMs, ListThreads and GetThreadRegisters in
+// platform_linux_ptrace.cc.
 
 // Stub. The ptrace backend, all on the one tracer thread:
 //   Attach          seize every thread in /proc/<pid>/task with

@@ -2,6 +2,8 @@
 #include "proc_parse.h"
 #include "ptrace_core.h"
 #include "tracer_thread.h"
+#include "held_threads.h"
+#include "remote_exec.h"
 
 #include <dirent.h>
 #include <unistd.h>
@@ -27,6 +29,7 @@ namespace {
 constexpr int kMaxSuspendRounds = 20;
 
 std::vector<std::unique_ptr<linuxptrace::StopGuard>> g_held;  // tracer thread only
+uint32_t g_heldPid = 0;  // which process g_held belongs to; tracer thread only
 
 std::mutex g_errorMutex;
 std::string g_suspendError;
@@ -63,7 +66,15 @@ bool IsHeld(pid_t tid) {
 // Detaches every held thread, the leader (usually first) last: an exited leader becomes
 // reapable only once its other threads are released.
 void ReleaseHeld() {
+  // A remote call may be borrowing one of these threads right now (Ruling
+  // 15: it reuses a held thread rather than re-attaching). Its registers
+  // are only the hijacked ones until its own Resolve() puts them back —
+  // releasing the thread before that would resume it wherever the stub
+  // left it. Bounded: see FinishPendingFor's own comment on what happens
+  // if a borrowed call never finishes.
+  if (g_heldPid != 0) linuxremote::FinishPendingFor(g_heldPid, 2000);
   while (!g_held.empty()) g_held.pop_back();
+  g_heldPid = 0;
   linuxptrace::RetryDeferredDetaches();
 }
 
@@ -121,6 +132,7 @@ bool SuspendOnTracer(uint32_t pid, std::string& err) {
       err = "process " + std::to_string(pid) + " exited";
       break;
     }
+    g_heldPid = pid;
     return true;
   }
   if (err.empty()) err = "process " + std::to_string(pid) + " kept creating threads; could not stop them all";
@@ -196,4 +208,22 @@ bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out) {
   });
 }
 
+// Ordinary (named) member of this namespace, not the anonymous one above, so
+// platform_linux::HeldThreadIds below can call it by qualified name without
+// relying on anonymous-namespace lookup rules.
+std::vector<pid_t> HeldThreadIdsImpl(uint32_t pid) {
+  std::vector<pid_t> out;
+  if (g_heldPid != pid) return out;
+  for (const auto& g : g_held) out.push_back(g->tid());
+  return out;
+}
+
 }  // namespace platform
+
+namespace platform_linux {
+
+std::vector<pid_t> HeldThreadIds(uint32_t pid) {
+  return linuxptrace::OnTracer([pid] { return platform::HeldThreadIdsImpl(pid); });
+}
+
+}  // namespace platform_linux

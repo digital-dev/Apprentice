@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { spawnHarness, HARNESS_IS_PE } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -157,7 +157,8 @@ describe('decodeRun', () => {
     expect(result.relocatable).toBe(false)
   })
 
-  it('refuses a run that must fold in the function\'s own ret', async () => {
+  // Task 15: needs the write watch (ptrace debug session), not yet on Linux.
+  it.skipIf(process.platform === 'linux')('refuses a run that must fold in the function\'s own ret', async () => {
     // harness.c's tight_write (`*p = v;`, deliberately unpadded — unlike
     // force_write above) compiles under /Od to a 4-byte `movss [reg], xmm`
     // sitting immediately against its `ret`, with no other code between
@@ -446,7 +447,9 @@ describe('encodeConditionalScale', () => {
   // documented ABI reasoning) — the exact non-16-aligned condition the
   // encoder's dynamic `and rsp,-16` exists to handle, not the aligned case
   // a hand-picked test address could accidentally get right by luck.
-  it('scales xmm0 only when the called method\'s return matches the armed pointer', async () => {
+  // Task 13: callRemoteFunctionFloat needs the Microsoft x64 stub, which
+  // only matches a PE target's ABI; Wine's harness is a real PE process.
+  it.skipIf(process.platform === 'linux' && !HARNESS_IS_PE)('scales xmm0 only when the called method\'s return matches the armed pointer', async () => {
     const resolveAttackerAddr = (await send('getresolveattackeraddr')).split(' ')[1]
     const near = (addon as any).attach(harness.pid).baseAddress
     const cave: string = (addon as any).allocateCave(handle, near)
@@ -596,7 +599,8 @@ describe('suspendThreads / resumeThreads', () => {
   }, 15000)
 })
 
-describe('force injection — end to end', () => {
+// Task 15: every test here starts with the write watch (ptrace debug session), not yet on Linux.
+describe.skipIf(process.platform === 'linux')('force injection — end to end', () => {
   it('pins the value to a constant and releases it on restore', async () => {
     // Catch the instruction that writes the forced field, exactly as the
     // app does — this is the same provenance a real cheat has.
@@ -678,7 +682,8 @@ describe('force injection — end to end', () => {
   }, 30000)
 })
 
-describe('capture injection — end to end', () => {
+// Task 15: every test here starts with the write watch (ptrace debug session), not yet on Linux.
+describe.skipIf(process.platform === 'linux')('capture injection — end to end', () => {
   it('records the object pointer where a value cheat can read it', async () => {
     ;(addon as any).startWriteWatch(harness.pid, forceAddress)
     await send('forceloop')
@@ -734,7 +739,8 @@ describe('capture injection — end to end', () => {
   }, 30000)
 })
 
-describe('scale injection — end to end', () => {
+// Task 15: every test here starts with the write watch (ptrace debug session), not yet on Linux.
+describe.skipIf(process.platform === 'linux')('scale injection — end to end', () => {
   it('multiplies the live float the game stores, clobbering nothing', async () => {
     // The harness's force_write is `*p = v` under /Od, i.e. a real
     // `movss [reg], xmm` — the exact site shape scale mode exists for.

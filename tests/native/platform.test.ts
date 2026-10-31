@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS, HARNESS_NAME } from '../helpers/spawnHarness'
+import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS, HARNESS_NAME, HARNESS_WINE } from '../helpers/spawnHarness'
 import addon from '../../native/build/Release/memory_addon.node'
 
 describe('platform seam', () => {
@@ -67,6 +67,15 @@ describe('process and region primitives', () => {
   })
 
   it.runIf(process.platform === 'win32')('exposes the Windows ABI as ms64', () => {
+    expect(a.platformProbe(harness.pid).abi).toBe('ms64')
+  })
+
+  // Task 12: real ABI detection on Linux — the ELF harness's own exe is
+  // System V; under Wine the harness is a real PE process, same as Windows.
+  it.runIf(process.platform === 'linux' && !HARNESS_WINE)('exposes the native Linux ABI as sysv', () => {
+    expect(a.platformProbe(harness.pid).abi).toBe('sysv')
+  })
+  it.runIf(HARNESS_WINE)('exposes a Wine process\'s ABI as ms64', () => {
     expect(a.platformProbe(harness.pid).abi).toBe('ms64')
   })
 })
