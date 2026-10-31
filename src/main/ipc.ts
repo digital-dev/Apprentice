@@ -843,6 +843,24 @@ function refreshModuleContext(exeName: string): void {
   patchEngine.setAnchorContext(context.modules, context.verified)
 }
 
+// Linux/native/ptrace_core.cc's kPtraceDeniedMessage, thrown verbatim as the
+// native attach error's message (see platform_linux_debug.cc's
+// ClassifySeizeError). It can't be imported here — it's a C++ constant, and
+// PtraceDenied() isn't exposed to the addon — so this matches the exact
+// string, the only signal available at this boundary, and rewrites it into
+// something a user can act on without knowing what ptrace_scope is.
+const PTRACE_DENIED_MESSAGE =
+  'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
+
+export function describeAttachError(message: string): string {
+  if (message !== PTRACE_DENIED_MESSAGE) return message
+  return (
+    'Could not attach: ptrace is blocked by this system’s Yama policy. Run Apprentice with ' +
+    'CAP_SYS_PTRACE, or allow attaching for this session with ' +
+    '"sudo sysctl kernel.yama.ptrace_scope=0" (/proc/sys/kernel/yama/ptrace_scope).'
+  )
+}
+
 // Shared by the manual process:attach handler and the watcher's onAppear —
 // both must go through the same restore-before-switch guard (put a
 // previously-attached process's code back while its handle is still valid)
@@ -914,7 +932,13 @@ async function attachTo(
   attachedHandle = null
   resetUeDiscovery()
   if (previousHandle !== null) nativeAddon.detach(previousHandle)
-  const { handle, baseAddress } = nativeAddon.attach(pid)
+  let attached: { handle: number; baseAddress: string }
+  try {
+    attached = nativeAddon.attach(pid)
+  } catch (err) {
+    throw new Error(describeAttachError(err instanceof Error ? err.message : String(err)))
+  }
+  const { handle, baseAddress } = attached
   attachedHandle = handle
   attachedBase = baseAddress
   attachedPid = pid

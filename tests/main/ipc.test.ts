@@ -9,7 +9,8 @@ import {
   applyRelearn,
   checkTableSize,
   MAX_TABLE_BYTES,
-  pushToWindow
+  pushToWindow,
+  describeAttachError
 } from '../../src/main/ipc'
 import type { BrowserWindow } from 'electron'
 import { setGamesDir } from '../../src/main/store'
@@ -203,5 +204,22 @@ describe('applyRelearn', () => {
     const valueCheat = { id: 'p1', name: 'v', dataType: 'int32', mode: 'freeze', targets: [], value: 1 } as never
     const profile: GameProfile = { schema: 2, exe: 'game', modules: {}, cheats: [valueCheat] }
     expect(applyRelearn(profile, 'p1', '0x200')).toBeNull()
+  })
+})
+
+// Linux/native/ptrace_core.cc's kPtraceDeniedMessage is thrown verbatim as
+// the native attach error's message (see platform_linux_debug.cc's
+// ClassifySeizeError, and ptrace_core.cc itself) — this is the only signal
+// ipc.ts has, since the C++ constant and PtraceDenied() aren't exposed to
+// the addon. describeAttachError matches that exact text and turns it into
+// something a user can act on without knowing what ptrace_scope is.
+describe('describeAttachError', () => {
+  it('maps the ptrace denied error to an actionable user message', () => {
+    const raw = 'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
+    expect(describeAttachError(raw)).toContain('ptrace_scope')
+  })
+
+  it('passes through any other message unchanged', () => {
+    expect(describeAttachError('process exited')).toBe('process exited')
   })
 })

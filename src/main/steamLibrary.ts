@@ -82,6 +82,11 @@ export interface SteamFs {
   exists(p: string): boolean
   readText(p: string): string | null
   readDir(p: string): { name: string; isDir: boolean }[]
+  // Resolves symlinks/junctions. Used to de-duplicate Steam root candidates
+  // that are the same directory reached two ways (e.g. ~/.steam/steam is
+  // conventionally a symlink into ~/.local/share/Steam). Falls back to the
+  // input path when it doesn't exist or can't be resolved.
+  realpath(p: string): string
 }
 
 export interface SteamDeps {
@@ -89,6 +94,9 @@ export interface SteamDeps {
   // The value of a registry string, or null. Windows only; anything else null.
   readRegistry(key: string, name: string): string | null
   env: Record<string, string | undefined>
+  // Extra Steam-root candidates beyond the registry/env ones above. Set by
+  // realSteamDeps() on Linux (see linuxSteamRoots); undefined elsewhere.
+  linuxRoots?(): string[]
 }
 
 export const realSteamFs: SteamFs = {
@@ -105,6 +113,13 @@ export const realSteamFs: SteamFs = {
       return fs.readdirSync(p, { withFileTypes: true }).map((d) => ({ name: d.name, isDir: d.isDirectory() }))
     } catch {
       return []
+    }
+  },
+  realpath: (p) => {
+    try {
+      return fs.realpathSync(p)
+    } catch {
+      return p
     }
   }
 }
@@ -128,7 +143,12 @@ function realReadRegistry(key: string, name: string): string | null {
 }
 
 export function realSteamDeps(): SteamDeps {
-  return { fs: realSteamFs, readRegistry: realReadRegistry, env: process.env }
+  return {
+    fs: realSteamFs,
+    readRegistry: realReadRegistry,
+    env: process.env,
+    ...(process.platform === 'linux' ? { linuxRoots: () => linuxSteamRoots(process.env, realSteamFs) } : {})
+  }
 }
 
 // ---- Steam root and libraries -----------------------------------------------
@@ -136,12 +156,37 @@ export function realSteamDeps(): SteamDeps {
 const norm = (p: string): string => path.normalize(p)
 const sameFolder = (a: string, b: string): boolean => norm(a).toLowerCase() === norm(b).toLowerCase()
 
+// Where Steam itself (not a library) lives on Linux, checked in this order.
+// The flatpak path covers a Flatpak-installed Steam; the other two are the
+// native package and the symlink Steam's own installer conventionally
+// creates at ~/.steam/steam pointing at ~/.local/share/Steam.
+export function linuxSteamRoots(env: Record<string, string | undefined>, fs: SteamFs): string[] {
+  const home = env.HOME
+  if (!home) return []
+  const candidates = [
+    path.join(home, '.steam', 'steam'),
+    path.join(home, '.local', 'share', 'Steam'),
+    path.join(home, '.var', 'app', 'com.valvesoftware.Steam', '.local', 'share', 'Steam')
+  ]
+  const seenRealPaths = new Set<string>()
+  const out: string[] = []
+  for (const c of candidates) {
+    if (!fs.exists(c)) continue
+    const real = fs.realpath(c)
+    if (seenRealPaths.has(real)) continue
+    seenRealPaths.add(real)
+    out.push(c)
+  }
+  return out
+}
+
 export function findSteamRoot(deps: SteamDeps): string | null {
   const candidates = [
     deps.readRegistry('HKCU\\Software\\Valve\\Steam', 'SteamPath'),
     deps.readRegistry('HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam', 'InstallPath'),
     deps.env['ProgramFiles(x86)'] ? path.join(deps.env['ProgramFiles(x86)']!, 'Steam') : null,
-    deps.env['ProgramFiles'] ? path.join(deps.env['ProgramFiles']!, 'Steam') : null
+    deps.env['ProgramFiles'] ? path.join(deps.env['ProgramFiles']!, 'Steam') : null,
+    ...(deps.linuxRoots?.() ?? [])
   ]
   for (const c of candidates) {
     if (c && deps.fs.exists(path.join(norm(c), 'steamapps'))) return norm(c)
