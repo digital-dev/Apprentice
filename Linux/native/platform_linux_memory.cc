@@ -63,6 +63,26 @@ bool ReadMaps(uint32_t pid, std::vector<linuxproc::MapsEntry>& out) {
 // step: only a query for exactly the address the previous answer ended at, soon
 // after, is served from the cache. Any other query (a random lookup, the first
 // step of a walk) reads maps fresh, so it never sees stale data.
+//
+// No InvalidateRegionCache(pid) hook: closing out a carried TODO, not a gap
+// left open. This cache can go stale the instant something changes the
+// target's memory map (mmap/munmap/mprotect) between a walk's steps, and an
+// explicit InvalidateRegionCache(pid) — clearing g_cache when g_cache.pid ==
+// pid — was proposed back in Task 8 for exactly that. It was carried forward
+// through Tasks 10, 11, 12 and 15 without ever being added, and without ever
+// being needed: every caller that performs mmap/munmap/mprotect on this
+// backend's behalf either bypasses this cached path entirely (AllocateNear/
+// FreeMemory's remote mmap/munmap calls go straight through remote_exec.cc's
+// syscall plumbing, never through QueryRegion) or only ever reads through it
+// (AllocateNear's own candidate search calls QueryRegion read-only, to find
+// free ranges, and never follows a mapping change it caused with another
+// QueryRegion in the same walk). With no caller on either side of that gap,
+// there has been nothing to invalidate for. This is deliberately a comment,
+// not a speculative function: a FUTURE caller that interleaves a cached
+// QueryRegion walk with its own mmap/munmap/mprotect calls — resuming the
+// walk afterward, expecting it to see the new map state — would need
+// InvalidateRegionCache(pid) added then, wired into that caller's own
+// mmap/munmap/mprotect path, not preemptively here.
 struct MapsCache {
   std::mutex mutex;
   bool valid = false;

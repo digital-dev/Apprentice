@@ -403,22 +403,22 @@ describe('encodeConditionalScale', () => {
 
   it('rejects an unknown source register', () => {
     expect(() =>
-      (addon as any).encodeConditionalScale('notareg', 'rcx', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'notareg', 'rcx', '0x1000', '0x1008', '0x1000')
     ).toThrow()
   })
 
   it('rejects an unknown base register', () => {
     expect(() =>
-      (addon as any).encodeConditionalScale('xmm0', 'notareg', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'xmm0', 'notareg', '0x1000', '0x1008', '0x1000')
     ).toThrow()
   })
 
   it('refuses r10 and r11 as the base register — they are this effect\'s own scratch', () => {
     expect(() =>
-      (addon as any).encodeConditionalScale('xmm0', 'r10', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'xmm0', 'r10', '0x1000', '0x1008', '0x1000')
     ).toThrow()
     expect(() =>
-      (addon as any).encodeConditionalScale('xmm0', 'r11', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'xmm0', 'r11', '0x1000', '0x1008', '0x1000')
     ).toThrow()
   })
 
@@ -430,8 +430,8 @@ describe('encodeConditionalScale', () => {
     // no guard/immune test below asks decodeRun to walk their blobs
     // either). The live end-to-end test above is this blob's real proof;
     // this just pins its size against silent drift.
-    const nonExt: string = (addon as any).encodeConditionalScale('xmm0', 'rsi', '0x140000000', '0x1000', '0x2000')
-    const ext: string = (addon as any).encodeConditionalScale('xmm9', 'rsi', '0x140000000', '0x1000', '0x2000')
+    const nonExt: string = (addon as any).encodeConditionalScale(handle, 'xmm0', 'rsi', '0x140000000', '0x1000', '0x2000')
+    const ext: string = (addon as any).encodeConditionalScale(handle, 'xmm9', 'rsi', '0x140000000', '0x1000', '0x2000')
     expect(nonExt.length / 2).toBe(70)
     // xmm8-15 costs one extra REX.R byte at each of the three places
     // srcXmmReg appears: the spill, the reload, and the mulss.
@@ -485,6 +485,7 @@ describe('encodeConditionalScale', () => {
 
       const blobAddress = '0x' + (BigInt(codeAddress) + BigInt(preamble.length / 2)).toString(16)
       const blob: string = (addon as any).encodeConditionalScale(
+        handle,
         'xmm0',
         baseReg,
         resolveAttackerAddr,

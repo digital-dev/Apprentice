@@ -1,6 +1,7 @@
 #include "mono_bridge.h"
 #include "mono_call.h"
 #include "platform/platform.h"
+#include "x64_abi.h"
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -82,8 +83,11 @@ void DetachFromMono(platform::ProcessHandle handle, uintptr_t monoDllBase, const
 // from mono_call.cc's BuildCallStub (which only wraps the OUTER entry
 // RunRemoteCall/CreateRemoteThread already makes ABI-aware). Each nested
 // `call` here needs the SAME per-ABI argument-register convention
-// BuildCallStub already uses, so these three helpers exist once, shared,
-// rather than duplicated by hand in all eight stubs:
+// BuildCallStub already uses, so the three helpers this used to define
+// locally (Gpr, ArgReg, ShadowBytes, EmitMovRegImm64, EmitMovRegReg) now
+// live in x64_abi.h instead, shared with cave_ops.cc's EncodeConditionalScale
+// — see that header for the full rationale of each helper, repeated here
+// only for ArgReg/ShadowBytes's meaning in THIS file's context:
 //
 //   ArgReg(abi, i)     which GPR holds the i'th (0-3) integer/pointer
 //                      argument of the NEXT nested call — Ms64: rcx,rdx,
@@ -99,51 +103,6 @@ void DetachFromMono(platform::ProcessHandle handle, uintptr_t monoDllBase, const
 //                      guarantees uniformly — so 8 is the minimal correct
 //                      adjustment, the same reasoning mono_call.cc's own
 //                      SysV stub already uses).
-//   EmitMovRegImm64/EmitMovRegReg  mov <reg>, imm64 / mov <dst>, <src> for
-//                      any of rax..r15 — written once so a stub's choice
-//                      of register is just a parameter, never a hand-
-//                      picked opcode/REX/ModRM byte. Verified to reproduce
-//                      the exact bytes every existing hand-written Ms64
-//                      instance in this file already uses (see the comment
-//                      blocks above each stub below), and — since every
-//                      register 0-15 needs only a REX bit flip, never an
-//                      extra byte, when every operation here is already
-//                      64-bit (REX.W=1, so a REX prefix is always present
-//                      regardless of which register is named) — substituting
-//                      a different register NEVER changes an instruction's
-//                      length. That is what lets every hand-counted rel8/
-//                      rel32 jump offset elsewhere in this file stay valid,
-//                      unchanged, for the SysV variant too: the SysV branch
-//                      only ever swaps WHICH register a value goes into,
-//                      never how many bytes that takes.
-enum class Gpr : uint8_t {
-  Rax = 0, Rcx = 1, Rdx = 2, Rbx = 3, Rsp = 4, Rbp = 5, Rsi = 6, Rdi = 7,
-  R8 = 8, R9 = 9, R10 = 10, R11 = 11, R12 = 12, R13 = 13, R14 = 14, R15 = 15,
-};
-
-Gpr ArgReg(platform::Abi abi, int index) {
-  static const Gpr kMs64[4] = {Gpr::Rcx, Gpr::Rdx, Gpr::R8, Gpr::R9};
-  static const Gpr kSysV[4] = {Gpr::Rdi, Gpr::Rsi, Gpr::Rdx, Gpr::Rcx};
-  return abi == platform::Abi::Ms64 ? kMs64[index] : kSysV[index];
-}
-
-uint8_t ShadowBytes(platform::Abi abi) { return abi == platform::Abi::Ms64 ? 0x28 : 0x08; }
-
-void EmitMovRegImm64(std::vector<uint8_t>& out, Gpr reg, uintptr_t imm) {
-  uint8_t r = static_cast<uint8_t>(reg);
-  out.push_back(static_cast<uint8_t>(0x48 | ((r >> 3) & 1)));  // REX.W [+ REX.B]
-  out.push_back(static_cast<uint8_t>(0xB8 + (r & 7)));          // MOV r64, imm64
-  for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-}
-
-void EmitMovRegReg(std::vector<uint8_t>& out, Gpr dst, Gpr src) {
-  uint8_t d = static_cast<uint8_t>(dst), s = static_cast<uint8_t>(src);
-  uint8_t rex = static_cast<uint8_t>(0x48 | (((s >> 3) & 1) << 2) | ((d >> 3) & 1));  // REX.W, R=src, B=dst
-  uint8_t modrm = static_cast<uint8_t>(0xC0 | ((s & 7) << 3) | (d & 7));              // mod=11, reg=src, rm=dst
-  out.push_back(rex);
-  out.push_back(0x89);  // MOV r/m64, r64
-  out.push_back(modrm);
-}
 
 // Forward-declared here, defined below alongside BuildAssemblyCollectorStub
 // (which it's built from) — MonoResolveClassWorker needs it and is defined

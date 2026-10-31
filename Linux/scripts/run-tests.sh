@@ -15,6 +15,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+# Refuse to run directly against a Windows-mounted checkout (anywhere under
+# /mnt/, WSL's mount point for C:\, D:\, etc.) — this script writes a Linux
+# ELF native/build/Release/memory_addon.node in place, and running it here
+# once overwrote the Windows-built .node file that way, breaking the Windows
+# build until a clean rebuild fixed it (SDD ledger, Task 12). Always go
+# through build-in-wsl.sh/build-in-docker.sh instead: both rsync the sources
+# into a WSL-native/container-native copy (BUILD_DIR, default
+# ~/apprentice-build) first and run this script from there.
+case "$PWD" in
+  /mnt/*) echo "refusing to build/test in \"$PWD\": that is a Windows-mounted checkout. Run via Linux/scripts/build-in-wsl.sh or build-in-docker.sh instead." >&2; exit 1 ;;
+esac
+
 # The one Wine environment of this script (keep in step with wineEnv() in tests/helpers/spawnHarness.ts).
 # Exports the resolved APPRENTICE_WINEPREFIX too, so the tests use the same prefix.
 wine_env() {

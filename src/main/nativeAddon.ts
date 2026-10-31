@@ -220,13 +220,19 @@ export const nativeAddon = {
   // nothing — see cave_ops.cc's EncodeScale comment.
   encodeScale: (sourceXmmRegister: string, atAddress: string, slotAddress: string): string =>
     addon.encodeScale(sourceXmmRegister, atAddress, slotAddress),
+  // `handle` lets the native side resolve methodAddress's own module and
+  // therefore its calling convention (Ms64 vs SysV) — see cave_ops.cc's
+  // EncodeConditionalScale comment for why the "this" argument's register
+  // must track the GAME's own ABI rather than being hardcoded to RCX.
   encodeConditionalScale: (
+    handle: number,
     sourceXmmRegister: string,
     baseRegister: string,
     methodAddress: string,
     atAddress: string,
     slotAddress: string
-  ): string => addon.encodeConditionalScale(sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress),
+  ): string =>
+    addon.encodeConditionalScale(handle, sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress),
   encodeCaptureOnce: (baseRegister: string, atAddress: string, slotAddress: string): string =>
     addon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   // The guard prefix for a shared write: compares the object register

@@ -220,20 +220,24 @@ namespace {
 constexpr uintptr_t kResultOffset = 0;
 constexpr uintptr_t kCodeOffset = 16;
 
-// `function`'s own ABI, used by the two callers (RemoteCallWorker and
-// RemoteCallFloatWorker below) that only ever get a bare function address
-// from JS, with no module base of their own to hand RunRemoteCall the way
-// mono_bridge.cc does (it already knows monoDllBase at every call site and
-// calls platform::PlatformAbiFor on that directly). Finds the loaded
-// module `function` falls inside via the same ListModuleRanges scan
-// pointer.cc's FindContainingModule already uses for pointer chains, and
-// resolves that module's ABI. When `function` isn't inside any known
-// module at all — most commonly a scratch cave AllocateNear carved out
-// right next to one, as cave_ops.test.ts's "scales xmm0..." test does for
+} // namespace
+
+// `function`'s own ABI, used by callers (RemoteCallWorker/RemoteCallFloatWorker
+// below, and cave_ops.cc's EncodeConditionalScale) that only ever get a bare
+// function address from JS, with no module base of their own to hand
+// RunRemoteCall the way mono_bridge.cc does (it already knows monoDllBase at
+// every call site and calls platform::PlatformAbiFor on that directly). Finds
+// the loaded module `function` falls inside via the same ListModuleRanges
+// scan pointer.cc's FindContainingModule already uses for pointer chains, and
+// resolves that module's ABI. When `function` isn't inside any known module
+// at all — most commonly a scratch cave AllocateNear carved out right next to
+// one, as cave_ops.test.ts's "scales xmm0..." test does for
 // callRemoteFunctionFloat — falls back to the process's own main module:
 // every target this addon attaches to has exactly one ABI for its native
 // code, so the main module's ABI is the right answer whenever a more
-// specific one can't be found.
+// specific one can't be found. Declared in mono_call.h (not kept anonymous
+// here) so cave_ops.cc can resolve the same way rather than duplicating this
+// scan.
 platform::Abi ResolveAbiForFunction(platform::ProcessHandle handle, uintptr_t function) {
   std::vector<platform::ModuleRange> mods;
   if (platform::ListModuleRanges(handle, mods)) {
@@ -245,8 +249,6 @@ platform::Abi ResolveAbiForFunction(platform::ProcessHandle handle, uintptr_t fu
   }
   return platform::PlatformAbiFor(handle, platform::MainModuleBase(handle));
 }
-
-} // namespace
 
 bool RunRemoteCall(platform::ProcessHandle handle, platform::Abi abi, uintptr_t function,
                     const std::vector<uintptr_t>& args, uint8_t result[8],

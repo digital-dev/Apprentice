@@ -22,6 +22,16 @@ std::vector<uint8_t> BuildCallStub(platform::Abi abi, uintptr_t function,
                                     const std::vector<uintptr_t>& args,
                                     uintptr_t resultAddress);
 
+// Resolves the calling convention `function`'s own module uses: finds the
+// loaded module containing `function` and returns its ABI, falling back to
+// the process's main module if `function` isn't inside any known module
+// (e.g. a scratch cave). See the definition in mono_call.cc for the full
+// rationale. Exposed here so any caller that only has a bare function
+// address and a process handle — cave_ops.cc's EncodeConditionalScale among
+// them — can resolve the same way RemoteCallWorker/RemoteCallFloatWorker do,
+// rather than re-implementing the ListModuleRanges scan.
+platform::Abi ResolveAbiForFunction(platform::ProcessHandle handle, uintptr_t function);
+
 // Builds the call stub, writes it into a fresh cave near `function`, runs it
 // on a throwaway remote thread, and reads back its 8-byte return value into
 // `result`. False on any failure (including a timed-out thread — see the

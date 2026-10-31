@@ -746,8 +746,20 @@ const patchOps: PatchOps = {
     nativeAddon.encodeStoreRegister(destRegister, offset, sourceRegister),
   encodeScale: (sourceXmmRegister, atAddress, slotAddress) =>
     nativeAddon.encodeScale(sourceXmmRegister, atAddress, slotAddress),
+  // attachedHandle lets the native encoder resolve methodAddress's own ABI
+  // (Ms64 vs SysV) rather than assuming Ms64 — see nativeAddon.ts/
+  // cave_ops.cc. Falls back to 0 when nothing is attached; the native side
+  // then resolves via the (nonexistent) main module, same as any other
+  // encode* call made with no attachment.
   encodeConditionalScale: (sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress) =>
-    nativeAddon.encodeConditionalScale(sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress),
+    nativeAddon.encodeConditionalScale(
+      attachedHandle ?? 0,
+      sourceXmmRegister,
+      baseRegister,
+      methodAddress,
+      atAddress,
+      slotAddress
+    ),
   encodeCaptureOnce: (baseRegister, atAddress, slotAddress) =>
     nativeAddon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   encodeGuardedSkip: (baseRegister, atAddress, slotAddress, returnAddress) =>
