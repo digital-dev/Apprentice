@@ -1,0 +1,26 @@
+# pacman .install hook: sourced and the matching function called, not run
+# as a standalone script (unlike Linux/packaging/after-install.sh, the
+# deb's fpm --after-install, which fpm execs directly) — but the same
+# idempotency/exit-0 discipline applies: a system without setcap (no
+# libcap/libcap2-bin), or a filesystem that doesn't support file
+# capabilities, must never fail or roll back the package transaction.
+# Linux/README.md documents the sysctl fallback for exactly this case.
+
+_apprentice_setcap() {
+  if command -v setcap >/dev/null 2>&1; then
+    setcap cap_sys_ptrace+ep /opt/apprentice/apprentice || \
+      echo "note: setcap on /opt/apprentice/apprentice failed; see Linux/README.md for the sysctl fallback" >&2
+  else
+    echo "note: setcap not found (pacman -S libcap) — Apprentice will need" \
+      "kernel.yama.ptrace_scope=0 to attach to games; see Linux/README.md" >&2
+  fi
+  return 0
+}
+
+post_install() {
+  _apprentice_setcap
+}
+
+post_upgrade() {
+  _apprentice_setcap
+}

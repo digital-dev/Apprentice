@@ -219,6 +219,16 @@ jobs:
       - name: Smoke-test the packaged AppImage
         run: bash Linux/scripts/smoke-package.sh
 
+      # Arch/CachyOS tarball (Linux/packaging/arch/PKGBUILD packages this):
+      # electron-builder's "dir" target output, tarred up. Reuses the addon
+      # and app bundle already built above for the AppImage/deb targets, so
+      # no second build step. Not smoke-tested here (Linux/scripts/
+      # smoke-arch.sh needs an archlinux:latest container, which pacman
+      # bootstrapping makes too slow to add to every CI run) — it stays a
+      # locally/Docker-run check, same as build-in-docker.sh already is.
+      - name: Package Arch/CachyOS tarball
+        run: bash Linux/scripts/package-arch.sh
+
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
@@ -226,6 +236,7 @@ jobs:
           path: |
             Linux/dist/*.AppImage
             Linux/dist/*.deb
+            Linux/dist/*.tar.gz
           retention-days: 3
 
   release:
@@ -325,7 +336,7 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         run: |
           cd release/linux
-          sha256sum *.AppImage *.deb > SHA256SUMS.txt
+          sha256sum *.AppImage *.deb *.tar.gz > SHA256SUMS.txt
           ls -l .
 
       - name: Upload the installer (dry run)
@@ -338,6 +349,7 @@ jobs:
             release/SHA256SUMS.txt
             release/linux/*.AppImage
             release/linux/*.deb
+            release/linux/*.tar.gz
             release/linux/SHA256SUMS.txt
           retention-days: 3
 
@@ -358,4 +370,4 @@ jobs:
             --generate-notes \
             $FLAGS \
             "$INSTALLER" release/SHA256SUMS.txt \
-            release/linux/*.AppImage release/linux/*.deb release/linux/SHA256SUMS.txt
+            release/linux/*.AppImage release/linux/*.deb release/linux/*.tar.gz release/linux/SHA256SUMS.txt
