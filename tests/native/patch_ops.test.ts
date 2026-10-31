@@ -183,6 +183,26 @@ describe('writeBytes refuses a write straddling a page boundary', () => {
   })
 })
 
+describe('writeBytes straddling into an unmapped page', () => {
+  it('rejects a write straddling into an unmapped page without partial effect', () => {
+    // Walk the harness image's contiguous mapped regions from its base to
+    // the first free one: the byte just before that is the last mapped byte,
+    // so a 16-byte write 8 bytes before it spills into unmapped memory.
+    let end = BigInt(baseAddress)
+    for (;;) {
+      const r = (addon as any).platformQueryRegion(handle, '0x' + end.toString(16))
+      if (!r || r.free) break
+      end += BigInt(r.size)
+    }
+    const start = '0x' + (end - 8n).toString(16)
+    const before = (addon as any).readBytes(handle, start, 8)
+
+    expect((addon as any).writeBytes(handle, start, 'aa'.repeat(16))).toBe(false)
+
+    expect((addon as any).readBytes(handle, start, 8)).toBe(before)
+  })
+})
+
 describe('readBytes on an unreadable address', () => {
   it('throws instead of returning garbage', () => {
     // Low, unmapped addresses in the target's address space are never

@@ -2,7 +2,7 @@
 #include "aob.h"
 #include "protected_write.h"
 #include "process_utils.h"
-#include <windows.h>
+#include "platform/platform.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -77,7 +77,7 @@ std::string ToHexAddr(uintptr_t addr) {
 // `rangeStart`/`rangeEnd` are inclusive-exclusive bounds. rangeEnd == 0
 // means "no upper bound", which is how an unbounded call arrives here — the
 // existing behaviour, byte for byte.
-std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& pattern,
+std::vector<uintptr_t> RunScanAob(platform::ProcessHandle h, const std::vector<PatternByte>& pattern,
                                    uintptr_t rangeStart, uintptr_t rangeEnd) {
   std::vector<uintptr_t> out;
   const size_t plen = pattern.size();
@@ -90,18 +90,14 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
   // runtime size, so it gets a runtime guard.
   if (plen == 0) return out;
 
-  MEMORY_BASIC_INFORMATION mbi;
+  platform::Region mbi;
   uintptr_t addr = rangeStart;
-  while (VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
-    uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+  while (platform::QueryRegion(h, addr, mbi)) {
+    uintptr_t regionBase = mbi.base;
     if (rangeEnd != 0 && regionBase >= rangeEnd) break;
 
-    bool executable = (mbi.State == MEM_COMMIT) &&
-        (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
-        !(mbi.Protect & PAGE_GUARD);
-
-    if (executable && mbi.RegionSize >= plen) {
-      const size_t regionSize = (size_t)mbi.RegionSize;
+    if (mbi.executable && mbi.size >= plen) {
+      const size_t regionSize = mbi.size;
       const size_t overlap = plen - 1;
       std::vector<uint8_t> buffer(std::min(regionSize, kChunkSize + overlap));
 
@@ -111,12 +107,13 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
         // offset is still complete in the buffer.
         const size_t scanSpan = std::min(kChunkSize, regionSize - chunkOffset);
         const size_t readLen = std::min(kChunkSize + overlap, regionSize - chunkOffset);
-        SIZE_T bytesRead = 0;
-        if (!ReadProcessMemory(h, (LPCVOID)(regionBase + chunkOffset), buffer.data(), readLen,
-                               &bytesRead) ||
-            bytesRead < plen) {
+        // Exact-length read only: a short read is treated as a failed
+        // chunk (skipped), as it effectively was before, since a partial
+        // read of a committed region does not occur in practice.
+        if (!platform::ReadMemory(h, regionBase + chunkOffset, buffer.data(), readLen)) {
           continue;
         }
+        const size_t bytesRead = readLen;
         for (size_t offset = 0; offset < scanSpan && offset + plen <= bytesRead; offset++) {
           bool match = true;
           for (size_t k = 0; k < plen; k++) {
@@ -133,7 +130,7 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
       }
     }
 
-    uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+    uintptr_t next = mbi.base + mbi.size;
     if (next <= addr) break; // guard against non-advancing regions
     addr = next;
   }
@@ -145,7 +142,7 @@ std::vector<uintptr_t> RunScanAob(HANDLE h, const std::vector<PatternByte>& patt
 // blocking the entire Electron app.
 class ScanAobWorker : public Napi::AsyncWorker {
  public:
-  ScanAobWorker(Napi::Env env, HANDLE handle, std::vector<PatternByte> pattern,
+  ScanAobWorker(Napi::Env env, platform::ProcessHandle handle, std::vector<PatternByte> pattern,
                 uintptr_t rangeStart, uintptr_t rangeEnd)
       : Napi::AsyncWorker(env),
         handle_(handle),
@@ -184,7 +181,7 @@ class ScanAobWorker : public Napi::AsyncWorker {
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
  private:
-  HANDLE handle_;
+  platform::ProcessHandle handle_;
   std::vector<PatternByte> pattern_;
   uintptr_t rangeStart_;
   uintptr_t rangeEnd_;
@@ -196,8 +193,8 @@ class ScanAobWorker : public Napi::AsyncWorker {
 
 Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  platform::ProcessHandle h =
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value());
   uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
   size_t length = static_cast<size_t>(info[2].As<Napi::Number>().Uint32Value());
   // ToBoolean() coerces rather than throwing, so a caller that explicitly
@@ -214,8 +211,7 @@ Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
   }
 
   std::vector<uint8_t> buffer(length);
-  SIZE_T read = 0;
-  if (!ReadProcessMemory(h, (LPCVOID)address, buffer.data(), length, &read) || read != length) {
+  if (!platform::ReadMemory(h, address, buffer.data(), length)) {
     Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -237,8 +233,8 @@ Napi::Value ReadBytes(const Napi::CallbackInfo& info) {
 // page rather than refusing it.
 Napi::Value WriteBytes(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  platform::ProcessHandle h =
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value());
   uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
   std::string hex = info[2].As<Napi::String>().Utf8Value();
 
@@ -251,12 +247,12 @@ Napi::Value WriteBytes(const Napi::CallbackInfo& info) {
 
 Napi::Value ScanAob(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  platform::ProcessHandle h =
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value());
   // Same reasoning as scanFirst/scanNext in scanner.cc: a dead handle would
   // otherwise just walk to zero hits, indistinguishable from a real "not
   // found in this process".
-  if (!IsProcessAlive(reinterpret_cast<uintptr_t>(h))) {
+  if (!IsProcessAlive(h)) {
     Napi::Error::New(env, "process is no longer running (it may have crashed or exited) — re-attach")
         .ThrowAsJavaScriptException();
     return env.Null();

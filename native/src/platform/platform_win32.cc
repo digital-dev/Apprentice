@@ -114,6 +114,15 @@ bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size)
          read == size;
 }
 
+uintptr_t PageSize() {
+  static const uintptr_t pageSize = [] {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return static_cast<uintptr_t>(si.dwPageSize);
+  }();
+  return pageSize;
+}
+
 // Writing into a live process's CODE, which normally sits on read-execute
 // pages: temporarily make the page writable, write, put the original
 // protection back, then flush the target's instruction cache so the CPU
@@ -132,11 +141,7 @@ bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size
   // captured instruction, so a straddling range is an anomaly: refuse it
   // rather than add per-page VirtualQueryEx/restore machinery for a case
   // that should not arise in normal use.
-  static const uintptr_t pageSize = [] {
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    return static_cast<uintptr_t>(si.dwPageSize);
-  }();
+  const uintptr_t pageSize = PageSize();
   uintptr_t firstPage = address & ~(pageSize - 1);
   uintptr_t lastPage = (address + size - 1) & ~(pageSize - 1);
   if (firstPage != lastPage) return false;

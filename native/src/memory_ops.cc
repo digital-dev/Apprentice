@@ -71,9 +71,7 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
   // The DATA variant specifically: an 8-byte value landing in the last few
   // bytes of a page must keep working, as it always did before this dance
   // existed. See protected_write.h.
-  // ProtectedDataWrite still takes a Win32 HANDLE (a void*) until the
-  // write-side files move to platform::; cast at this one boundary.
-  bool ok = ProtectedDataWrite(reinterpret_cast<void*>(h), *addr, buf, specOpt->size);
+  bool ok = ProtectedDataWrite(h, *addr, buf, specOpt->size);
   return Napi::Boolean::New(env, ok);
 }
 

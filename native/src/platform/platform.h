@@ -108,6 +108,8 @@ bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size)
 // protection dance their OS requires and leave protection as they found it.
 bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size_t size);
 bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out);
+// The OS page size, in bytes (a power of two). Cached.
+uintptr_t PageSize();
 // Returns 0 on failure. `nearAddr` matters: a 5-byte relative jump reaches
 // ±2GB, so an allocation outside that range is useless to the caller.
 // (Named `nearAddr` rather than `near`: windows.h's windef.h defines `near`
