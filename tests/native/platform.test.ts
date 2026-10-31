@@ -62,7 +62,7 @@ describe('process and region primitives', () => {
     )
   })
 
-  it.runIf(process.platform === 'win32')('reports writable regions', async () => {
+  it('reports writable regions', async () => {
     const { handle } = a.attach(harness.pid)
     const candidates = await a.scanFirst(handle, 'int32', 100)
     expect(candidates.length).toBeGreaterThan(0)

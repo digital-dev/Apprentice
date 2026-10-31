@@ -10,17 +10,38 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 gcc -O0 -g -pthread -rdynamic -o Linux/test-harness/harness Linux/test-harness/harness.c -ldl
+# Probe libraries the harness dlopen()s (loaddll/loaddll2): same exports as the PE probes;
+# PAD_SIZE differs so probe2 is the "updated game" variant with a different image size.
+gcc -shared -fPIC -O0 -DPAD_SIZE=4096   -o Linux/test-harness/probe.so  Linux/test-harness/probe.c
+gcc -shared -fPIC -O0 -DPAD_SIZE=262144 -o Linux/test-harness/probe2.so Linux/test-harness/probe.c
 
 # Pure parser tests first: no Node, no addon, fail fast.
 g++ -std=c++17 -O0 -g -Wall -o Linux/native/tests/proc_parse_test Linux/native/tests/proc_parse_test.cc
 (cd Linux/native/tests && ./proc_parse_test)
+
+# PE/ELF parser tests. The ELF fixtures are built here (three ways, so every
+# symbol-count path is hit) rather than checked in as binaries; the PE fixtures
+# are checked-in copies of test-harness/*.dll. ASan/UBSan catch any out-of-bounds
+# use inside the parsers, which read untrusted target memory.
+F=Linux/native/tests/fixtures
+gcc -shared -fPIC -Wl,--hash-style=gnu  -o $F/elf_gnu.so  $F/elf_fixture.c
+gcc -shared -fPIC -Wl,--hash-style=sysv -o $F/elf_sysv.so $F/elf_fixture.c
+gcc -shared -fPIC -Wl,--hash-style=both -o $F/elf_both.so $F/elf_fixture.c
+g++ -std=c++17 -O0 -g -Wall -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+  -o Linux/native/tests/module_parse_test Linux/native/tests/module_parse_test.cc -ldl
+(cd Linux/native/tests && ./module_parse_test)
 
 (cd native && npx node-gyp configure --target="${NODE_GYP_TARGET:-22.12.0}" \
   && npx node-gyp build --target="${NODE_GYP_TARGET:-22.12.0}")
 
 if [ -n "${TEST_NODE_BIN:-}" ]; then export PATH="$TEST_NODE_BIN:$PATH"; fi
 if [ "$#" -eq 0 ]; then
-  set -- tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
+  # Grows as the Linux backend lands. Not yet: memory_ops/patch_ops/script_ops/cave_ops (writes),
+  # write_watch/signature_golden/snapshot_ops (ptrace), thread_ops, mono_*.
+  set -- tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts \
+    tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts \
+    tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts \
+    tests/native/linux_memory.test.ts
 fi
 node -v
 npx vitest run "$@"

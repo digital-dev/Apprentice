@@ -43,18 +43,22 @@ describe('attach', () => {
   })
 })
 
+// A system library every harness has loaded: kernel32.dll on Windows, glibc on Linux.
+const MAIN_NAME = process.platform === 'win32' ? 'harness.exe' : 'harness'
+const SYSTEM_LIB = process.platform === 'win32' ? 'kernel32.dll' : 'libc.so.6'
+
 describe('getModuleBase (lightweight module lookup)', () => {
-  it('matches attach baseAddress for the main module and listModules for kernel32.dll', () => {
+  it('matches attach baseAddress for the main module and listModules for a system library', () => {
     const { handle, baseAddress } = (addon as any).attach(harness.pid)
     try {
-      expect((addon as any).getModuleBase(handle, 'harness.exe')).toBe(baseAddress)
+      expect((addon as any).getModuleBase(handle, MAIN_NAME)).toBe(baseAddress)
       // case-insensitive name match, as before
-      expect((addon as any).getModuleBase(handle, 'HARNESS.EXE')).toBe(baseAddress)
+      expect((addon as any).getModuleBase(handle, MAIN_NAME.toUpperCase())).toBe(baseAddress)
       const k32 = ((addon as any).listModules(handle) as { name: string; base: string }[]).find(
-        (m) => m.name.toLowerCase() === 'kernel32.dll',
+        (m) => m.name.toLowerCase() === SYSTEM_LIB,
       )
       expect(k32).toBeDefined()
-      expect((addon as any).getModuleBase(handle, 'kernel32.dll')).toBe(k32!.base)
+      expect((addon as any).getModuleBase(handle, SYSTEM_LIB)).toBe(k32!.base)
       expect((addon as any).getModuleBase(handle, 'no-such-module.dll')).toBeNull()
     } finally {
       ;(addon as any).detach(handle)

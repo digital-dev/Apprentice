@@ -140,6 +140,8 @@ jobs:
       - name: Build harness and native addon
         run: |
           gcc -O0 -g -pthread -rdynamic -o Linux/test-harness/harness Linux/test-harness/harness.c -ldl
+          gcc -shared -fPIC -O0 -DPAD_SIZE=4096   -o Linux/test-harness/probe.so  Linux/test-harness/probe.c
+          gcc -shared -fPIC -O0 -DPAD_SIZE=262144 -o Linux/test-harness/probe2.so Linux/test-harness/probe.c
           cd native
           npx node-gyp configure --target=22.12.0
           npx node-gyp build --target=22.12.0
@@ -152,7 +154,11 @@ jobs:
         run: |
           g++ -std=c++17 -O0 -g -Wall -o Linux/native/tests/proc_parse_test Linux/native/tests/proc_parse_test.cc
           (cd Linux/native/tests && ./proc_parse_test)
-          npx vitest run tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
+          F=Linux/native/tests/fixtures
+          for h in gnu sysv both; do gcc -shared -fPIC -Wl,--hash-style=$h -o $F/elf_$h.so $F/elf_fixture.c; done
+          g++ -std=c++17 -O0 -g -Wall -fsanitize=address,undefined -fno-sanitize-recover=undefined -o Linux/native/tests/module_parse_test Linux/native/tests/module_parse_test.cc -ldl
+          (cd Linux/native/tests && ./module_parse_test)
+          npx vitest run tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts tests/native/linux_memory.test.ts
 
   release:
     name: Publish release

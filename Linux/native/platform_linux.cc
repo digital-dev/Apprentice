@@ -23,28 +23,18 @@ bool IsSupported() { return false; }
 const char* Name() { return "linux"; }
 
 // ListProcesses, OpenProcess, CloseProcess, IsAlive and MainModuleBase live in
-// platform_linux_process.cc.
+// platform_linux_process.cc; ReadMemory, QueryRegion, PageSize, ListModules,
+// ListModuleRanges and ResolveExport in platform_linux_memory.cc.
 // Stub; a later task replaces this with a real ABI probe.
 Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::SysV; }
 
-bool ListModuleRanges(ProcessHandle, std::vector<ModuleRange>&) { return false; }
-bool ReadMemory(ProcessHandle, uintptr_t, void*, size_t) { return false; }
 bool WriteMemory(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
 bool WriteMemoryUnprotected(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
-bool QueryRegion(ProcessHandle, uintptr_t, Region&) { return false; }
-uintptr_t PageSize() { return 4096; }
 uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }
 bool FreeMemory(ProcessHandle, uintptr_t) { return false; }
 bool SuspendAll(ProcessHandle, uint32_t) { return false; }
 void ResumeAll() {}
 void SleepMs(uint32_t) {}
-bool ListModules(ProcessHandle, std::vector<ModuleInfo>& out) {
-  out.clear();
-  return false;
-}
-uintptr_t ResolveExport(ProcessHandle, uintptr_t, const std::string&) {
-  return 0;
-}
 ThreadHandle CreateRemoteThread(ProcessHandle, uintptr_t, uintptr_t) { return 0; }
 bool WaitForRemoteThread(ThreadHandle, uint32_t) { return false; }
 void CloseRemoteThread(ThreadHandle) {}

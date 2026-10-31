@@ -44,10 +44,13 @@ harness are copied to `Linux/dist/`. The checkout's own `node_modules` and `nati
 
 ## Status
 
-The Linux backend is partly implemented: process listing, naming (Wine-aware), attach and liveness work from `/proc`; everything else is still a stub. The addon builds and loads,
-`IsSupported()` is false, and memory operations refuse. Only
-`addon_smoke`, `spawnHarness` and `platform` (tests/native) run on
-Linux; the rest need the real backend.
+The Linux backend is partly implemented. Done: process listing, naming (Wine-aware), attach and
+liveness (`/proc`), and the whole read side: regions (`/proc/<pid>/maps`), memory reads
+(`process_vm_readv`, `/proc/<pid>/mem` fallback), module listing (ELF and Wine PE) and export
+resolution (PE export directory, ELF `.dynsym`). Writes, injection, threads, ptrace write-watch and
+Mono are still stubs, `IsSupported()` is false, and write operations refuse. The tests that need
+only the read side run on Linux (the list in `scripts/run-tests.sh`); the rest need the later tasks.
+The PE/ELF parsers are covered by `native/tests/module_parse_test.cc`.
 
 ## ptrace permissions
 

@@ -75,7 +75,7 @@
       },
       "conditions": [
         ["OS=='win'", { "sources": [ "src/platform/platform_win32.cc" ], "libraries": ["-lpsapi.lib", "-lversion.lib"] }],
-        ["OS=='linux'", { "sources": [ "../Linux/native/platform_linux.cc", "../Linux/native/platform_linux_process.cc" ], "defines": ["LUA_USE_LINUX"], "cflags_cc": ["-std=c++17", "-fexceptions"], "libraries": ["-ldl", "-lm"] }]
+        ["OS=='linux'", { "sources": [ "../Linux/native/platform_linux.cc", "../Linux/native/platform_linux_process.cc", "../Linux/native/platform_linux_memory.cc" ], "defines": ["LUA_USE_LINUX"], "cflags_cc": ["-std=c++17", "-fexceptions"], "libraries": ["-ldl", "-lm"] }]
       ]
     }
   ]

@@ -3,7 +3,10 @@
 // be unit-tested against fixtures (tests/proc_parse_test.cc).
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <map>
 #include <string>
+#include <vector>
 #include <strings.h>
 
 namespace linuxproc {
@@ -110,6 +113,110 @@ inline uintptr_t LowestMappingBase(const std::string& mapsText, const std::strin
     pos = nl + 1;
   }
   return lowest;
+}
+
+// All entries of a /proc/<pid>/maps text, in file order. Malformed lines are
+// skipped. The kernel emits the file sorted by address, but one read() chunk at
+// a time, so a mapping change between chunks can leave overlaps or disorder:
+// `consistent` is false then and callers re-read.
+inline std::vector<MapsEntry> ParseMaps(const std::string& mapsText, bool* consistent = nullptr) {
+  std::vector<MapsEntry> v;
+  bool ok = true;
+  size_t pos = 0;
+  while (pos < mapsText.size()) {
+    size_t nl = mapsText.find('\n', pos);
+    if (nl == std::string::npos) nl = mapsText.size();
+    MapsEntry m;
+    if (ParseMapsLine(mapsText.substr(pos, nl - pos), m) && m.end > m.start) {
+      if (!v.empty() && m.start < v.back().end) ok = false;
+      v.push_back(std::move(m));
+    }
+    pos = nl + 1;
+  }
+  if (consistent) *consistent = ok;
+  return v;
+}
+
+// The region containing an address, in the shape platform::Region needs.
+// `end` is one past the last byte; a gap between mappings is `free`.
+struct RegionAnswer {
+  uintptr_t base = 0, end = 0;
+  bool free = false, r = false, w = false, x = false;
+};
+
+// Top of x86-64 user space; gaps are never reported above it.
+constexpr uintptr_t kUserSpaceEnd = (uintptr_t)0x800000000000ull;
+
+// `entries` must be sorted and non-overlapping (ParseMaps' `consistent`).
+// A gap reports the gap itself (from the previous mapping's end, or 0, up to the
+// next mapping's start, or the top of user space). False for an address past
+// the last mapping when that is already above user space (the [vsyscall] page
+// sits at the very top), so a caller walking regions upward terminates.
+inline bool QueryMaps(const std::vector<MapsEntry>& entries, uintptr_t address, RegionAnswer& out) {
+  uintptr_t prevEnd = 0;
+  for (const MapsEntry& e : entries) {
+    if (address < e.start) {
+      out = RegionAnswer{};
+      out.base = prevEnd;
+      out.end = e.start;
+      out.free = true;
+      return true;
+    }
+    if (address < e.end) {
+      out = RegionAnswer{};
+      out.base = e.start;
+      out.end = e.end;
+      out.r = e.r;
+      out.w = e.w;
+      out.x = e.x;
+      return true;
+    }
+    prevEnd = e.end;
+  }
+  if (address < kUserSpaceEnd && prevEnd < kUserSpaceEnd) {
+    out = RegionAnswer{};
+    out.base = prevEnd;
+    out.end = kUserSpaceEnd;
+    out.free = true;
+    return true;
+  }
+  return false;
+}
+
+// Paths in maps that are real files worth calling modules: not [heap]/[stack]/
+// [vdso], not anonymous, and not the pseudo-files shared memory shows up as.
+inline bool IsModulePath(const std::string& path) {
+  if (path.empty() || path[0] != '/') return false;
+  static const char* const kSkip[] = {"/dev/", "/memfd:", "/SYSV", "/proc/", "/sys/"};
+  for (const char* p : kSkip)
+    if (path.compare(0, strlen(p), p) == 0) return false;
+  return true;
+}
+
+// One file's mappings folded together: lowest start to highest end.
+struct ModuleSpan {
+  std::string path;
+  uintptr_t base = 0, end = 0;
+};
+
+// File-backed mappings grouped by full path, in order of each file's lowest
+// address (first appearance in sorted maps).
+inline std::vector<ModuleSpan> GroupModules(const std::vector<MapsEntry>& entries) {
+  std::vector<ModuleSpan> out;
+  std::map<std::string, size_t> index;
+  for (const MapsEntry& e : entries) {
+    if (!IsModulePath(e.path)) continue;
+    auto it = index.find(e.path);
+    if (it == index.end()) {
+      index.emplace(e.path, out.size());
+      out.push_back({e.path, e.start, e.end});
+    } else {
+      ModuleSpan& m = out[it->second];
+      if (e.start < m.base) m.base = e.start;
+      if (e.end > m.end) m.end = e.end;
+    }
+  }
+  return out;
 }
 
 // State letter from /proc/<pid>/stat. comm (field 2) may contain spaces and

@@ -5,16 +5,21 @@
 // Differences from the Windows harness (all documented, none silent):
 //   * mmap/mprotect replace VirtualAlloc/VirtualProtect; pthreads replace
 //     _beginthreadex; usleep replaces Sleep.
-//   * loadmono/loaddll/loaddll2 expect probe_mono.so/probe.so/probe2.so,
-//     which are not built here yet (the Windows probes are PE DLLs). Without
-//     the .so the command answers ERR, the same answer the Windows harness
-//     gives when its DLL is missing. unloaddll/unloadmono/probewrite stay
-//     valid no-ops.
+//   * loadmono/loaddll/loaddll2 expect probe_mono.so/probe.so/probe2.so. run-tests.sh
+//     builds probe.so and probe2.so (Linux/test-harness/probe.c); probe_mono.so does
+//     not exist yet (the Mono tests are expected to fail on Linux). Without the .so
+//     the command answers ERR, the same answer the Windows harness gives when its
+//     DLL is missing. unloaddll/unloadmono/probewrite stay valid no-ops.
+//   * loaddll/loaddll2/loadmono answer with the library's LOAD BASE (the lowest
+//     address of its mappings, link_map l_addr), as the Windows harness answers
+//     with the HMODULE, which is the same thing. dlopen's own handle is an opaque
+//     pointer and is not what tests compare against ListModules.
 //   * RemoteThreadProbe/RemoteCallProbe2 are exported (build uses -rdynamic)
 //     with the SysV ABI; no __stdcall on Linux.
 // Build: gcc -O0 -g -pthread -rdynamic -o harness harness.c -ldl
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <link.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -83,6 +88,13 @@ static void (*g_probe_write)(float*, float) = NULL;
 static float g_probe_target = 5.0f;
 
 static void sleep_ms(unsigned ms) { usleep(ms * 1000u); }
+
+// Load base of a dlopen()ed library (0 if it cannot be found).
+static uintptr_t load_base(void* handle) {
+  struct link_map* lm = NULL;
+  if (dlinfo(handle, RTLD_DI_LINKMAP, &lm) != 0 || lm == NULL) return 0;
+  return (uintptr_t)lm->l_addr;
+}
 
 // Non-inlined, runtime-pointer stores so each is a real register-based
 // memory write, as in the Windows harness (-O0 instead of #pragma optimize).
@@ -231,20 +243,20 @@ int main(void) {
     } else if (strncmp(line, "loadmono", 8) == 0) {
       void* m = dlopen("Linux/test-harness/probe_mono.so", RTLD_NOW);
       if (m == NULL) printf("ERR\n");
-      else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)m);
+      else printf("OK 0x%llx\n", (unsigned long long)load_base(m));
     } else if (strncmp(line, "unloadmono", 10) == 0) {
       printf("OK\n");
     } else if (strncmp(line, "loaddll2", 8) == 0) {
       if (g_probe_dll == NULL) g_probe_dll = dlopen("Linux/test-harness/probe2.so", RTLD_NOW);
       if (g_probe_dll == NULL) printf("ERR\n");
-      else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_probe_dll);
+      else printf("OK 0x%llx\n", (unsigned long long)load_base(g_probe_dll));
     } else if (strncmp(line, "loaddll", 7) == 0) {
       if (g_probe_dll == NULL) g_probe_dll = dlopen("Linux/test-harness/probe.so", RTLD_NOW);
       if (g_probe_dll == NULL) {
         printf("ERR\n");
       } else {
         g_probe_write = (void (*)(float*, float))dlsym(g_probe_dll, "probe_write");
-        printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_probe_dll);
+        printf("OK 0x%llx\n", (unsigned long long)load_base(g_probe_dll));
       }
     } else if (strncmp(line, "unloaddll", 9) == 0) {
       if (g_probe_dll != NULL) { dlclose(g_probe_dll); g_probe_dll = NULL; g_probe_write = NULL; }

@@ -81,6 +81,56 @@ int main() {
   assert(LowestMappingBase(nativeMaps, "Game.x86_64", "/opt/game/Game.x86_64", false) == 0x400000);
   assert(LowestMappingBase(nativeMaps, "Game.x86_64", "/opt/none", false) == 0);
 
+  // QueryMaps / ParseMaps / GroupModules.
+  {
+    const std::string maps =
+        "00400000-00401000 r--p 00000000 08:01 5 /g/A.exe\n"
+        "00401000-00500000 r-xp 00001000 08:01 5 /g/A.exe\n"
+        "00600000-00601000 rw-p 00000000 00:00 0\n"
+        "7f0000000000-7f0000100000 r--p 00000000 08:01 9 /usr/lib/libc.so.6\n"
+        "7f0000100000-7f0000200000 r-xp 00100000 08:01 9 /usr/lib/libc.so.6\n"
+        "7f0000300000-7f0000301000 ---p 00000000 00:00 0 [heap]\n"
+        "7f0000400000-7f0000401000 r--s 00000000 00:05 3 /dev/shm/x\n"
+        "7f0000500000-7f0000501000 r--p 00000000 08:01 7 /usr/lib/libm.so.6\n"
+        "7f0000600000-7f0000601000 r--p 00000000 08:01 9 /usr/lib/libc.so.6\n"
+        "ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0 [vsyscall]\n";
+    bool ok = false;
+    std::vector<MapsEntry> v = ParseMaps(maps, &ok);
+    assert(ok && v.size() == 10);
+    RegionAnswer a;
+    // Inside a mapping, at its first and last byte.
+    assert(QueryMaps(v, 0x400000, a) && !a.free && a.base == 0x400000 && a.end == 0x401000 && a.r && !a.w && !a.x);
+    assert(QueryMaps(v, 0x4fffff, a) && a.base == 0x401000 && a.end == 0x500000 && a.r && a.x && !a.w);
+    assert(QueryMaps(v, 0x600800, a) && a.w && a.r && !a.x);
+    assert(QueryMaps(v, 0x7f0000300000ull, a) && !a.free && !a.r && !a.w && !a.x);  // ---p is committed, unreadable
+    // The gap below the first mapping starts at 0.
+    assert(QueryMaps(v, 0x1000, a) && a.free && a.base == 0 && a.end == 0x400000);
+    assert(QueryMaps(v, 0, a) && a.free && a.base == 0);
+    // A gap between two mappings reports the gap exactly.
+    assert(QueryMaps(v, 0x500000, a) && a.free && a.base == 0x500000 && a.end == 0x600000);
+    assert(QueryMaps(v, 0x5fffff, a) && a.free && a.base == 0x500000 && a.end == 0x600000);
+    assert(QueryMaps(v, 0x601000, a) && a.free && a.base == 0x601000 && a.end == 0x7f0000000000ull);
+    // The gap before [vsyscall] runs to it; past it there is nothing.
+    assert(QueryMaps(v, 0x7f0000601000ull, a) && a.free && a.end == 0xffffffffff600000ull);
+    assert(!QueryMaps(v, 0xffffffffff601000ull, a));
+    // No mappings at all: everything below the top of user space is free.
+    assert(QueryMaps({}, 0x1234, a) && a.free && a.base == 0 && a.end == kUserSpaceEnd);
+    assert(!QueryMaps({}, kUserSpaceEnd, a));
+
+    // Disorder (a mapping changed between read() chunks) is flagged.
+    ParseMaps("00500000-00600000 r--p 00000000 00:00 0\n00400000-00501000 r--p 00000000 00:00 0\n", &ok);
+    assert(!ok);
+
+    std::vector<ModuleSpan> mods = GroupModules(v);
+    assert(mods.size() == 3);  // A.exe, libc, libm; [heap], anon, /dev/shm, [vsyscall] are not modules
+    assert(mods[0].path == "/g/A.exe" && mods[0].base == 0x400000 && mods[0].end == 0x500000);
+    assert(mods[1].path == "/usr/lib/libc.so.6" && mods[1].base == 0x7f0000000000ull &&
+           mods[1].end == 0x7f0000601000ull);  // span, including the gap between its mappings
+    assert(mods[2].path == "/usr/lib/libm.so.6");
+    assert(!IsModulePath("[vdso]") && !IsModulePath("") && !IsModulePath("/memfd:x") &&
+           !IsModulePath("/SYSV00000000") && IsModulePath("/home/u/Game Dir/g.so"));
+  }
+
   // stat state is read after the LAST ')': comm may hold spaces and parens.
   assert(StatState("123 (bash) S 1 2 3") == 'S');
   assert(StatState("123 (a) Z b) Z 1 2") == 'Z');
