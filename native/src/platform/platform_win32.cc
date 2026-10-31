@@ -624,6 +624,8 @@ bool DebugSession::Wait(uint32_t timeoutMs, WatchEvent& out) {
   return true;
 }
 
+// `ev` is unused on Windows: one event is pending at a time and its
+// pid/tid/status are kept in State.
 void DebugSession::Continue(const WatchEvent&) {
   State& s = *state_;
   if (!s.pending) return;

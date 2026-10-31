@@ -63,11 +63,20 @@ bool ListThreads(uint32_t, std::vector<ThreadInfo>& out) {
 }
 bool GetThreadRegisters(uint32_t, ThreadRegisters&) { return false; }
 
-// Stub. The ptrace backend: Attach seizes every thread in /proc/<pid>/task
-// with PTRACE_O_TRACECLONE and reports Attached once all are stopped;
-// SetHwBreakpoint is PTRACE_POKEUSER on u_debugreg; Hit is a SIGTRAP whose
-// Dr6 names the slot; ThreadCreated is PTRACE_EVENT_CLONE (debug registers
-// are not inherited by the new thread). All on the one tracer thread.
+// Stub. The ptrace backend, all on the one tracer thread:
+//   Attach          seize every thread in /proc/<pid>/task with
+//                   PTRACE_O_TRACECLONE; report Attached once ALL are stopped.
+//   ThreadCreated   PTRACE_EVENT_CLONE (debug registers are not inherited by
+//                   the new thread); stop ALL threads before reporting it.
+//   Hit             SIGTRAP whose Dr6 names the slot; the reporting thread
+//                   stays stopped.
+//   SetHwBreakpoint PTRACE_POKEUSER on u_debugreg. Callable on a running
+//                   thread too (the disarm after the loop): if the thread is
+//                   not stopped, PTRACE_INTERRUPT and wait for it, poke, then
+//                   resume it — POKEUSER on a running tracee fails with ESRCH.
+//   Continue        resume the stop ev.tid names (and any threads the backend
+//                   stopped for it), re-injecting a non-ours signal.
+//   Detach          drain, then PTRACE_DETACH every thread; disarms nothing.
 bool SupportsHardwareWatch() { return false; }
 
 struct DebugSession::State {};

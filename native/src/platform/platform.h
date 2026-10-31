@@ -9,9 +9,8 @@
 // platform that works today; the Linux backend is a stub that refuses
 // cleanly, so a Linux build compiles and loads rather than pretending.
 //
-// Only NEW code goes through here. The existing scanner, pointer walker,
-// memory ops, write-watch and patch ops still call Win32 directly; porting
-// those is a separate sub-project.
+// Callers are being moved onto this layer file by file (the linux-port
+// plan); write-watch goes through DebugSession and no longer calls Win32.
 namespace platform {
 
 // A HANDLE on Windows, a pid on Linux. Opaque to callers.
@@ -184,8 +183,8 @@ struct ThreadRegisters {
 bool ListThreads(uint32_t pid, std::vector<ThreadInfo>& out);
 
 // One thread's register file, read via a brief suspend/GetThreadContext/
-// resume (the same three-call shape SetHwBreakpointOnThread in
-// write_watch.cc already uses to read/modify debug registers). False when
+// resume (the same three-call shape DebugSession::SetHwBreakpoint uses to
+// read/modify debug registers). False when
 // the thread has already exited (the snapshot ListThreads read it from is
 // a point-in-time copy — same race SuspendAll's own OpenThread failure
 // handling documents) or the platform doesn't support this.
@@ -196,7 +195,11 @@ bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out);
 bool SupportsHardwareWatch();
 
 // What a DebugSession::Wait reported. Every event except `detached` leaves
-// the target stopped until Continue.
+// the target stopped until Continue: for Attached and ThreadCreated the
+// backend must leave ALL target threads stopped (the caller arms threads
+// other than the reporting one), for Hit and Other at least the reporting
+// thread. (Windows stops the whole process for every debug event; ptrace
+// stops only the reporting thread, so a ptrace backend stops the rest.)
 enum class DebugEventKind {
   // First stop after attach: the safe point to arm every existing thread.
   // (Windows: CREATE_PROCESS_DEBUG_EVENT.)
@@ -248,19 +251,32 @@ class DebugSession {
   // debug-register `slot` (0-3) of one thread. `len` must be 1, 2, 4 or 8
   // and `address` aligned to it: x86 leaves a misaligned data breakpoint
   // undefined, so this refuses one. `address`/`len` are ignored when
-  // disarming. Call it only while the target is stopped at an event from
-  // Wait (Attached for existing threads, ThreadCreated for a new one).
+  // disarming.
+  //
+  // Callable at any time on the session thread, whether or not the target
+  // is stopped at an event: write-watch disarms every thread AFTER its loop
+  // has continued the last event, while the target runs. The backend stops
+  // the thread itself if it is not already stopped and leaves it in the
+  // state it found it (Windows: SuspendThread/ResumeThread around the
+  // context write; ptrace: PTRACE_INTERRUPT and wait, POKEUSER, resume).
+  // A disarm that silently failed would leave the breakpoint armed through
+  // Detach and kill the target on its next write.
   bool SetHwBreakpoint(uint32_t tid, int slot, uintptr_t address, size_t len, bool enable);
 
   // Waits up to timeoutMs for the next debug event. False on timeout.
   bool Wait(uint32_t timeoutMs, WatchEvent& out);
 
   // Resumes the target after `ev`, with whatever continue status the event
-  // needs (the target's own exceptions go back to it unhandled).
+  // needs (the target's own exceptions go back to it unhandled). `ev` must
+  // be the event Wait last returned and that is still pending; a backend
+  // with several stopped threads uses ev.tid to know which stop it ends.
+  // No-op when nothing is pending.
   void Continue(const WatchEvent& ev);
 
   // Drains any debug event already in flight, then detaches, leaving the
-  // target running. Idempotent. Callers disarm their breakpoints first: an
+  // target running. Idempotent. Continues a still-pending event first,
+  // except the exit event. Disarms NOTHING on its own: callers disarm every
+  // breakpoint they armed via SetHwBreakpoint before calling it, because an
   // exception that fires after detach has no debugger to take it and kills
   // the target.
   void Detach();
