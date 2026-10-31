@@ -4,7 +4,8 @@
 # `npm ci` to have been done and gcc/g++/make/python3 to be installed.
 # Extra arguments replace the default test files (passed to `vitest run`).
 #   NODE_GYP_TARGET   Node headers to build against (default 22.12.0, as CI)
-#   TEST_NODE_BIN     directory of the Node used to RUN vitest (default: PATH)
+#   TEST_NODE_BIN     bin dir of a Node 26 install used to RUN vitest (default: PATH;
+#                     Node 22 cannot import .node files, so set it. See Linux/README.md)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

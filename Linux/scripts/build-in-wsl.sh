@@ -8,7 +8,11 @@
 # (BUILD_DIR, default ~/apprentice-build), built and tested there, and the
 # results are copied to Linux/dist/.
 #   BUILD_DIR   build copy location (default ~/apprentice-build)
-#   plus the variables run-tests.sh understands (NODE_GYP_TARGET, TEST_NODE_BIN)
+#   TEST_NODE_BIN  REQUIRED in practice: bin dir of a Node 26 install, used to run
+#                  vitest (Node 22 cannot import .node files). Install steps are in
+#                  Linux/README.md; example:
+#     TEST_NODE_BIN=/opt/node-v26.13.0-linux-x64/bin bash Linux/scripts/build-in-wsl.sh
+#   NODE_GYP_TARGET  headers for the addon build (default 22.12.0, see run-tests.sh)
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$HOME/apprentice-build}"
