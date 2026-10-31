@@ -20,7 +20,7 @@ describe('listProcesses', () => {
     const procs = (addon as any).listProcesses() as { pid: number; name: string }[]
     const match = procs.find((p) => p.pid === harness.pid)
     expect(match).toBeDefined()
-    expect(match!.name.toLowerCase()).toBe('harness.exe')
+    expect(match!.name.toLowerCase()).toBe(process.platform === 'win32' ? 'harness.exe' : 'harness')
   })
 })
 

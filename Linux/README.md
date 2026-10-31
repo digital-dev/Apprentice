@@ -44,9 +44,9 @@ harness are copied to `Linux/dist/`. The checkout's own `node_modules` and `nati
 
 ## Status
 
-The Linux backend is currently a stub: the addon builds and loads,
-`IsSupported()` is false, and process operations refuse. Only
-`tests/native/addon_smoke.test.ts` and `tests/native/spawnHarness.test.ts` run on
+The Linux backend is partly implemented: process listing, naming (Wine-aware), attach and liveness work from `/proc`; everything else is still a stub. The addon builds and loads,
+`IsSupported()` is false, and memory operations refuse. Only
+`addon_smoke`, `spawnHarness` and `platform` (tests/native) run on
 Linux; the rest need the real backend.
 
 ## ptrace permissions

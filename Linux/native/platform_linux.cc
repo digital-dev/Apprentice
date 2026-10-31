@@ -22,17 +22,8 @@ namespace platform {
 bool IsSupported() { return false; }
 const char* Name() { return "linux"; }
 
-bool ListProcesses(std::vector<ProcessEntry>& out) {
-  out.clear();
-  return false;
-}
-ProcessHandle OpenProcess(uint32_t, std::string& error) {
-  error = "not supported on this platform yet";
-  return 0;
-}
-void CloseProcess(ProcessHandle) {}
-bool IsAlive(ProcessHandle) { return false; }
-uintptr_t MainModuleBase(ProcessHandle) { return 0; }
+// ListProcesses, OpenProcess, CloseProcess, IsAlive and MainModuleBase live in
+// platform_linux_process.cc.
 // Stub; a later task replaces this with a real ABI probe.
 Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::SysV; }
 

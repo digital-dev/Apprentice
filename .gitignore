@@ -11,3 +11,4 @@ release/
 fixtures/snapshots/
 Linux/dist/
 Linux/test-harness/harness
+Linux/native/tests/proc_parse_test

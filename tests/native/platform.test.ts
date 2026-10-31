@@ -23,7 +23,10 @@ describe('platform seam', () => {
   })
 })
 
-describe.runIf(process.platform === 'win32')('process and region primitives', () => {
+// The harness is an ELF on Linux (no .exe suffix); Windows assertions are unchanged.
+const HARNESS_NAME = process.platform === 'win32' ? 'harness.exe' : 'harness'
+
+describe('process and region primitives', () => {
   let harness: ChildProcessWithoutNullStreams
   const a = addon as any
 
@@ -39,7 +42,7 @@ describe.runIf(process.platform === 'win32')('process and region primitives', ()
 
   it('lists the harness process by name', () => {
     const procs = a.platformListProcesses() as { pid: number; name: string }[]
-    expect(procs).toContainEqual({ pid: harness.pid, name: 'harness.exe' })
+    expect(procs).toContainEqual({ pid: harness.pid, name: HARNESS_NAME })
   })
 
   it('attach returns handle and baseAddress for the harness', () => {
@@ -54,10 +57,12 @@ describe.runIf(process.platform === 'win32')('process and region primitives', ()
   })
 
   it('platformProbe reports an error for a pid that does not exist', () => {
-    expect(a.platformProbe(999999).error).toMatch(/OpenProcess failed/)
+    expect(a.platformProbe(999999).error).toMatch(
+      process.platform === 'win32' ? /OpenProcess failed/ : /process not found/,
+    )
   })
 
-  it('reports writable regions', async () => {
+  it.runIf(process.platform === 'win32')('reports writable regions', async () => {
     const { handle } = a.attach(harness.pid)
     const candidates = await a.scanFirst(handle, 'int32', 100)
     expect(candidates.length).toBeGreaterThan(0)
@@ -67,7 +72,7 @@ describe.runIf(process.platform === 'win32')('process and region primitives', ()
     a.detach(handle)
   })
 
-  it('exposes the Windows ABI as ms64', () => {
+  it.runIf(process.platform === 'win32')('exposes the Windows ABI as ms64', () => {
     expect(a.platformProbe(harness.pid).abi).toBe('ms64')
   })
 })
