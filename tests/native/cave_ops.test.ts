@@ -447,14 +447,29 @@ describe('encodeConditionalScale', () => {
   // documented ABI reasoning) — the exact non-16-aligned condition the
   // encoder's dynamic `and rsp,-16` exists to handle, not the aligned case
   // a hand-picked test address could accidentally get right by luck.
-  // Task 13: callRemoteFunctionFloat needs the Microsoft x64 stub, which
-  // only matches a PE target's ABI; Wine's harness is a real PE process.
-  it.skipIf(process.platform === 'linux' && !HARNESS_IS_PE)('scales xmm0 only when the called method\'s return matches the armed pointer', async () => {
+  it('scales xmm0 only when the called method\'s return matches the armed pointer', async () => {
     const resolveAttackerAddr = (await send('getresolveattackeraddr')).split(' ')[1]
     const near = (addon as any).attach(harness.pid).baseAddress
     const cave: string = (addon as any).allocateCave(handle, near)
     const codeAddress = '0x' + (BigInt(cave) + 16n).toString(16)
     const dataAddr = '0x' + (BigInt(cave) + 4000n).toString(16)
+
+    // Which register callRemoteFunctionFloat's stub (mono_call.cc's
+    // BuildCallStub) actually loads `hitArg` (this call's one argument)
+    // into: RCX on a Microsoft x64 target (Windows, and Wine's PE
+    // harness), RDI on a System V target (native Linux's ELF harness).
+    // `codeAddress` is a scratch cave, not a module, so this mirrors how
+    // mono_call.cc's own ResolveAbiForFunction falls back to the process's
+    // main module's ABI when `function` isn't inside any known module.
+    const argReg = HARNESS_IS_PE ? 'rcx' : 'rdi'
+    // mov dst, src (REX.W 89 /r, mod=11 register-direct) for the two
+    // registers this test ever needs as `dst`: encodes generically so it
+    // keeps working if either side's register choice ever changes.
+    const REG_CODE: Record<string, number> = { rax: 0, rcx: 1, rdx: 2, rbx: 3, rsp: 4, rbp: 5, rsi: 6, rdi: 7 }
+    function movRegReg(dst: string, src: string): string {
+      const modrm = (0xc0 | (REG_CODE[src] << 3) | REG_CODE[dst]).toString(16).padStart(2, '0')
+      return '4889' + modrm
+    }
 
     async function run(armedAddr: string, hitArg: string, factor: number, baseReg: string): Promise<number> {
       const slotHex =
@@ -464,7 +479,9 @@ describe('encodeConditionalScale', () => {
 
       const dPreamble = BigInt(dataAddr) - (BigInt(codeAddress) + 8n)
       let preamble = 'f30f1005' + leHex(dPreamble < 0n ? (1n << 32n) + dPreamble : dPreamble, 4)
-      if (baseReg === 'rsi') preamble += '4889ce' // mov rsi, rcx — hitArg arrives in rcx via the stub
+      // hitArg arrives in argReg via the stub; move it into baseReg only
+      // when they differ (baseReg is always 'rcx' or 'rsi' in this test).
+      if (baseReg !== argReg) preamble += movRegReg(baseReg, argReg)
 
       const blobAddress = '0x' + (BigInt(codeAddress) + BigInt(preamble.length / 2)).toString(16)
       const blob: string = (addon as any).encodeConditionalScale(

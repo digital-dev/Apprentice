@@ -49,16 +49,17 @@ struct MonoContext {
 
 MonoContext AttachToMono(platform::ProcessHandle handle, uintptr_t monoDllBase) {
   MonoContext ctx;
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
   uintptr_t getRootDomain = platform::ResolveExport(handle, monoDllBase, "mono_get_root_domain");
   uintptr_t threadAttach = platform::ResolveExport(handle, monoDllBase, "mono_thread_attach");
   if (!getRootDomain || !threadAttach) return ctx;
 
   uint8_t result[8] = {0};
-  if (!RunRemoteCall(handle, getRootDomain, {}, result)) return ctx;
+  if (!RunRemoteCall(handle, abi, getRootDomain, {}, result)) return ctx;
   ctx.rootDomain = BytesToPtr(result);
   if (!ctx.rootDomain) return ctx;
 
-  if (!RunRemoteCall(handle, threadAttach, {ctx.rootDomain}, result)) return ctx;
+  if (!RunRemoteCall(handle, abi, threadAttach, {ctx.rootDomain}, result)) return ctx;
   ctx.attachedThread = BytesToPtr(result);
   if (!ctx.attachedThread) return ctx;
 
@@ -71,7 +72,8 @@ void DetachFromMono(platform::ProcessHandle handle, uintptr_t monoDllBase, const
   uintptr_t threadDetach = platform::ResolveExport(handle, monoDllBase, "mono_thread_detach");
   if (!threadDetach) return;
   uint8_t ignored[8];
-  RunRemoteCall(handle, threadDetach, {ctx.attachedThread}, ignored);
+  RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), threadDetach,
+                {ctx.attachedThread}, ignored);
 }
 
 // Forward-declared here, defined below alongside BuildAssemblyCollectorStub
@@ -767,7 +769,8 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
   // FREED only when RunRemoteCall returned true, i.e. the thread provably
   // finished. Otherwise the cave is leaked, exactly as every other
   // RunRemoteCall site in this file does.
-  bool finished = RunRemoteCall(handle, foreach_, {stubAddr, bufferAddr}, ignored);
+  bool finished = RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), foreach_,
+                                 {stubAddr, bufferAddr}, ignored);
 
   uint64_t count = 0;
   platform::ReadMemory(handle, bufferAddr, &count, sizeof(count));
@@ -1025,7 +1028,7 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   // the thread may still be executing inside `cave` — and may still be
   // reading nsAddr/nameAddr via classFromName — see the
   // never-free-a-live-cave rule. Leak all three together.
-  if (!RunRemoteCall(handle, mainStubAddr, {}, ignored)) return 0;
+  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), mainStubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
@@ -1219,7 +1222,7 @@ uintptr_t ResolveMemberByNameSingleThread(platform::ProcessHandle handle, uintpt
   // Never free on a false return: the thread may still be executing inside
   // `cave`, or still reading `nameAddr` — see the never-free-a-live-cave
   // rule. Leak both.
-  if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return 0;
+  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
@@ -1449,7 +1452,7 @@ uintptr_t ResolveStaticFieldAddressSingleThread(platform::ProcessHandle handle, 
   // Never free on a false return: the thread may still be executing inside
   // `cave`, or still reading `nameAddr` — see the never-free-a-live-cave
   // rule. Leak both.
-  if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return 0;
+  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
@@ -1646,7 +1649,7 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return {};
+  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
   platform::ReadMemory(handle, countAddr, &count, sizeof(count));
@@ -1857,7 +1860,7 @@ std::vector<std::pair<uintptr_t, std::string>> ListAssemblyNamesSingleThread(pla
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, mainStubAddr, {}, ignored)) return {};
+  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), mainStubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
   platform::ReadMemory(handle, countAddr, &count, sizeof(count));
@@ -2113,7 +2116,7 @@ std::vector<ClassEntry> ListClassesInImageSingleThread(
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return {};
+  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
   platform::ReadMemory(handle, countAddr, &count, sizeof(count));
@@ -2483,7 +2486,7 @@ bool RunAttachedCall(platform::ProcessHandle handle, uintptr_t monoDllBase, uint
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, stubAddr, {}, ignored)) return false;
+  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return false;
 
   if (!platform::ReadMemory(handle, resultAddr, intResult, 8)) {
     platform::FreeMemory(handle, cave);

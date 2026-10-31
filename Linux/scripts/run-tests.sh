@@ -84,14 +84,33 @@ g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Lin
 (cd native && npx node-gyp configure --target="${NODE_GYP_TARGET:-22.12.0}" \
   && npx node-gyp build --target="${NODE_GYP_TARGET:-22.12.0}")
 
+# BuildCallStub/RunRemoteCall for both ABIs (Task 13): byte-level golden
+# vectors plus a live forked-child proof, against the REAL mono_call.cc
+# (not a copy of its logic) — needs node-addon-api's and Node's own headers
+# on the include path even though nothing here runs inside Node; the
+# node-gyp configure/build step just above already downloaded the latter
+# into node-gyp's cache. The functions this test never calls (the N-API
+# exports and AsyncWorkers in mono_call.cc) are dropped by the linker via
+# --gc-sections rather than needing their napi_* symbols resolved.
+NAPI_INC="$(node -p "require('node-addon-api').include" | tr -d '"')"
+NODE_GYP_CACHE="${HOME}/.cache/node-gyp"
+NODE_INC="$NODE_GYP_CACHE/${NODE_GYP_TARGET:-22.12.0}/include/node"
+g++ -std=c++17 -O0 -g -Wall -pthread -ffunction-sections -fdata-sections \
+  -I"$NAPI_INC" -I"$NODE_INC" -Inative/src -Inative/src/platform -ILinux/native \
+  -o Linux/native/tests/mono_call_stub_test \
+  Linux/native/tests/mono_call_stub_test.cc native/src/mono_call.cc "${LINUX_PLATFORM_SRCS[@]}" \
+  -Wl,--gc-sections -ldl
+(cd Linux/native/tests && ./mono_call_stub_test)
+
 if [ -n "${TEST_NODE_BIN:-}" ]; then export PATH="$TEST_NODE_BIN:$PATH"; fi
 node -v
 
 # Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: cloneStackScript (patch
 # caves hooking a live instruction stream), write_watch/signature_golden/snapshot_ops (hardware
 # watch, Task 15), mono_bridge (Mono metadata walking, Task 14). patch_ops skips its two
-# write-watch tests on Linux (Task 15); cave_ops and mono_call skip their Microsoft-x64-stub-only
-# cases (callRemoteFunction) on Linux outside Wine (Task 13 builds the System V stub).
+# write-watch tests on Linux (Task 15). cave_ops and mono_call's callRemoteFunction cases run
+# here too now: mono_call.cc's BuildCallStub picks the System V register convention for this
+# native ELF target (Task 13), the same way it already picked Microsoft x64 for Wine's PE target.
 DEFAULT_TESTS=(tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts
   tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts

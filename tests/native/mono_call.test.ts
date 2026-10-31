@@ -109,20 +109,19 @@ describe('remote thread', () => {
 })
 
 describe('callRemoteFunction', () => {
-  // The Microsoft x64 stub (mono_call.cc's BuildCallStub) only matches a PE
-  // target's calling convention; a native Linux target follows System V,
-  // which Task 13 adds a stub for. Wine's harness is a real PE process, so
-  // it already works there, same as Windows.
-  it.skipIf(process.platform === 'linux' && !HARNESS_IS_PE)(
+  it(
     'calls a real exported function with two arguments and observes its effect',
     async () => {
     // RemoteCallProbe2(int* target, int value) is an ordinary 2-argument
     // function (not shaped as a thread entry point like RemoteThreadProbe),
     // so calling it through the stub proves the stub's argument
     // marshalling. Both args are pointer/integer — the stub only ever
-    // loads RCX/RDX/R8/R9, matching the pointer/integer-only Mono
-    // introspection calls every later task makes; a float argument would
-    // need XMM1 per the Windows x64 ABI, which is out of scope here.
+    // loads the first two integer registers its ABI defines (RCX/RDX on
+    // Windows and Wine's PE targets, RDI/RSI on native Linux's System V
+    // targets — mono_call.cc's BuildCallStub picks per target), matching
+    // the pointer/integer-only Mono introspection calls every later task
+    // makes; a float argument would need an XMM register per either ABI,
+    // which is out of scope here.
     const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteCallProbe2')
     const scratch = (addon as any).allocateCave(handle, harnessBase)
 
@@ -134,7 +133,7 @@ describe('callRemoteFunction', () => {
     }
   )
 
-  it.skipIf(process.platform === 'linux' && !HARNESS_IS_PE)(
+  it(
     'works with fewer than 4 arguments',
     async () => {
       const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteThreadProbe')
