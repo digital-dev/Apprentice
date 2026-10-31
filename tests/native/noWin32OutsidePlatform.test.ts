@@ -74,9 +74,16 @@ export function stripCommentsAndLiterals(src: string): string {
   return out
 }
 
-// declaresPlatformApi: files inside native/src/platform/ declare/define the
-// platform:: functions OpenProcess/CreateRemoteThread themselves (inside
-// namespace platform), so their call-form tokens are not checked there.
+// Exemption: platform.h and platform_linux.cc declare/define the platform::
+// functions OpenProcess/CreateRemoteThread themselves (inside namespace
+// platform), so in those two files only declaration forms (a type name before
+// the identifier, e.g. `ProcessHandle OpenProcess(`) are allowed. Call-like
+// uses (`::OpenProcess(`, `= OpenProcess(`, `return OpenProcess(`, ...) are
+// still reported there.
+const API_EXEMPT_FILES = ['native/src/platform/platform.h', 'native/src/platform/platform_linux.cc']
+const DECLARATION_FORM =
+  /^\s*(?!return\b)[A-Za-z_][\w:<>]*[\s*&]+(?:OpenProcess|CreateRemoteThread)\s*\(/
+
 export function findViolations(
   src: string,
   declaresPlatformApi = false,
@@ -85,7 +92,13 @@ export function findViolations(
   const hits: { line: number; token: string }[] = []
   lines.forEach((text, idx) => {
     for (const f of FORBIDDEN) {
-      if (declaresPlatformApi && (f.name === 'OpenProcess(' || f.name === 'CreateRemoteThread(')) continue
+      if (
+        declaresPlatformApi &&
+        (f.name === 'OpenProcess(' || f.name === 'CreateRemoteThread(') &&
+        DECLARATION_FORM.test(text)
+      ) {
+        continue
+      }
       if (f.re.test(text)) hits.push({ line: idx + 1, token: f.name })
     }
   })
@@ -111,7 +124,7 @@ describe('no OS-specific code outside the platform layer', () => {
     for (const file of walk(srcDir)) {
       const rel = relative(root, file).split(sep).join('/')
       if (EXEMPT.includes(rel) || rel.includes('/third_party/') || rel.includes('Linux/native/')) continue
-      for (const v of findViolations(readFileSync(file, 'utf8'), rel.startsWith('native/src/platform/'))) {
+      for (const v of findViolations(readFileSync(file, 'utf8'), API_EXEMPT_FILES.includes(rel))) {
         offenders.push(`${rel}:${v.line}: ${v.token}`)
       }
     }
@@ -137,5 +150,13 @@ describe('no OS-specific code outside the platform layer', () => {
       { line: 1, token: '#include <windows.h>' },
       { line: 2, token: 'OpenProcess(' },
     ])
+  })
+  it('exemption allows only declaration forms in the two named platform files', () => {
+    const decl = 'ProcessHandle OpenProcess(uint32_t pid, std::string& error);'
+    expect(findViolations(decl, true)).toEqual([])
+    expect(findViolations('  ThreadHandle CreateRemoteThread(ProcessHandle h) { return 0; }', true)).toEqual([])
+    expect(findViolations('auto h = ::OpenProcess(pid);', true)).toEqual([{ line: 1, token: 'OpenProcess(' }])
+    expect(findViolations('return OpenProcess(pid);', true)).toEqual([{ line: 1, token: 'OpenProcess(' }])
+    expect(findViolations(decl, false)).toEqual([{ line: 1, token: 'OpenProcess(' }])
   })
 })
