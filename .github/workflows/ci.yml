@@ -171,18 +171,14 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine wine64 mingw-w64
 
+      # run-tests.sh owns the Wine environment (throwaway prefix ~/.wine-apprentice-test, set
+      # APPRENTICE_WINEPREFIX for another one), prefix creation, the Wine test list and the wineserver
+      # shutdown. It rebuilds the addon against the same Node 22 headers (--target), so N-API keeps it
+      # loadable under the Node 26 that runs vitest here.
       - name: Linux tests under Wine
         env:
           APPRENTICE_HARNESS: wine
-          WINEARCH: win64
-          WINEDEBUG: -all
-          WINEDLLOVERRIDES: "mscoree,mshtml="
-        run: |
-          bash Linux/test-harness/build-wine-harness.sh
-          export WINEPREFIX="$HOME/.wine-apprentice-test"
-          wine wineboot --init
-          wineserver -w
-          npx vitest run tests/native/platform.test.ts tests/native/module_info.test.ts tests/native/scanner.test.ts tests/native/pointer.test.ts
+        run: bash Linux/scripts/run-tests.sh
 
   release:
     name: Publish release

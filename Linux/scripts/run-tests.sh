@@ -10,8 +10,34 @@
 #   NODE_GYP_TARGET   Node headers to build against (default 22.12.0, as CI)
 #   TEST_NODE_BIN     bin dir of a Node 26 install used to RUN vitest (default: PATH;
 #                     Node 22 cannot import .node files, so set it. See Linux/README.md)
+#   APPRENTICE_WINEPREFIX    the Wine step's throwaway prefix (default ~/.wine-apprentice-test).
+#                            WINEPREFIX from the environment is ignored; ~/.wine, ~ and / are refused.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+
+# The one Wine environment of this script (keep in step with wineEnv() in tests/helpers/spawnHarness.ts).
+# Exports the resolved APPRENTICE_WINEPREFIX too, so the tests use the same prefix.
+wine_env() {
+  local prefix
+  prefix="$(realpath -m "${APPRENTICE_WINEPREFIX:-$HOME/.wine-apprentice-test}")"
+  case "$prefix" in
+    /) ;;
+    "$(realpath -m "$HOME")" | "$(realpath -m "$HOME/.wine")") ;;
+    *)
+      export APPRENTICE_WINEPREFIX="$prefix" WINEPREFIX="$prefix" WINEARCH=win64 WINEDEBUG=-all \
+        WINEDLLOVERRIDES="mscoree,mshtml="
+      return 0 ;;
+  esac
+  echo "refusing to run the Wine tests in \"$prefix\": that is not a throwaway prefix." \
+    "Leave APPRENTICE_WINEPREFIX unset (default ~/.wine-apprentice-test) or point it at a scratch directory." >&2
+  exit 1
+}
+
+have_wine() { command -v wine >/dev/null && command -v x86_64-w64-mingw32-gcc >/dev/null; }
+
+if [ "${APPRENTICE_HARNESS:-}" = wine ] || have_wine; then
+  wine_env  # refuse an unsafe prefix before building or running anything
+fi
 
 gcc -O0 -g -pthread -rdynamic -o Linux/test-harness/harness Linux/test-harness/harness.c -ldl
 # Probe libraries the harness dlopen()s (loaddll/loaddll2): same exports as the PE probes;
@@ -57,18 +83,18 @@ WINE_TESTS=(tests/native/platform.test.ts tests/native/module_info.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts)
 
 run_wine_step() {
+  wine_env
   bash Linux/test-harness/build-wine-harness.sh
+  # No wineserver (nor winedevice.exe etc.) of the throwaway prefix outlives the script, pass or fail.
+  # (wineserver -k fails when the tests' own teardown already stopped it; the script keeps its status.)
+  trap 'rc=$?; wineserver -k 2>/dev/null || true; timeout 5 wineserver -w 2>/dev/null || true; exit $rc' EXIT
   # Create the throwaway prefix up front: the first Wine start in a fresh prefix takes longer
-  # than a test hook may wait. Same variables as tests/helpers/spawnHarness.ts.
-  export WINEPREFIX="${WINEPREFIX:-$HOME/.wine-apprentice-test}" WINEARCH=win64 \
-    WINEDEBUG="${WINEDEBUG:--all}" WINEDLLOVERRIDES="mscoree,mshtml="
+  # than the tests wait for the harness.
   wine wineboot --init
   wineserver -w
   if [ "$#" -eq 0 ]; then set -- "${WINE_TESTS[@]}"; fi
   APPRENTICE_HARNESS=wine npx vitest run "$@"
 }
-
-have_wine() { command -v wine >/dev/null && command -v x86_64-w64-mingw32-gcc >/dev/null; }
 
 if [ "${APPRENTICE_HARNESS:-}" = wine ]; then
   # Asked for the Wine step explicitly: missing tools are an error, not a skip.

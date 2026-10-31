@@ -27,11 +27,22 @@ Wine step (from Windows, through WSL):
 wsl.exe -d Ubuntu-22.04 -u root -- bash -lc "cd /mnt/d/<path-to-checkout> && APPRENTICE_HARNESS=wine TEST_NODE_BIN=/opt/node-v26.13.0-linux-x64/bin bash Linux/scripts/build-in-wsl.sh"
 ```
 
-Wine runs in a throwaway prefix, `~/.wine-apprentice-test` (override with
-`WINEPREFIX`), never `~/.wine`. `WINEDLLOVERRIDES="mscoree,mshtml="` stops Wine
-from offering to download Mono/Gecko, `WINEDEBUG=-all` keeps it quiet, and no
-display is needed. `run-tests.sh` creates the prefix (`wine wineboot --init`)
-before the tests, because a first start in a fresh prefix takes a few seconds.
+Wine runs in a throwaway prefix, `~/.wine-apprentice-test`, set ONLY by
+`APPRENTICE_WINEPREFIX`: a `WINEPREFIX` in your environment is ignored, and both
+`run-tests.sh` and `tests/helpers/spawnHarness.ts` refuse `~/.wine`, `~` and `/`
+before starting anything. `WINEDLLOVERRIDES="mscoree,mshtml="` stops Wine from
+offering to download Mono/Gecko, `WINEDEBUG=-all` keeps it quiet, and no display
+is needed. The environment lives in `wine_env()` (run-tests.sh) and `wineEnv()`
+(spawnHarness.ts).
+
+`run-tests.sh` creates the prefix (`wine wineboot --init`) before the tests,
+because a first start in a fresh prefix takes a few seconds; the tests do not.
+Running `APPRENTICE_HARNESS=wine npx vitest run ...` directly works once the
+prefix exists; otherwise `startHarness` fails after 60 s with a message saying so.
+It also fails at once, with the fix in the message, when `wine` is not installed
+or `harness-wine.exe` is not built. Teardown (`stopHarness`) kills the harness,
+then runs `wineserver -k` for the throwaway prefix and waits up to 5 s, so no
+wineserver/winedevice.exe lingers; `run-tests.sh` does the same on exit, pass or fail.
 
 ## What a Wine process looks like (verified with Wine 6.0.3, Ubuntu 22.04)
 

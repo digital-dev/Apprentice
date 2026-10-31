@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness, HARNESS_NAME, HARNESS_IS_PE, HARNESS_WINE } from '../helpers/spawnHarness'
+import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS, HARNESS_NAME, HARNESS_IS_PE, HARNESS_WINE } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -14,15 +14,11 @@ let harness: ChildProcessWithoutNullStreams
 let handle: number
 
 beforeAll(async () => {
-  harness = spawnHarness()
-  await new Promise((r) => harness.stdout.once('data', r))
+  harness = await startHarness()
   handle = (addon as any).attach(harness.pid).handle
-})
+}, HARNESS_HOOK_TIMEOUT_MS)
 
-afterAll(() => {
-  harness.stdin.write('q\n')
-  harness.kill()
-})
+afterAll(() => stopHarness(harness))
 
 describe('listModules', () => {
   it('reports the target exe itself', () => {

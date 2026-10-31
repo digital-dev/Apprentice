@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -20,16 +20,12 @@ interface Candidate {
 }
 
 beforeAll(async () => {
-  harness = spawnHarness()
-  await new Promise((r) => harness.stdout.once('data', r))
+  harness = await startHarness()
   const attached = (addon as any).attach(harness.pid)
   handle = attached.handle
-})
+}, HARNESS_HOOK_TIMEOUT_MS)
 
-afterAll(() => {
-  harness.stdin.write('q\n')
-  harness.kill()
-})
+afterAll(() => stopHarness(harness))
 
 // Narrow a value scan down to the single address that changes when we drive
 // the harness — the real known variable — instead of grabbing an arbitrary

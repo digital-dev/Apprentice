@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness, HARNESS_NAME } from '../helpers/spawnHarness'
+import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS, HARNESS_NAME } from '../helpers/spawnHarness'
 import addon from '../../native/build/Release/memory_addon.node'
 
 describe('platform seam', () => {
@@ -29,14 +29,10 @@ describe('process and region primitives', () => {
   const a = addon as any
 
   beforeAll(async () => {
-    harness = spawnHarness()
-    await new Promise((r) => harness.stdout.once('data', r))
-  })
+    harness = await startHarness()
+  }, HARNESS_HOOK_TIMEOUT_MS)
 
-  afterAll(() => {
-    harness.stdin.write('q\n')
-    harness.kill()
-  })
+  afterAll(() => stopHarness(harness))
 
   it('lists the harness process by name', () => {
     const procs = a.platformListProcesses() as { pid: number; name: string }[]
