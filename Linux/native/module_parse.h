@@ -11,6 +11,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,7 @@ constexpr size_t kMaxDynamic = 0x10000;        // bytes of PT_DYNAMIC read
 constexpr size_t kMaxExportBlock = 8u << 20;
 constexpr uint32_t kMaxLfanew = 0x100000;
 constexpr size_t kElfSymSize = 24;
+constexpr uint64_t kMaxImageSize = 1ull << 36;  // 64 GiB: far above any real module
 
 // A NUL-terminated string at `addr`, at most kMaxNameLen long. Reads stay
 // within one page at a time so a string ending just before an unmapped page
@@ -66,6 +68,22 @@ inline bool ReadTable(const ReadFn& read, uintptr_t addr, uint64_t count, size_t
   out.assign((size_t)count * elemSize, 0);
   if (out.empty()) return true;
   return read(addr, out.data(), out.size());
+}
+
+// ELF64 header check plus program headers (all-or-nothing). False unless a
+// little-endian ELF64 EXEC/DYN image with a sane program header table.
+inline bool ReadElfPhdrs(const ReadFn& read, uintptr_t base, std::vector<uint8_t>& ph,
+                         uint16_t& phnum) {
+  uint8_t eh[64];
+  if (!read(base, eh, sizeof(eh))) return false;
+  if (memcmp(eh, "\x7f""ELF", 4) != 0 || eh[4] != 2 /*64-bit*/ || eh[5] != 1 /*LE*/) return false;
+  uint16_t type = U16(eh + 16);
+  if (type != 2 /*EXEC*/ && type != 3 /*DYN*/) return false;
+  uint64_t phoff = U64(eh + 32);
+  uint16_t phentsize = U16(eh + 54);
+  phnum = U16(eh + 56);
+  if (phentsize != 56 || phnum == 0 || phnum > 256 || phoff == 0 || phoff > 0x100000) return false;
+  return ReadTable(read, base + (uintptr_t)phoff, phnum, 56, 56 * 256, ph);
 }
 
 }  // namespace detail
@@ -192,17 +210,9 @@ inline bool ParseElfDynsym(const ReadFn& read, uintptr_t base,
                            std::map<std::string, uintptr_t>& out) {
   using namespace detail;
   out.clear();
-  uint8_t eh[64];
-  if (!read(base, eh, sizeof(eh))) return false;
-  if (memcmp(eh, "\x7f""ELF", 4) != 0 || eh[4] != 2 /*64-bit*/ || eh[5] != 1 /*LE*/) return false;
-  uint16_t type = U16(eh + 16);
-  if (type != 2 /*EXEC*/ && type != 3 /*DYN*/) return false;
-  uint64_t phoff = U64(eh + 32);
-  uint16_t phentsize = U16(eh + 54), phnum = U16(eh + 56);
-  if (phentsize != 56 || phnum == 0 || phnum > 256 || phoff == 0 || phoff > 0x100000) return false;
-
   std::vector<uint8_t> ph;
-  if (!ReadTable(read, base + (uintptr_t)phoff, phnum, 56, 56 * 256, ph)) return false;
+  uint16_t phnum = 0;
+  if (!ReadElfPhdrs(read, base, ph, phnum)) return false;
 
   bool haveLoad = false, haveDyn = false;
   uint64_t minVaddr = 0, dynVaddr = 0, dynSize = 0;
@@ -227,7 +237,7 @@ inline bool ParseElfDynsym(const ReadFn& read, uintptr_t base,
   std::vector<uint8_t> dyn;
   if (!ReadTable(read, bias + (uintptr_t)dynVaddr, dynSize / 16, 16, kMaxDynamic, dyn)) return false;
 
-  uint64_t symtab = 0, strtab = 0, strsz = 0, hash = 0, gnuHash = 0, syment = kElfSymSize;
+  uint64_t symtab = 0, strtab = 0, strsz = 0, hash = 0, gnuHash = 0, versym = 0, syment = kElfSymSize;
   for (size_t i = 0; i + 16 <= dyn.size(); i += 16) {
     int64_t tag = (int64_t)U64(dyn.data() + i);
     uint64_t val = U64(dyn.data() + i + 8);
@@ -239,6 +249,7 @@ inline bool ParseElfDynsym(const ReadFn& read, uintptr_t base,
       case 10: strsz = val; break;
       case 11: syment = val; break;
       case 0x6ffffef5: gnuHash = val; break;
+      case 0x6ffffff0: versym = val; break;  // DT_VERSYM
       default: break;
     }
   }
@@ -296,6 +307,14 @@ inline bool ParseElfDynsym(const ReadFn& read, uintptr_t base,
   const bool bulkStrings = strsz > 0 && strsz <= kMaxStrtab &&
                            ReadTable(read, strAddr, strsz, 1, kMaxStrtab, strs);
 
+  // DT_VERSYM: one uint16 per symbol; bit 15 marks a hidden (non-default,
+  // "@" rather than "@@") version. Absent or unreadable: no versioning, first
+  // definition of a name wins.
+  std::vector<uint8_t> vers;
+  if (versym != 0 && !ReadTable(read, fix(versym), count, 2, kMaxSymbols * 2, vers)) vers.clear();
+  std::map<std::string, bool> hiddenOf;  // only used when vers is present
+  std::set<std::string> ifuncDefault;
+
   for (uint64_t i = 1; i < count; ++i) {  // symbol 0 is the reserved null symbol
     const uint8_t* s = syms.data() + kElfSymSize * (size_t)i;
     uint32_t nameOff = U32(s);
@@ -304,7 +323,11 @@ inline bool ParseElfDynsym(const ReadFn& read, uintptr_t base,
     uint64_t value = U64(s + 8);
     uint8_t stype = info & 0xf, bind = info >> 4;
     if (shndx == 0 /*UNDEF*/ || shndx >= 0xff00 /*ABS, COMMON, reserved*/ || value == 0) continue;
-    if (stype != 0 && stype != 1 && stype != 2 && stype != 10) continue;  // NOTYPE/OBJECT/FUNC/IFUNC
+    // NOTYPE/OBJECT/FUNC. STT_GNU_IFUNC (10) is excluded on purpose: its value is the
+    // address of a resolver, and calling that is not calling the function (dlsym runs the
+    // resolver; we cannot), so "not found" is the honest answer.
+    if (stype != 0 && stype != 1 && stype != 2 && stype != 10) continue;
+    const bool ifunc = stype == 10;
     if (bind != 1 && bind != 2 && bind != 10) continue;                    // GLOBAL/WEAK/UNIQUE
     std::string name;
     if (bulkStrings) {
@@ -317,9 +340,89 @@ inline bool ParseElfDynsym(const ReadFn& read, uintptr_t base,
       continue;
     }
     if (name.empty()) continue;
-    out.emplace(name, bias + (uintptr_t)value);
+    const uintptr_t addr = bias + (uintptr_t)value;
+    if (ifunc) {
+      // A default IFUNC (memcpy@@GLIBC_2.14) also shadows any older plain
+      // definition of the name (memcpy@GLIBC_2.2.5): drop the name altogether, since
+      // returning the compat one is not what dlsym gives.
+      if (!vers.empty() && (U16(vers.data() + 2 * (size_t)i) & 0x8000) == 0) ifuncDefault.insert(name);
+      continue;
+    }
+    if (vers.empty()) {
+      out.emplace(name, addr);
+      continue;
+    }
+    // Several versions of one name (memcpy@GLIBC_2.2.5 then memcpy@@GLIBC_2.14):
+    // the default (non-hidden) one wins, as in dlsym, wherever it sits in .dynsym.
+    const bool hidden = (U16(vers.data() + 2 * (size_t)i) & 0x8000) != 0;
+    auto it = hiddenOf.find(name);
+    if (it == hiddenOf.end()) {
+      hiddenOf.emplace(name, hidden);
+      out[name] = addr;
+    } else if (it->second && !hidden) {
+      it->second = false;
+      out[name] = addr;
+    }
   }
+  for (const std::string& n : ifuncDefault) out.erase(n);
   return true;
+}
+
+// Size of the loaded ELF64 image at `base` as the program headers say:
+// max(p_vaddr + p_memsz) over PT_LOAD minus the lowest PT_LOAD page, rounded up to a page. Unlike the
+// file-backed mappings it includes .bss, which the kernel maps anonymously past
+// the file pages. False when the headers are unreadable or insane.
+inline bool ElfImageExtent(const ReadFn& read, uintptr_t base, uint64_t& size) {
+  using namespace detail;
+  std::vector<uint8_t> ph;
+  uint16_t phnum = 0;
+  if (!ReadElfPhdrs(read, base, ph, phnum)) return false;
+  bool haveLoad = false;
+  uint64_t lo = 0, hi = 0;
+  for (uint16_t i = 0; i < phnum; ++i) {
+    const uint8_t* p = ph.data() + 56 * (size_t)i;
+    if (U32(p) != 1 /*PT_LOAD*/) continue;
+    uint64_t vaddr = U64(p + 16), memsz = U64(p + 40);
+    if (memsz > kMaxImageSize || vaddr > kMaxImageSize * 4096) return false;
+    uint64_t start = vaddr & ~0xfffull, end = vaddr + memsz;
+    if (!haveLoad || start < lo) lo = start;
+    if (!haveLoad || end > hi) hi = end;
+    haveLoad = true;
+  }
+  if (!haveLoad || hi <= lo || hi - lo > kMaxImageSize) return false;
+  size = (hi - lo + 0xfff) & ~0xfffull;  // whole pages, as the kernel maps it (and SizeOfImage is)
+  return true;
+}
+
+// What ListModules and ListModuleRanges both need to know about a file's lowest
+// mapping, computed once so the two cannot disagree.
+struct MeasuredImage {
+  ImageKind kind = ImageKind::Unknown;
+  uint64_t size = 0;       // PE SizeOfImage, or ELF extent; the file span if headers fail
+  uint32_t timestamp = 0;  // PE TimeDateStamp, 0 for ELF
+  bool headersOk = false;  // the PE/ELF headers parsed
+};
+
+// `fileSpan` is the span of the file's mappings, the fallback size.
+inline MeasuredImage MeasureImage(const ReadFn& read, uintptr_t base, uint64_t fileSpan) {
+  MeasuredImage m;
+  m.kind = DetectImage(read, base);
+  m.size = fileSpan;
+  if (m.kind == ImageKind::Pe) {
+    PeHeaders pe;
+    if (ParsePeHeaders(read, base, pe)) {
+      m.headersOk = true;
+      m.timestamp = pe.timestamp;
+      if (pe.sizeOfImage != 0) m.size = pe.sizeOfImage;
+    }
+  } else if (m.kind == ImageKind::Elf) {
+    uint64_t extent = 0;
+    if (ElfImageExtent(read, base, extent)) {
+      m.headersOk = true;
+      m.size = extent;
+    }
+  }
+  return m;
 }
 
 }  // namespace linuxmod

@@ -238,7 +238,7 @@ struct ElfCase {
   const char* label;
 };
 
-static const char* kFixtureSyms[] = {"fx_counter", "fx_data", "fx_name", "fx_weak", "fx_add", "fx_calls"};
+static const char* kFixtureSyms[] = {"fx_counter", "fx_data", "fx_name", "fx_weak", "fx_add", "fx_calls", "fx_ver"};
 
 static void ExpectFixtureSymbols(const Exports& e, uintptr_t base, void* handle,
                                  uintptr_t loadBias, const char* label) {
@@ -327,6 +327,158 @@ static void TestElfLibc() {
   CHECK(e.size() > 1000);
   for (const char* name : {"malloc", "free", "getpid", "printf", "process_vm_readv"})
     CHECK(e[name] == (uintptr_t)dlsym(h, name));
+  // Versioned names: libc has a hidden compat definition BEFORE the default one in
+  // .dynsym (realpath@GLIBC_2.2.5 then realpath@@GLIBC_2.3, same for
+  // sched_getaffinity); the default must win, as in dlsym.
+  for (const char* name : {"realpath", "sched_getaffinity"}) {
+    CHECK(Has(e, name));
+    CHECK(e[name] == (uintptr_t)dlsym(h, name));
+  }
+  // STT_GNU_IFUNC symbols resolve to a resolver, not the function: reported as not found.
+  for (const char* name : {"memcpy", "strlen", "strcmp"}) CHECK(!Has(e, name));
+}
+
+// Where the dynamic table, symbols and version table sit in a laid-out fixture image.
+struct DynLayout {
+  uint64_t dyn = 0, symtab = 0, strtab = 0, versym = 0;
+  size_t versymEntryOff = 0;  // offset in the image of the DT_VERSYM d_val
+};
+static DynLayout FindDyn(const Bytes& file, const Bytes& img) {
+  DynLayout d;
+  uint64_t phoff = Rd64(file, 32);
+  uint16_t phnum = Rd16(file, 56);
+  for (uint16_t i = 0; i < phnum; ++i) {
+    size_t p = phoff + 56u * i;
+    if (Rd32(file, p) == 2) d.dyn = Rd64(file, p + 16);  // minVaddr is 0 for these .so files
+  }
+  for (size_t o = d.dyn; o + 16 <= img.size(); o += 16) {
+    uint64_t tag = Rd64(img, o), val = Rd64(img, o + 8);
+    if (tag == 0) break;
+    if (tag == 5) d.strtab = val;
+    if (tag == 6) d.symtab = val;
+    if (tag == 0x6ffffff0) { d.versym = val; d.versymEntryOff = o + 8; }
+  }
+  return d;
+}
+
+// The default (@@) version must win whichever order .dynsym lists the two
+// definitions of fx_ver, so flip which one is hidden and check both orders.
+static void TestElfVersioning() {
+  void* h = dlopen("./fixtures/elf_gnu.so", RTLD_LAZY);
+  CHECK(h != nullptr);
+  if (!h) return;
+  link_map* lm = nullptr;
+  dlinfo(h, RTLD_DI_LINKMAP, &lm);
+  const uint64_t defAddr = (uintptr_t)dlsym(h, "fx_ver") - lm->l_addr;
+  const uint64_t oldAddr = (uintptr_t)dlvsym(h, "fx_ver", "V1") - lm->l_addr;
+  CHECK(defAddr != oldAddr);
+
+  Bytes file = Slurp("fixtures/elf_gnu.so");
+  Bytes img = LayoutElf(file);
+  DynLayout d = FindDyn(file, img);
+  CHECK(d.versym != 0);
+  size_t idxDef = 0, idxOld = 0;
+  for (size_t i = 1; i < (d.strtab - d.symtab) / 24; ++i) {
+    uint64_t v = Rd64(img, d.symtab + 24 * i + 8);
+    if (v == defAddr) idxDef = i;
+    if (v == oldAddr) idxOld = i;
+  }
+  CHECK(idxDef && idxOld);
+  const uintptr_t base = 0x7f0000000000ull;
+  auto parse = [&](const Bytes& b) {
+    Exports e;
+    CHECK(ParseElfDynsym(BufferReader(b, base), base, e));
+    return e["fx_ver"] - base;
+  };
+  CHECK(parse(img) == defAddr);  // as built
+  // Make the *other* definition the default one: the answer must follow the hidden bit.
+  Bytes flipped = img;
+  uint16_t hidden = 0x8000 | 2, shown = 2;
+  memcpy(&flipped[d.versym + 2 * idxDef], &hidden, 2);
+  memcpy(&flipped[d.versym + 2 * idxOld], &shown, 2);
+  CHECK(parse(flipped) == oldAddr);
+  // Both hidden: the first definition stays.
+  Bytes bothHidden = flipped;
+  memcpy(&bothHidden[d.versym + 2 * idxOld], &hidden, 2);
+  CHECK(parse(bothHidden) == (idxDef < idxOld ? defAddr : oldAddr));
+  // The hidden definition forced first, regardless of the build's order.
+  Bytes oldFirstHidden = img;
+  memcpy(&oldFirstHidden[d.versym + 2 * idxOld], &hidden, 2);
+  memcpy(&oldFirstHidden[d.versym + 2 * idxDef], &shown, 2);
+  CHECK(parse(oldFirstHidden) == defAddr);
+
+  // Hostile DT_VERSYM: out of range, past the image end (short table), huge. The
+  // version table is ignored (first definition wins); everything else still parses.
+  for (uint64_t bad : std::vector<uint64_t>{0xfffffffffff0ull, img.size() - 2, img.size(), ~0ull}) {
+    Bytes b = img;
+    memcpy(&b[d.versymEntryOff], &bad, 8);
+    Exports e;
+    CHECK(ParseElfDynsym(BufferReader(b, base), base, e));
+    CHECK(Has(e, "fx_add") && Has(e, "fx_ver"));
+  }
+  dlclose(h);
+}
+
+static void TestImageExtent() {
+  const uintptr_t base = 0x7f0000000000ull;
+  // ELF: the extent comes from the program headers and covers .bss.
+  for (const char* f : {"elf_gnu.so", "elf_sysv.so", "elf_both.so"}) {
+    Bytes file = Slurp(std::string("fixtures/") + f);
+    Bytes img = LayoutElf(file);  // sized max(vaddr+memsz) - minVaddr, .bss included
+    uint64_t size = 0;
+    CHECK(ElfImageExtent(BufferReader(img, base), base, size));
+    const uint64_t rounded = (img.size() + 0xfff) & ~0xfffull;  // the extent is whole pages
+    CHECK(size == rounded);
+    MeasuredImage m = MeasureImage(BufferReader(img, base), base, 0x1000);
+    CHECK(m.kind == ImageKind::Elf && m.headersOk && m.size == rounded && m.timestamp == 0);
+  }
+  // PE: SizeOfImage and the timestamp.
+  {
+    Bytes img = LayoutPe(Slurp("fixtures/probe.dll"));
+    MeasuredImage m = MeasureImage(BufferReader(img, base), base, 0x1000);
+    CHECK(m.kind == ImageKind::Pe && m.headersOk && m.size == 0x1e000 && m.timestamp == 0x6a695ebc);
+  }
+  // Headers that cannot be read: the file span is the fallback; unknown stays unknown.
+  {
+    Bytes mz(0x40, 0);  // "MZ" but truncated: the PE header read fails
+    mz[0] = 'M';
+    mz[1] = 'Z';
+    MeasuredImage m = MeasureImage(BufferReader(mz, base), base, 0x5000);
+    CHECK(m.kind == ImageKind::Pe && !m.headersOk && m.size == 0x5000);
+    Bytes data(0x1000, 'x');
+    CHECK(MeasureImage(BufferReader(data, base), base, 0x1000).kind == ImageKind::Unknown);
+  }
+  // Hostile program headers.
+  Bytes file = Slurp("fixtures/elf_gnu.so");
+  Bytes good = LayoutElf(file);
+  uint64_t phoff = Rd64(file, 32);
+  uint16_t phnum = Rd16(file, 56);
+  auto patch = [&](size_t off, uint64_t v, size_t len) {
+    Bytes b = good;
+    memcpy(&b[off], &v, len);
+    return b;
+  };
+  uint64_t size = 0;
+  CHECK(!ElfImageExtent(BufferReader(patch(56, 0xffff, 2), base), base, size));  // phnum huge
+  CHECK(!ElfImageExtent(BufferReader(patch(56, 0, 2), base), base, size));
+  CHECK(!ElfImageExtent(BufferReader(good, base), base + 0x100000000ull, size));
+  {  // no PT_LOAD at all
+    Bytes b = good;
+    for (uint16_t i = 0; i < phnum; ++i)
+      if (Rd32(file, phoff + 56u * i) == 1) {
+        uint32_t t = 4;
+        memcpy(&b[phoff + 56u * i], &t, 4);
+      }
+    CHECK(!ElfImageExtent(BufferReader(b, base), base, size));
+  }
+  for (uint16_t i = 0; i < phnum; ++i) {
+    size_t p = phoff + 56u * i;
+    if (Rd32(file, p) != 1) continue;
+    CHECK(!ElfImageExtent(BufferReader(patch(p + 40, 0xffffffffffffffffull, 8), base), base, size));  // memsz overflow
+    CHECK(!ElfImageExtent(BufferReader(patch(p + 40, 1ull << 40, 8), base), base, size));            // memsz absurd
+    CHECK(!ElfImageExtent(BufferReader(patch(p + 16, 0xfffffffffffff000ull, 8), base), base, size));  // vaddr absurd
+    break;
+  }
 }
 
 static void TestElfRefusals() {
@@ -399,18 +551,22 @@ int main() {
   for (const ElfCase& c : cases) TestElfFixture(c);
   TestElfLibc();
   TestElfRefusals();
+  TestElfVersioning();
+  TestImageExtent();
 
   {
     Bytes pe = LayoutPe(Slurp("fixtures/probe.dll"));
     uint32_t exportRva = Rd32(pe, 0x100 + 24 + 112);
     FuzzImage(pe, 0x10000, true, exportRva, exportRva + 0x80);
     Bytes elf = LayoutElf(Slurp("fixtures/elf_gnu.so"));
-    // Hash/dynsym/dynstr live at 0x2f0-0x500 and .dynamic at 0x3e50 in these fixtures.
-    FuzzImage(elf, 0x400000, false, 0x2f0, 0x500);
-    FuzzImage(elf, 0x400000, false, 0x3e50, 0x3fe0);
-    Bytes sysv = LayoutElf(Slurp("fixtures/elf_sysv.so"));
-    FuzzImage(sysv, 0x400000, false, 0x2f0, 0x500);
-    FuzzImage(sysv, 0x400000, false, 0x3e50, 0x3fe0);
+    // Hash/dynsym/dynstr/versym sit in the first segment; .dynamic is located from the headers.
+    for (const char* f : {"fixtures/elf_gnu.so", "fixtures/elf_sysv.so"}) {
+      Bytes file = Slurp(f);
+      Bytes img = LayoutElf(file);
+      DynLayout d = FindDyn(file, img);
+      FuzzImage(img, 0x400000, false, 0x2f0, 0x700);
+      FuzzImage(img, 0x400000, false, (size_t)d.dyn, (size_t)d.dyn + 0x180);
+    }
   }
 
   if (g_failures) {

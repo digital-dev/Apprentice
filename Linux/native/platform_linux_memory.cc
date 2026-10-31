@@ -176,45 +176,43 @@ uintptr_t PageSize() {
   return size;
 }
 
-bool ListModuleRanges(ProcessHandle handle, std::vector<ModuleRange>& out) {
-  out.clear();
-  std::vector<linuxproc::MapsEntry> maps;
-  if (handle == 0 || !ReadMaps((uint32_t)handle, maps)) return false;
-  for (const linuxproc::ModuleSpan& m : linuxproc::GroupModules(maps))
-    out.push_back({linuxproc::BaseName(m.path), m.base, m.end - m.base});
-  return true;
-}
-
-bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
+// Name, base and size of every PE/ELF image in the target. `fullInfo` (ListModules)
+// also fills the PE fingerprint and skips a PE whose headers cannot be read, as
+// Windows does (no 0/0 fingerprint); ListModuleRanges keeps such a PE with its file
+// span. Both go through linuxmod::MeasureImage, so they agree on which files are
+// modules and how big each is (SizeOfImage / ELF program-header extent, which
+// includes .bss). A mapped data file (locale archive, asset bundle, .nls) is not an
+// image and is skipped by both.
+static bool EnumerateModules(ProcessHandle handle, std::vector<ModuleInfo>& out, bool fullInfo) {
   out.clear();
   std::vector<linuxproc::MapsEntry> maps;
   if (handle == 0 || !ReadMaps((uint32_t)handle, maps)) return false;
   const linuxmod::ReadFn read = Reader(handle);
   for (const linuxproc::ModuleSpan& m : linuxproc::GroupModules(maps)) {
+    linuxmod::MeasuredImage img = linuxmod::MeasureImage(read, m.base, m.end - m.base);
+    if (img.kind == linuxmod::ImageKind::Unknown) continue;
+    if (fullInfo && img.kind == linuxmod::ImageKind::Pe && !img.headersOk) continue;
     ModuleInfo info;
     info.name = linuxproc::BaseName(m.path);
     info.base = m.base;
-    switch (linuxmod::DetectImage(read, m.base)) {
-      case linuxmod::ImageKind::Pe: {
-        // Same rule as Windows: a PE whose headers cannot be read is left out
-        // rather than reported with a 0/0 fingerprint.
-        linuxmod::PeHeaders pe;
-        if (!linuxmod::ParsePeHeaders(read, m.base, pe)) continue;
-        info.size = pe.sizeOfImage;
-        info.timestamp = pe.timestamp;
-        break;
-      }
-      case linuxmod::ImageKind::Elf:
-        info.size = (uint32_t)std::min<uintptr_t>(m.end - m.base, 0xffffffffu);
-        info.timestamp = 0;
-        break;
-      case linuxmod::ImageKind::Unknown:
-        continue;  // a mapped data file, or headers that cannot be read
-    }
+    info.size = (uint32_t)std::min<uint64_t>(img.size, 0xffffffffu);
+    info.timestamp = img.timestamp;
     // version stays empty: there is no file-version resource lookup on Linux.
     out.push_back(std::move(info));
   }
   return true;
+}
+
+bool ListModuleRanges(ProcessHandle handle, std::vector<ModuleRange>& out) {
+  std::vector<ModuleInfo> mods;
+  out.clear();
+  if (!EnumerateModules(handle, mods, false)) return false;
+  for (const ModuleInfo& m : mods) out.push_back({m.name, m.base, (uintptr_t)m.size});
+  return true;
+}
+
+bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
+  return EnumerateModules(handle, out, true);
 }
 
 uintptr_t ResolveExport(ProcessHandle handle, uintptr_t moduleBase, const std::string& name) {

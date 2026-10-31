@@ -16,3 +16,7 @@ EXPORT __attribute__((noinline)) void probe_write(float* target, float value) {
 // anonymous mapping and would not change the size of the file's mappings, so
 // the variant would look identical to ListModules. The first byte makes it .data.
 EXPORT char g_pad[PAD_SIZE] = {1};
+
+// Zero-initialised: lives in .bss, the anonymous mapping past the file's pages.
+// platform_memory_test checks the module range covers it.
+EXPORT char g_bss_tail[65536];

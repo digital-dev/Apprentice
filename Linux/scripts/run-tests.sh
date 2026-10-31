@@ -24,12 +24,15 @@ g++ -std=c++17 -O0 -g -Wall -o Linux/native/tests/proc_parse_test Linux/native/t
 # are checked-in copies of test-harness/*.dll. ASan/UBSan catch any out-of-bounds
 # use inside the parsers, which read untrusted target memory.
 F=Linux/native/tests/fixtures
-gcc -shared -fPIC -Wl,--hash-style=gnu  -o $F/elf_gnu.so  $F/elf_fixture.c
-gcc -shared -fPIC -Wl,--hash-style=sysv -o $F/elf_sysv.so $F/elf_fixture.c
-gcc -shared -fPIC -Wl,--hash-style=both -o $F/elf_both.so $F/elf_fixture.c
+gcc -shared -fPIC -Wl,--hash-style=gnu  -Wl,--version-script=$F/elf_fixture.map -o $F/elf_gnu.so  $F/elf_fixture.c
+gcc -shared -fPIC -Wl,--hash-style=sysv -Wl,--version-script=$F/elf_fixture.map -o $F/elf_sysv.so $F/elf_fixture.c
+gcc -shared -fPIC -Wl,--hash-style=both -Wl,--version-script=$F/elf_fixture.map -o $F/elf_both.so $F/elf_fixture.c
 g++ -std=c++17 -O0 -g -Wall -fsanitize=address,undefined -fno-sanitize-recover=undefined \
   -o Linux/native/tests/module_parse_test Linux/native/tests/module_parse_test.cc -ldl
 (cd Linux/native/tests && ./module_parse_test)
+# The real backend against this process as target: module extents (.bss), image filter, exports.
+g++ -std=c++17 -O0 -g -Wall -Inative/src/platform -o Linux/native/tests/platform_memory_test   Linux/native/tests/platform_memory_test.cc Linux/native/platform_linux.cc   Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc -ldl
+(cd Linux/native/tests && ./platform_memory_test)
 
 (cd native && npx node-gyp configure --target="${NODE_GYP_TARGET:-22.12.0}" \
   && npx node-gyp build --target="${NODE_GYP_TARGET:-22.12.0}")

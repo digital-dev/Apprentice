@@ -11,3 +11,11 @@ __attribute__((visibility("hidden"))) int fx_hidden(void) { return 1; }
 static int fx_static(void) { return 2; }
 extern int fx_undefined_import(void);
 int fx_calls(void) { return fx_static() + fx_hidden() + fx_undefined_import(); }
+
+/* Two versions of one name, as libc has for memcpy/sched_getaffinity: the
+ * hidden compat one (@V1) and the default one (@@V2). Linked with
+ * elf_fixture.map. dlsym("fx_ver") returns the default. */
+int fx_ver_v1(void) { return 1; }
+int fx_ver_v2(void) { return 2; }
+__asm__(".symver fx_ver_v1,fx_ver@V1");
+__asm__(".symver fx_ver_v2,fx_ver@@V2");
