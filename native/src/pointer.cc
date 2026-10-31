@@ -40,9 +40,12 @@ struct ModuleRange {
 // treat any of them as a valid anchor.
 std::vector<ModuleRange> ListModules(platform::ProcessHandle h) {
   std::vector<ModuleRange> out;
-  std::vector<platform::ModuleInfo> mods;
-  if (!platform::ListModules(h, mods)) return out;
-  for (const auto& m : mods) out.push_back({m.name, m.base, m.base + m.size});
+  std::vector<platform::ModuleRange> mods;
+  if (!platform::ListModuleRanges(h, mods)) return out;
+  for (const auto& m : mods) {
+    if (m.size == 0) continue; // GetModuleInformation failed: old code dropped these
+    out.push_back({m.name, m.base, m.base + m.size});
+  }
   return out;
 }
 

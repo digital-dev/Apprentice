@@ -52,6 +52,18 @@ bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out);
 // forwarder chain is not attempted.
 uintptr_t ResolveExport(ProcessHandle handle, uintptr_t moduleBase, const std::string& name);
 
+// Name, base and size only: no PE-header read, no file-version lookup. For
+// hot paths (per-read module lookups, the pointer scan's anchor list) where
+// ListModules' per-module disk and header I/O is too costly. Same module
+// order as ListModules; unlike it, modules whose PE headers are unreadable
+// are still returned.
+struct ModuleRange {
+  std::string name;
+  uintptr_t base = 0;
+  uintptr_t size = 0; // 0 when the OS could not report it
+};
+bool ListModuleRanges(ProcessHandle handle, std::vector<ModuleRange>& out);
+
 using ThreadHandle = uintptr_t;
 
 // Starts a thread in the target at `startAddress`, passing `param` as its

@@ -299,6 +299,27 @@ void SleepMs(uint32_t ms) {
   ::Sleep(ms);
 }
 
+bool ListModuleRanges(ProcessHandle handle, std::vector<ModuleRange>& out) {
+  out.clear();
+  HANDLE h = reinterpret_cast<HANDLE>(handle);
+  HMODULE mods[1024];
+  DWORD needed = 0;
+  if (!EnumProcessModulesEx(h, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) return false;
+  size_t count = needed / sizeof(HMODULE);
+  if (count > 1024) count = 1024;
+  for (size_t i = 0; i < count; i++) {
+    char name[MAX_PATH] = {0};
+    if (GetModuleBaseNameA(h, mods[i], name, MAX_PATH) == 0) continue;
+    MODULEINFO mi{};
+    ModuleRange r;
+    r.name = name;
+    r.base = reinterpret_cast<uintptr_t>(mods[i]);
+    if (GetModuleInformation(h, mods[i], &mi, sizeof(mi))) r.size = mi.SizeOfImage;
+    out.push_back(std::move(r));
+  }
+  return true;
+}
+
 bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
   out.clear();
   HANDLE h = reinterpret_cast<HANDLE>(handle);

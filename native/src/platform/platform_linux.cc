@@ -36,6 +36,7 @@ uintptr_t MainModuleBase(ProcessHandle) { return 0; }
 // Stub; a later task replaces this with a real ABI probe.
 Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::SysV; }
 
+bool ListModuleRanges(ProcessHandle, std::vector<ModuleRange>&) { return false; }
 bool ReadMemory(ProcessHandle, uintptr_t, void*, size_t) { return false; }
 bool WriteMemory(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
 bool QueryRegion(ProcessHandle, uintptr_t, Region&) { return false; }

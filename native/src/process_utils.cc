@@ -58,6 +58,7 @@ bool IsProcessAlive(uintptr_t handle) {
   return platform::IsAlive(handle);
 }
 
+// Always returns true: platform::CloseProcess is void, unlike the old CloseHandle result.
 Napi::Value Detach(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 1 || !info[0].IsNumber()) {

@@ -37,8 +37,8 @@ inline std::optional<uintptr_t> ResolveChain(
 // FindContainingModule machinery (that supports the REVERSE pointer scan;
 // this supports the forward walk above).
 inline std::optional<uintptr_t> FindModuleBase(platform::ProcessHandle h, const std::string& moduleName) {
-  std::vector<platform::ModuleInfo> mods;
-  if (!platform::ListModules(h, mods)) return std::nullopt;
+  std::vector<platform::ModuleRange> mods;
+  if (!platform::ListModuleRanges(h, mods)) return std::nullopt;
   for (const auto& m : mods) {
     if (_stricmp(m.name.c_str(), moduleName.c_str()) == 0) return m.base;
   }

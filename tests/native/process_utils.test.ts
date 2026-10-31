@@ -42,3 +42,22 @@ describe('attach', () => {
     expect(ok).toBe(true)
   })
 })
+
+describe('getModuleBase (lightweight module lookup)', () => {
+  it('matches attach baseAddress for the main module and listModules for kernel32.dll', () => {
+    const { handle, baseAddress } = (addon as any).attach(harness.pid)
+    try {
+      expect((addon as any).getModuleBase(handle, 'harness.exe')).toBe(baseAddress)
+      // case-insensitive name match, as before
+      expect((addon as any).getModuleBase(handle, 'HARNESS.EXE')).toBe(baseAddress)
+      const k32 = ((addon as any).listModules(handle) as { name: string; base: string }[]).find(
+        (m) => m.name.toLowerCase() === 'kernel32.dll',
+      )
+      expect(k32).toBeDefined()
+      expect((addon as any).getModuleBase(handle, 'kernel32.dll')).toBe(k32!.base)
+      expect((addon as any).getModuleBase(handle, 'no-such-module.dll')).toBeNull()
+    } finally {
+      ;(addon as any).detach(handle)
+    }
+  })
+})
