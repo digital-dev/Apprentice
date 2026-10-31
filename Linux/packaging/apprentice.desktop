@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Apprentice
+Comment=Offline game trainer
+# The .deb installs its own desktop entry (electron-builder generates one from
+# this same productName/executableName at build time, installed to
+# /usr/share/applications/ by after-install.sh's update-desktop-database
+# step) — this file is for the AppImage, which is a single portable
+# executable with no installer to register it in an application menu. Drop
+# it in ~/.local/share/applications/ (and copy App Icon/Apprentice.png to
+# ~/.local/share/icons/hicolor/512x512/apps/apprentice.png, or point Icon=
+# at the AppImage's absolute path) after editing Exec= below to wherever you
+# placed the AppImage. See Linux/README.md.
+Exec=/path/to/Apprentice-VERSION.AppImage
+Icon=apprentice
+Terminal=false
+Categories=Utility;

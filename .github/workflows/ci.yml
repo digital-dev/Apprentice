@@ -186,9 +186,46 @@ jobs:
           APPRENTICE_HARNESS: wine
         run: bash Linux/scripts/run-tests.sh
 
+      # Packages the AppImage and .deb (Linux/packaging/electron-builder.linux.json)
+      # directly in this job rather than re-running build-in-docker.sh --package: this
+      # runner already IS a native Linux box with the addon just built above, so the
+      # rsync-to-a-copy step that script needs for a Windows host would only slow this
+      # one down for no benefit. electron-builder.linux.json's memory_addon.node files
+      # entry reads from Linux/dist, so it has to land there before packaging, same as
+      # build-in-docker.sh's own copy for this step.
+      - name: Build app bundle
+        run: npm run build
+
+      - name: Package AppImage and deb
+        run: |
+          mkdir -p Linux/dist
+          cp native/build/Release/memory_addon.node Linux/dist/
+          npx electron-builder --linux --config Linux/packaging/electron-builder.linux.json
+
+      # AppImage --appimage-extract and xvfb-run (not the fuse2 mount path) are what
+      # Linux/scripts/smoke-package.sh actually exercises; still installs libfuse2 so this
+      # also covers the README's documented normal-run path staying installable.
+      - name: Install smoke-test dependencies
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libfuse2 xvfb
+
+      - name: Smoke-test the packaged AppImage
+        run: bash Linux/scripts/smoke-package.sh
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apprentice-Linux-${{ github.sha }}
+          path: |
+            Linux/dist/*.AppImage
+            Linux/dist/*.deb
+          retention-days: 3
+
   release:
     name: Publish release
-    needs: test
+    # Needs linux too (not just test) so a Linux build failure blocks the release the
+    # same way a Windows one does, rather than quietly shipping a release missing the
+    # Linux packages.
+    needs: [test, linux]
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
       github.event_name == 'workflow_dispatch'
@@ -265,6 +302,24 @@ jobs:
           (cd release && sha256sum "Apprentice-Setup-${VERSION}.exe" > SHA256SUMS.txt)
           ls -l release/*.exe release/SHA256SUMS.txt
 
+      # Already built and smoke-tested by the linux job (needs: [test, linux] above) —
+      # fetched here rather than rebuilt so this windows-2022 runner doesn't need Docker/WSL
+      # to produce a Linux package, and so the exact bits that passed the smoke test are what
+      # gets released.
+      - name: Download Linux packages
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: Apprentice-Linux-${{ github.sha }}
+          path: release/linux
+
+      - name: Checksum the Linux packages
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          cd release/linux
+          sha256sum *.AppImage *.deb > SHA256SUMS.txt
+          ls -l .
+
       - name: Upload the installer (dry run)
         if: steps.version.outputs.publish == 'true' && env.DRY_RUN == 'true'
         uses: actions/upload-artifact@v4
@@ -273,6 +328,9 @@ jobs:
           path: |
             release/Apprentice-Setup-*.exe
             release/SHA256SUMS.txt
+            release/linux/*.AppImage
+            release/linux/*.deb
+            release/linux/SHA256SUMS.txt
           retention-days: 3
 
       - name: Create release
@@ -291,4 +349,5 @@ jobs:
             --title "Apprentice v${VERSION}" \
             --generate-notes \
             $FLAGS \
-            "$INSTALLER" release/SHA256SUMS.txt
+            "$INSTALLER" release/SHA256SUMS.txt \
+            release/linux/*.AppImage release/linux/*.deb release/linux/SHA256SUMS.txt

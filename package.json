@@ -3,6 +3,7 @@
   "version": "0.2.5-beta",
   "description": "Offline Electron+React desktop app for game training",
   "author": "digital-dev",
+  "homepage": "https://github.com/digital-dev/Apprentice",
   "license": "GPL-3.0-only",
   "main": "out/main/index.js",
   "scripts": {

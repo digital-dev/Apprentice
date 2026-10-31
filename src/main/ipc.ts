@@ -856,13 +856,30 @@ function refreshModuleContext(exeName: string): void {
 const PTRACE_DENIED_MESSAGE =
   'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
 
+// Which ptrace fix to show depends on how this binary was installed. An
+// AppImage can't carry a capability bit at all — the squashfs it runs from
+// is mounted read-only, so after-install.sh's setcap step has nothing to
+// act on — leaving the Yama sysctl as its only route. electron-builder's
+// AppImage launcher sets APPIMAGE (to the mount's own path) before exec'ing
+// the app, which is also the documented way to detect running-as-AppImage
+// at runtime, so it doubles as that signal here. A .deb install already
+// has CAP_SYS_PTRACE from setcap unless that step was skipped (missing
+// `setcap`, see after-install.sh) or stripped by a later reinstall, so its
+// fix leads with reinstalling rather than the sysctl.
+export function ptraceHelp(): { isAppImage: boolean; fix: string } {
+  const isAppImage = Boolean(process.env.APPIMAGE)
+  const fix = isAppImage
+    ? 'Allow it for this login with "sudo sysctl kernel.yama.ptrace_scope=0", or make that persist ' +
+      'across reboots with "echo kernel.yama.ptrace_scope=0 | sudo tee /etc/sysctl.d/99-apprentice-ptrace.conf" ' +
+      '(see Linux/packaging/99-apprentice-ptrace.conf and Linux/README.md).'
+    : 'Reinstall the .deb — its after-install step grants CAP_SYS_PTRACE automatically — or allow it for ' +
+      'this login with "sudo sysctl kernel.yama.ptrace_scope=0" (/proc/sys/kernel/yama/ptrace_scope).'
+  return { isAppImage, fix }
+}
+
 export function describeAttachError(message: string): string {
   if (message !== PTRACE_DENIED_MESSAGE) return message
-  return (
-    'Could not attach: ptrace is blocked by this system’s Yama policy. Run Apprentice with ' +
-    'CAP_SYS_PTRACE, or allow attaching for this session with ' +
-    '"sudo sysctl kernel.yama.ptrace_scope=0" (/proc/sys/kernel/yama/ptrace_scope).'
-  )
+  return 'Could not attach: ptrace is blocked by this system’s Yama policy. ' + ptraceHelp().fix
 }
 
 // What the writeWatch:start handler's catch block below actually runs on
