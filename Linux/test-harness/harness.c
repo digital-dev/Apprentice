@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 #if defined(__x86_64__) || defined(__i386__)
 #include <xmmintrin.h>
@@ -199,6 +200,29 @@ __attribute__((visibility("default"))) void RemoteCallProbe2(int* target, int va
   *target = value;
 }
 
+// Linux-only commands for the ptrace tests (tests/native/linuxPtrace.test.ts); the Windows
+// harness answers them with a plain OK and does nothing.
+//   spawnthreads N  N more idle threads (sleep loops), so suspension covers many threads
+//   threadstorm     a spawner thread that keeps creating short-lived threads; stopstorm ends it
+//   nodump          prctl(PR_SET_DUMPABLE, 0): a non-root tracer of the same uid is refused
+//   allowptrace     prctl(PR_SET_PTRACER, ANY): Yama ptrace_scope=1 lets a sibling attach
+static volatile int g_storm_running = 0;
+static void* idle_thread(void* arg) {
+  (void)arg;
+  for (;;) sleep_ms(10);
+  return NULL;
+}
+static void* short_thread(void* arg) {
+  (void)arg;
+  usleep(500);
+  return NULL;
+}
+static void* storm_thread(void* arg) {
+  (void)arg;
+  while (g_storm_running) { start_thread(short_thread); usleep(200); }
+  return NULL;
+}
+
 static void* map_big(int prot) {
   void* p = mmap(NULL, BIG_REGION_SIZE, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   return p == MAP_FAILED ? NULL : p;
@@ -217,7 +241,20 @@ int main(void) {
     unsigned char val8;
     long long val64;
     double dval;
-    if (strncmp(line, "bigallocfree", 12) == 0) {
+    if (sscanf(line, "spawnthreads %d", &val) == 1) {
+      for (int i = 0; i < val; ++i) start_thread(idle_thread);
+      printf("OK\n");
+    } else if (strncmp(line, "threadstorm", 11) == 0) {
+      if (!g_storm_running) { g_storm_running = 1; start_thread(storm_thread); }
+      printf("OK\n");
+    } else if (strncmp(line, "stopstorm", 9) == 0) {
+      g_storm_running = 0;
+      printf("OK\n");
+    } else if (strncmp(line, "nodump", 6) == 0) {
+      printf(prctl(PR_SET_DUMPABLE, 0) == 0 ? "OK\n" : "ERR\n");
+    } else if (strncmp(line, "allowptrace", 11) == 0) {
+      printf(prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY) == 0 ? "OK\n" : "ERR\n");
+    } else if (strncmp(line, "bigallocfree", 12) == 0) {
       if (g_big_data != NULL) { munmap(g_big_data, BIG_REGION_SIZE); g_big_data = NULL; }
       printf("OK\n");
     } else if (strncmp(line, "bigalloc", 8) == 0) {

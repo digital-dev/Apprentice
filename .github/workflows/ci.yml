@@ -162,7 +162,9 @@ jobs:
           (cd Linux/native/tests && ./platform_memory_test)
           g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/platform_write_test Linux/native/tests/platform_write_test.cc Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
           (cd Linux/native/tests && ./platform_write_test)
-          npx vitest run tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts tests/native/linux_memory.test.ts tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts
+          g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/ptrace_core_test Linux/native/tests/ptrace_core_test.cc Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc Linux/native/platform_linux_ptrace.cc Linux/native/ptrace_core.cc Linux/native/tracer_thread.cc -ldl
+          (cd Linux/native/tests && ./ptrace_core_test)
+          npx vitest run tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts tests/native/linux_memory.test.ts tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts
 
       # The Proton path: test-harness/harness.c built with mingw-w64 and run under real Wine, so the
       # same tests see a PE process with PE modules through /proc. `wine` is only the launcher script;

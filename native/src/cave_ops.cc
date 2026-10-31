@@ -976,7 +976,8 @@ Napi::Value SuspendThreads(const Napi::CallbackInfo& info) {
   uint32_t pid = info[1].As<Napi::Number>().Uint32Value();
 
   if (!platform::SuspendAll(h, pid)) {
-    Napi::Error::New(env, "failed to suspend every thread")
+    std::string why = platform::SuspendAllError();
+    Napi::Error::New(env, why.empty() ? "failed to suspend every thread" : why)
         .ThrowAsJavaScriptException();
     return env.Null();
   }

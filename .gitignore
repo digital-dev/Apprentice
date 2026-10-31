@@ -17,3 +17,5 @@ Linux/native/tests/module_parse_test
 Linux/native/tests/fixtures/*.so
 Linux/test-harness/*.so
 Linux/native/tests/platform_memory_test
+Linux/native/tests/platform_write_test
+Linux/native/tests/ptrace_core_test

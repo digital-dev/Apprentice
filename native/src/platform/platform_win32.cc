@@ -318,6 +318,8 @@ void ResumeAll() {
   g_suspended.clear();
 }
 
+std::string SuspendAllError() { return std::string(); }
+
 void SleepMs(uint32_t ms) {
   ::Sleep(ms);
 }

@@ -155,6 +155,10 @@ bool FreeMemory(ProcessHandle handle, uintptr_t address);
 // ResumeAll before suspending again.
 bool SuspendAll(ProcessHandle handle, uint32_t pid);
 void ResumeAll();
+// Why the most recent SuspendAll failed, for the user ("" after a success, or
+// when the platform gives no detail — Windows). On Linux a refused ptrace
+// attach reports an actionable message (CAP_SYS_PTRACE / Yama ptrace_scope).
+std::string SuspendAllError();
 
 // A calling-thread sleep, not a target-process operation — exists so
 // callers that create-and-tear-down many throwaway remote threads in quick

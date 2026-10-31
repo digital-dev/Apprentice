@@ -11,8 +11,8 @@
 //   ReadMemory/WriteMemory  process_vm_readv/writev, or /proc/<pid>/mem,
 //                           which can write pages that are not writable
 //   QueryRegion             parse /proc/<pid>/maps
-//   SuspendAll/ResumeAll    ptrace(PTRACE_ATTACH) per thread in
-//                           /proc/<pid>/task, or SIGSTOP the group
+//   SuspendAll/ResumeAll    done: platform_linux_ptrace.cc (PTRACE_SEIZE per
+//                           thread in /proc/<pid>/task, on the tracer thread)
 //   AllocateNear            the hard one. Linux has no VirtualAllocEx:
 //                           hijack a thread, save its registers, point them
 //                           at mmap with MAP_FIXED_NOREPLACE near the
@@ -30,17 +30,11 @@ Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::SysV; }
 
 uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }
 bool FreeMemory(ProcessHandle, uintptr_t) { return false; }
-bool SuspendAll(ProcessHandle, uint32_t) { return false; }
-void ResumeAll() {}
-void SleepMs(uint32_t) {}
+// SuspendAll, ResumeAll, SuspendAllError, SleepMs, ListThreads and
+// GetThreadRegisters live in platform_linux_ptrace.cc.
 ThreadHandle CreateRemoteThread(ProcessHandle, uintptr_t, uintptr_t) { return 0; }
 bool WaitForRemoteThread(ThreadHandle, uint32_t) { return false; }
 void CloseRemoteThread(ThreadHandle) {}
-bool ListThreads(uint32_t, std::vector<ThreadInfo>& out) {
-  out.clear();
-  return false;
-}
-bool GetThreadRegisters(uint32_t, ThreadRegisters&) { return false; }
 
 // Stub. The ptrace backend, all on the one tracer thread:
 //   Attach          seize every thread in /proc/<pid>/task with

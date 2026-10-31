@@ -137,6 +137,26 @@ int main() {
   assert(StatState("123 (x)") == 0);
   assert(StatState("nonsense") == 0);
 
+  // /proc/<pid>/status "Key:\tvalue" fields (TracerPid, Tgid, PPid).
+  {
+    const std::string st = "Name:\tharness\nState:\tS (sleeping)\nTgid:\t399\nPPid:\t12\n"
+                           "TracerPid:\t471\nUid:\t0\t0\t0\t0\n";
+    assert(StatusField(st, "TracerPid") == 471);
+    assert(StatusField(st, "Tgid") == 399);
+    assert(StatusField(st, "PPid") == 12);
+    assert(StatusField(st, "Uid") == 0);
+    assert(StatusField(st, "Missing") == -1);
+    assert(StatusField("XTracerPid:\t5\n", "TracerPid") == -1);  // whole key only
+    assert(StatusField("TracerPid:\tabc\n", "TracerPid") == -1);
+    assert(StatusField("", "TracerPid") == -1);
+  }
+
+  // /proc/<pid>/task entry names: decimal tids only.
+  assert(TaskId("1234") == 1234);
+  assert(TaskId(".") == 0 && TaskId("..") == 0 && TaskId("") == 0);
+  assert(TaskId("12a") == 0 && TaskId("-3") == 0 && TaskId("0") == 0);
+  assert(TaskId("99999999999") == 0);  // out of pid range
+
   puts("proc_parse_test OK");
   return 0;
 }

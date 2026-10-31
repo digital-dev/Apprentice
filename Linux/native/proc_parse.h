@@ -230,4 +230,36 @@ inline char StatState(const std::string& stat) {
   return i < stat.size() ? stat[i] : 0;
 }
 
+// The leading decimal of a /proc/<pid>/status field ("TracerPid:\t471" -> 471),
+// matched on the whole key at the start of a line. -1 when absent or not a number.
+inline long StatusField(const std::string& status, const char* key) {
+  const std::string k = std::string(key) + ":";
+  for (size_t pos = 0; pos < status.size();) {
+    size_t end = status.find('\n', pos);
+    if (end == std::string::npos) end = status.size();
+    if (status.compare(pos, k.size(), k) == 0) {
+      const char* s = status.c_str() + pos + k.size();
+      while (*s == ' ' || *s == '\t') ++s;
+      char* stop = nullptr;
+      long v = strtol(s, &stop, 10);
+      return stop == s ? -1 : v;
+    }
+    pos = end + 1;
+  }
+  return -1;
+}
+
+// A /proc/<pid>/task entry name as a tid; 0 for ".", "..", or anything that is
+// not a positive decimal in pid range.
+inline int TaskId(const char* name) {
+  if (!name || !*name) return 0;
+  long v = 0;
+  for (const char* p = name; *p; ++p) {
+    if (*p < '0' || *p > '9') return 0;
+    v = v * 10 + (*p - '0');
+    if (v > 0x3fffffff) return 0;  // above PID_MAX_LIMIT (4M) by far: not a tid
+  }
+  return (int)v;
+}
+
 }  // namespace linuxproc

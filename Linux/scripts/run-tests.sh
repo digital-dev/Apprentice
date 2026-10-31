@@ -67,6 +67,12 @@ g++ -std=c++17 -O0 -g -Wall -Inative/src/platform -o Linux/native/tests/platform
 # refusal, rollback, fd leaks, threads.
 g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/platform_write_test Linux/native/tests/platform_write_test.cc Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
 (cd Linux/native/tests && ./platform_write_test)
+# ptrace: tracer thread, StopGuard/registers, SuspendAll/ResumeAll against forked children (thread storms,
+# a target killed mid-suspend, an already-traced target).
+LINUX_PLATFORM_SRCS=(Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc
+  Linux/native/platform_linux_write.cc Linux/native/platform_linux_ptrace.cc Linux/native/ptrace_core.cc Linux/native/tracer_thread.cc)
+g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/ptrace_core_test Linux/native/tests/ptrace_core_test.cc "${LINUX_PLATFORM_SRCS[@]}" -ldl
+(cd Linux/native/tests && ./ptrace_core_test)
 
 (cd native && npx node-gyp configure --target="${NODE_GYP_TARGET:-22.12.0}" \
   && npx node-gyp build --target="${NODE_GYP_TARGET:-22.12.0}")
@@ -75,18 +81,19 @@ if [ -n "${TEST_NODE_BIN:-}" ]; then export PATH="$TEST_NODE_BIN:$PATH"; fi
 node -v
 
 # Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: cave_ops/cloneStackScript (caves),
-# thread_ops, write_watch/signature_golden/snapshot_ops (ptrace), mono_*. patch_ops skips its two
+# write_watch/signature_golden/snapshot_ops (hardware watch), mono_*. patch_ops skips its two
 # write-watch tests on Linux (Task 15).
 DEFAULT_TESTS=(tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts
   tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts
   tests/native/linux_memory.test.ts tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts
-  tests/native/script_ops.test.ts)
+  tests/native/script_ops.test.ts tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts)
 # Step 2: the Proton path, test-harness/harness.c built with mingw and run under Wine
 # (APPRENTICE_HARNESS=wine, see Linux/test-harness/README.md).
 WINE_TESTS=(tests/native/platform.test.ts tests/native/module_info.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts
-  tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts)
+  tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts
+  tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts)
 
 run_wine_step() {
   wine_env
