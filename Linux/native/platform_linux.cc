@@ -2,9 +2,11 @@
 
 // Linux backend: most of it real now, the rest declared but not yet
 // implemented. `IsSupported()` stays false until the whole chain this flag
-// gates (including Mono/IL2CPP remote calls, Task 13-14, and the hardware
-// write-watch, Task 15) is real — flipping it early would tell the app
-// features work that do not yet.
+// gates (including Mono/IL2CPP remote calls, Task 13-14) is real — flipping
+// it early would tell the app features work that do not yet. The hardware
+// write-watch (Task 15) is real as of platform_linux_debug.cc, but it alone
+// does not move this flag: ipc.ts's platformSupportsInjection reads it for
+// the whole injection chain, not write-watch specifically.
 //
 //   ReadMemory/WriteMemory, QueryRegion, ListModules, ResolveExport,
 //   PlatformAbiFor            platform_linux_memory.cc / platform_linux_remote.cc
@@ -19,6 +21,9 @@
 //                             munmap syscall or the caller's own code for a
 //                             few instructions, then is restored exactly as
 //                             found — see remote_exec.h)
+//   SupportsHardwareWatch, DebugSession (Attach/SetHwBreakpoint/Wait/
+//   Continue/Detach)          platform_linux_debug.cc — the ptrace hardware
+//                             write-watch backend, also on the tracer thread.
 namespace platform {
 
 bool IsSupported() { return false; }
@@ -30,34 +35,7 @@ const char* Name() { return "linux"; }
 // FreeMemory, CreateRemoteThread, WaitForRemoteThread, CloseRemoteThread and
 // PlatformAbiFor in platform_linux_remote.cc; SuspendAll, ResumeAll,
 // SuspendAllError, SleepMs, ListThreads and GetThreadRegisters in
-// platform_linux_ptrace.cc.
-
-// Stub. The ptrace backend, all on the one tracer thread:
-//   Attach          seize every thread in /proc/<pid>/task with
-//                   PTRACE_O_TRACECLONE; report Attached once ALL are stopped.
-//   ThreadCreated   PTRACE_EVENT_CLONE (debug registers are not inherited by
-//                   the new thread); stop ALL threads before reporting it.
-//   Hit             SIGTRAP whose Dr6 names the slot; the reporting thread
-//                   stays stopped.
-//   SetHwBreakpoint PTRACE_POKEUSER on u_debugreg. Callable on a running
-//                   thread too (the disarm after the loop): if the thread is
-//                   not stopped, PTRACE_INTERRUPT and wait for it, poke, then
-//                   resume it — POKEUSER on a running tracee fails with ESRCH.
-//   Continue        resume the stop ev.tid names (and any threads the backend
-//                   stopped for it), re-injecting a non-ours signal.
-//   Detach          drain, then PTRACE_DETACH every thread; disarms nothing.
-bool SupportsHardwareWatch() { return false; }
-
-struct DebugSession::State {};
-DebugSession::DebugSession(std::unique_ptr<State> state) : state_(std::move(state)) {}
-DebugSession::~DebugSession() { Detach(); }
-std::unique_ptr<DebugSession> DebugSession::Attach(uint32_t, std::string& error) {
-  error = "not supported on this platform yet";
-  return nullptr;
-}
-bool DebugSession::SetHwBreakpoint(uint32_t, int, uintptr_t, size_t, bool) { return false; }
-bool DebugSession::Wait(uint32_t, WatchEvent&) { return false; }
-void DebugSession::Continue(const WatchEvent&) {}
-void DebugSession::Detach() {}
+// platform_linux_ptrace.cc; SupportsHardwareWatch and DebugSession in
+// platform_linux_debug.cc.
 
 } // namespace platform

@@ -108,18 +108,25 @@ if [ -n "${TEST_NODE_BIN:-}" ]; then export PATH="$TEST_NODE_BIN:$PATH"; fi
 node -v
 
 # Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: cloneStackScript (patch
-# caves hooking a live instruction stream), write_watch/signature_golden/snapshot_ops (hardware
-# watch, Task 15). patch_ops skips its two write-watch tests on Linux (Task 15). cave_ops and
-# mono_call's callRemoteFunction cases run here too now: mono_call.cc's BuildCallStub picks the
-# System V register convention for this native ELF target (Task 13), the same way it already
-# picked Microsoft x64 for Wine's PE target. mono_bridge's 8 hand-built stub builders are
-# likewise ABI-aware now (Task 14) and run against the loadmono fixture here too.
+# caves hooking a live instruction stream), signature_golden (its golden fixture was captured
+# against the Windows harness.exe's MSVC-compiled bytes; the gcc-compiled ELF harness's own
+# write-site instructions are a different byte sequence, so this needs its own Linux golden
+# fixture — a separate task, not Task 15). write_watch and snapshot_ops now run here too: the
+# ptrace hardware write-watch (Task 15, Linux/native/platform_linux_debug.cc) makes
+# platform::DebugSession real on Linux, which both files' startWriteWatch/stopWriteWatch calls
+# go through. patch_ops' two write-watch tests are unskipped on Linux for the same reason.
+# cave_ops and mono_call's callRemoteFunction cases run here too now: mono_call.cc's
+# BuildCallStub picks the System V register convention for this native ELF target (Task 13),
+# the same way it already picked Microsoft x64 for Wine's PE target. mono_bridge's 8
+# hand-built stub builders are likewise ABI-aware now (Task 14) and run against the loadmono
+# fixture here too.
 DEFAULT_TESTS=(tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts
   tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts
   tests/native/linux_memory.test.ts tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts
   tests/native/script_ops.test.ts tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts
-  tests/native/cave_ops.test.ts tests/native/mono_call.test.ts tests/native/mono_bridge.test.ts)
+  tests/native/cave_ops.test.ts tests/native/mono_call.test.ts tests/native/mono_bridge.test.ts
+  tests/native/write_watch.test.ts tests/native/snapshot_ops.test.ts)
 # Step 2: the Proton path, test-harness/harness.c built with mingw and run under Wine
 # (APPRENTICE_HARNESS=wine, see Linux/test-harness/README.md). The Microsoft-x64 stub
 # (callRemoteFunction) already works here: a real PE target, same ABI as Windows.
@@ -127,7 +134,8 @@ WINE_TESTS=(tests/native/platform.test.ts tests/native/module_info.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts
   tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts
   tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts tests/native/cave_ops.test.ts
-  tests/native/mono_call.test.ts tests/native/mono_bridge.test.ts)
+  tests/native/mono_call.test.ts tests/native/mono_bridge.test.ts
+  tests/native/write_watch.test.ts tests/native/snapshot_ops.test.ts)
 
 run_wine_step() {
   wine_env

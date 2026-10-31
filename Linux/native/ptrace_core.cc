@@ -178,6 +178,8 @@ void Detach(pid_t tid, int signal, bool interrupted) {
   }
 }
 
+}  // namespace
+
 // Every ptrace stop of a tracee sends this process a SIGCHLD. When the target is also a child
 // of this process (a game the app launched; the test harness), libuv answers that SIGCHLD with
 // waitpid(child, WNOHANG), which then CONSUMES the leader thread's stop report (tracer and real
@@ -187,6 +189,8 @@ void Detach(pid_t tid, int signal, bool interrupted) {
 // only acts on exits, so its behaviour is otherwise unchanged. Reapplied before every attach
 // because libuv reinstalls its handler (without the flag) when it re-registers. With no handler
 // installed (SIG_DFL/SIG_IGN) nothing reacts to the signal and the disposition is left alone.
+// Exported (ptrace_core.h): DebugSession::Attach (platform_linux_debug.cc) seizes threads
+// directly, without going through StopGuard, so it needs to apply this itself too.
 void SuppressStopSigchld() {
   struct sigaction sa;
   if (sigaction(SIGCHLD, nullptr, &sa) != 0) return;
@@ -195,8 +199,6 @@ void SuppressStopSigchld() {
   sa.sa_flags |= SA_NOCLDSTOP;
   sigaction(SIGCHLD, &sa, nullptr);
 }
-
-}  // namespace
 
 StopGuard::StopGuard(pid_t tid, std::string& err) : tid_(tid) {
   if (!OnTracerThread()) {

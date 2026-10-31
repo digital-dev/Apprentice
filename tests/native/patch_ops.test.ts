@@ -82,8 +82,9 @@ async function catchDrainInstruction(): Promise<{
 }
 
 describe('readBytes / writeBytes', () => {
-  // Task 15: catchDrainInstruction needs the write watch (ptrace debug session), not yet on Linux.
-  it.skipIf(process.platform === 'linux')('NOPs a live drain instruction and restores it', async () => {
+  // catchDrainInstruction needs the write watch (ptrace debug session); real on Linux since
+  // Task 15 (Linux/native/platform_linux_debug.cc).
+  it('NOPs a live drain instruction and restores it', async () => {
     const insn = await catchDrainInstruction()
 
     // readBytes agrees with what the capture recorded.
@@ -351,8 +352,9 @@ describe('readBytes on an unreadable address', () => {
 })
 
 describe('scanAob', () => {
-  // Task 15: catchDrainInstruction needs the write watch (ptrace debug session), not yet on Linux.
-  it.skipIf(process.platform === 'linux')('relocates the drain instruction by signature and patches it there', async () => {
+  // catchDrainInstruction needs the write watch (ptrace debug session); real on Linux since
+  // Task 15 (Linux/native/platform_linux_debug.cc).
+  it('relocates the drain instruction by signature and patches it there', async () => {
     const insn = await catchDrainInstruction()
     const original = (addon as any).readBytes(handle, insn.instructionAddress, insn.length)
 

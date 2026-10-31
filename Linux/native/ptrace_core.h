@@ -27,6 +27,15 @@ extern const char kPtraceDeniedMessage[];
 // True when `err` is kPtraceDeniedMessage.
 bool PtraceDenied(const std::string& err);
 
+// Stops the kernel sending SIGCHLD for a ptrace STOP of any tracee of this
+// process (libuv's own SIGCHLD handler otherwise reaps the tracer-and-real-
+// parent-in-one leader's stop report as if it were an exit — see the
+// definition for the full story). Idempotent; reapplied by every StopGuard
+// construction and by DebugSession::Attach (platform_linux_debug.cc) since
+// libuv reinstalls its own handler, without this flag, whenever it
+// re-registers. Tracer thread only, like everything else here.
+void SuppressStopSigchld();
+
 // Holds one thread stopped for the guard's lifetime: attaches and interrupts it,
 // waits (bounded) for the stop, and detaches in the destructor on every path,
 // re-delivering a signal the stop intercepted. On failure ok() is false and

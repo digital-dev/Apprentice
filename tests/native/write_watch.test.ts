@@ -185,7 +185,18 @@ describe('write watch — covering write (wide store)', () => {
   // SIMD store whose effective address is the start of a block containing
   // the watched field), and until now nothing in the suite drove it; it was
   // exercised only by manual testing against a real game.
-  it('catches the wide store but leaves it undecoded (documented limitation)', async () => {
+  // Not run on Linux: this pins a Windows/MSVC-specific codegen shape. The
+  // gcc -O0 ELF harness's wide_write does NOT compile the 20-byte struct
+  // copy to a movs-style block copy at all (confirmed via objdump) — it
+  // emits three independent fixed-destination-register mov instructions
+  // (offsets 0-7, 8-15, 16-19 of PlayerComponent), so the one covering the
+  // watched `stamina` field (offset 16) is a perfectly ordinary, decodable
+  // `mov %eax,0x10(%rcx)`. FindWriteInstruction correctly decodes it
+  // (length 3, baseRegister 'rcx'), which is NOT a bug — there is simply no
+  // undecodable block copy on this build to reproduce the "documented
+  // limitation" against. Root-caused while bringing this file up on Linux
+  // (Task 15); not a DebugSession/ptrace issue.
+  it.skipIf(process.platform === 'linux')('catches the wide store but leaves it undecoded (documented limitation)', async () => {
     const address = await staminaAddress()
 
     ;(addon as any).startWriteWatch(harness.pid, address)
@@ -233,7 +244,19 @@ describe('write watch — negative displacement', () => {
   // serialization bug: casting a negative int64_t through uintptr_t before
   // hex-formatting turned e.g. -4 into "0xfffffffffffffffc", a huge
   // positive number once BigInt(...)'d on the JS side.
-  it('reports a negative displacement as a signed value, not a huge unsigned one', async () => {
+  // Not run on Linux: another Windows/MSVC-specific codegen shape (confirmed
+  // via objdump). gcc -O0 compiles `*(end - 1) = v` by materializing `end -
+  // 1` into rax with its own `sub $0x4,%rax` FIRST, then stores through rax
+  // with a plain, zero-displacement `movss %xmm0,(%rax)` — the pointer
+  // arithmetic never appears as a displacement embedded in the store
+  // instruction itself (unlike MSVC's apparent `movss [rax-4], xmm0`), so
+  // the captured instruction's displacement is correctly 0, not negative.
+  // There is no negative-displacement store to find on this build; this is
+  // a codegen difference, not a sign-handling regression in write_watch.cc
+  // (the bug this test guards was fixed ahead of this exact test on
+  // Windows and is unaffected by not running here). Root-caused while
+  // bringing this file up on Linux (Task 15); not a DebugSession issue.
+  it.skipIf(process.platform === 'linux')('reports a negative displacement as a signed value, not a huge unsigned one', async () => {
     let candidates = await (addon as any).scanFirst(handle, 'float', 44.0)
     await send('setnegdisp 91')
     candidates = await (addon as any).scanNext(handle, candidates, 'float', { mode: 'exact', value: 91 })
@@ -364,6 +387,61 @@ describe('write watch — stop releases the target', () => {
   }, 15000)
 })
 
+describe('write watch — app teardown mid-watch', () => {
+  // Simulates the app quitting while a watch is still armed, the same
+  // mid-write path the "detaching while the target is still writing" test
+  // above covers for the TARGET's health — this one instead checks the
+  // ADDON's own health (this Node process, via the native module), which is
+  // the thing an app-teardown call path actually depends on: Detach's Dr7
+  // clear-and-detach sequence (platform_win32.cc's drain loop; Linux's
+  // DetachOnTracer) must never itself crash or hang the caller, even when
+  // called without first telling the harness to stop writing.
+  it('app teardown mid-watch leaves the harness running', async () => {
+    const address = await staminaAddress()
+
+    ;(addon as any).startWriteWatch(harness.pid, address)
+    await send('watchloop')
+
+    let list: any[] = []
+    for (let i = 0; i < 40 && list.length === 0; i++) {
+      await sleep(50)
+      list = (addon as any).pollWriteWatch()
+    }
+    expect(list.length).toBeGreaterThan(0)
+
+    ;(addon as any).stopWriteWatch()
+    // The addon survived the stop/detach intact (no crash, no hang in the
+    // synchronous join StopWriteWatch does).
+    expect((addon as any).ping()).toBe('pong')
+    // And the harness it was watching is still alive and responsive.
+    expect((await send('get')).startsWith('OK')).toBe(true)
+
+    await send('stoploop')
+  }, 15000)
+})
+
+describe('write watch — hardware debug registers unavailable', () => {
+  // APPRENTICE_FORCE_NO_DEBUGREGS is honoured only by the Linux backend
+  // (platform_linux_debug.cc's SupportsHardwareWatch) — it exists so this
+  // exact path is deterministically testable even on a CI kernel whose
+  // nested-virtualization host hides hardware breakpoints entirely (no
+  // amount of ptrace capability fixes that; it is a hypervisor limit this
+  // project does not control). Windows' SupportsHardwareWatch always
+  // returns true and never looks at this variable, so this test is Linux
+  // only.
+  it.skipIf(process.platform === 'win32')(
+    'reports a clear error when debug registers are unavailable',
+    () => {
+      process.env.APPRENTICE_FORCE_NO_DEBUGREGS = '1'
+      try {
+        expect(() => (addon as any).startWriteWatch(harness.pid, '0x1000')).toThrow(/not supported/i)
+      } finally {
+        delete process.env.APPRENTICE_FORCE_NO_DEBUGREGS
+      }
+    },
+  )
+})
+
 describe('write watch — attach failure handling', () => {
   // A pid this large should not exist, so DebugActiveProcess fails to attach.
   const badPid = 999999999
@@ -403,7 +481,26 @@ describe('write watch — attach failure handling', () => {
 // only prove the captured instruction's address/length is the real store,
 // not a coincidental neighboring decode, which is the thing a NOP patch or
 // a force injection is built from.
-describe('write watch — decode-ranking regressions', () => {
+// Not run on Linux: these tests redirect the probe site into a hand-crafted
+// cave ending in a BARE `ret` (e.g. `f3 0f 11 00 c3`), which assumes the
+// compiled probe_write's tail, from the watched store onward, is nothing
+// but that store plus `ret` — true of the Windows harness.exe's MSVC /Od
+// output, which this suite (and its exact crafted hex) was written
+// against. The gcc -O0 ELF harness keeps a frame pointer, so its
+// probe_write is `... movss %xmm0,(%rax); nop; pop %rbp; ret` (confirmed
+// via objdump): decodeRun's own 5-byte JMP footprint covers only the movss
+// + that one nop, leaving `pop %rbp; ret` as the real tail. Redirecting
+// into a cave whose own code ends in a bare `c3` skips that `pop %rbp`
+// entirely, so the `ret` pops the still-on-stack saved RBP as if it were a
+// return address and the harness segfaults on the very first capture —
+// reproduced and root-caused while bringing this file up on Linux (Task
+// 15); not a DebugSession/ptrace bug, and the same category of
+// cross-compiler byte-shape dependency signature_golden.test.ts is
+// excluded on Linux for. Fixing it would mean hand-crafting a separate,
+// gcc-tail-aware set of bytes per case (and keeping them in sync with
+// whatever gcc emits), which is a separate piece of work from the ptrace
+// write-watch backend itself.
+describe.skipIf(process.platform === 'linux')('write watch — decode-ranking regressions', () => {
   // Resolved once: like staminaAddress/shieldAddress above, the scan keys
   // off g_probe_value's initial 30.0, which the first use overwrites, and
   // once redirected the site is committed to running hand-crafted cave code
@@ -466,6 +563,18 @@ describe('write watch — decode-ranking regressions', () => {
     }
     const insn = (addon as any).stopWriteWatch()[0]
     await send('stopprobe')
+    // Let the harness's probe_thread actually notice g_probe_running==0 and
+    // exit (it only checks between 10ms sleep_ms cycles) before anything
+    // below sends another `probeloop`: harness.c's probeloop command starts
+    // a new thread only `if (!g_probe_running)`, so a probeloop sent while
+    // this stale thread is still alive (just not yet having rechecked the
+    // flag) sets g_probe_running back to 1 without spawning a new thread —
+    // the OLD thread then wakes up, sees the flag true again, and keeps
+    // looping through whatever `redirectProbeSiteTo` patches next, racing
+    // the new capture. On Linux this reliably showed up as two threads
+    // concurrently running the redirected cave code and segfaulting the
+    // harness; Windows' thread timing happens not to hit this window.
+    await sleep(50)
     expect(insn.length).toBeGreaterThan(0)
 
     const codeAddress = insn.instructionAddress
@@ -518,6 +627,10 @@ describe('write watch — decode-ranking regressions', () => {
     }
     const insn = (addon as any).stopWriteWatch()[0]
     await send('stopprobe')
+    // See the matching comment in probeSite(): give the harness's
+    // probe_thread a chance to actually exit before the next
+    // redirectProbeSiteTo/captureOnce round sends another `probeloop`.
+    await sleep(50)
     return insn
   }
 
