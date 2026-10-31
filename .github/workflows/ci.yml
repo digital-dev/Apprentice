@@ -202,11 +202,19 @@ jobs:
           cp native/build/Release/memory_addon.node Linux/dist/
           npx electron-builder --linux --config Linux/packaging/electron-builder.linux.json
 
-      # AppImage --appimage-extract and xvfb-run (not the fuse2 mount path) are what
-      # Linux/scripts/smoke-package.sh actually exercises; still installs libfuse2 so this
-      # also covers the README's documented normal-run path staying installable.
+      # smoke-package.sh runs the AppImage's extracted binary directly, which (unlike
+      # `dpkg -i` on the .deb) never goes through any dependency resolution -- confirmed by
+      # running it on a bare Ubuntu 22.04 box during this task's own verification, which
+      # failed on a missing libnspr4.so until these were installed by hand. libfuse2 covers
+      # the README's documented normal-run (FUSE-mounted) path staying installable; xvfb is
+      # what the smoke test itself runs under. The rest is the deb's own `depends` list
+      # (electron-builder.linux.json), since the runner needs the exact same libraries to
+      # run the unpacked Electron binary that dpkg would otherwise have pulled in for it.
       - name: Install smoke-test dependencies
-        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libfuse2 xvfb
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            libfuse2 xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils \
+            libatspi2.0-0 libuuid1 libsecret-1-0
 
       - name: Smoke-test the packaged AppImage
         run: bash Linux/scripts/smoke-package.sh
