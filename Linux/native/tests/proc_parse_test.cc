@@ -58,16 +58,28 @@ int main() {
   assert(!ParseMapsLine("garbage", e));
   assert(!ParseMapsLine("", e));
 
-  // Whole fixture: lowest mapping of the exe name.
-  std::istringstream in(Slurp("fixtures/maps_wine.txt"));
-  std::string line;
-  uintptr_t lowest = 0;
-  while (std::getline(in, line)) {
-    MapsEntry m;
-    if (ParseMapsLine(line, m) && BaseName(m.path) == "Schedule I.exe" && (!lowest || m.start < lowest))
-      lowest = m.start;
-  }
-  assert(lowest == 0x400000);
+  // LowestMappingBase: the shipped selection logic.
+  const std::string wineMaps = Slurp("fixtures/maps_wine.txt");
+  assert(LowestMappingBase(wineMaps, "Schedule I.exe", "/usr/bin/wine64-preloader", true) == 0x400000);
+  // Name differing only by case still matches (Wine is case-insensitive).
+  assert(LowestMappingBase(wineMaps, "SCHEDULE i.EXE", "", true) == 0x400000);
+  // No match, and empty maps, give 0.
+  assert(LowestMappingBase(wineMaps, "Other.exe", "", true) == 0);
+  assert(LowestMappingBase("", "Schedule I.exe", "/x", true) == 0);
+  assert(LowestMappingBase("", "Game", "/x", false) == 0);
+  // Same exe mapped twice, higher one listed first: lowest wins.
+  assert(LowestMappingBase("00900000-00901000 r--p 00000000 08:01 5 /g/A.exe\n"
+                           "00500000-00501000 r--p 00000000 08:01 5 /g/A.exe\n", "A.exe", "", true) == 0x500000);
+  // A preloader mapped LOWER than the exe is ignored: its basename differs.
+  assert(LowestMappingBase("00100000-00101000 r-xp 00000000 08:01 7 /usr/bin/wine64-preloader\n"
+                           "00400000-00401000 r--p 00000000 08:01 5 /g/A.exe\n", "A.exe", "", true) == 0x400000);
+  // Native: full path must equal the exe link target (a same-named file elsewhere does not match).
+  const std::string nativeMaps =
+      "00100000-00101000 r--p 00000000 08:01 8 /other/Game.x86_64\n"
+      "00600000-00601000 r--p 00000000 08:01 9 /opt/game/Game.x86_64\n"
+      "00400000-00401000 r--p 00000000 08:01 9 /opt/game/Game.x86_64\n";
+  assert(LowestMappingBase(nativeMaps, "Game.x86_64", "/opt/game/Game.x86_64", false) == 0x400000);
+  assert(LowestMappingBase(nativeMaps, "Game.x86_64", "/opt/none", false) == 0);
 
   // stat state is read after the LAST ')': comm may hold spaces and parens.
   assert(StatState("123 (bash) S 1 2 3") == 'S');

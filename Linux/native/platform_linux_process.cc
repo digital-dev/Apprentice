@@ -115,17 +115,9 @@ uintptr_t MainModuleBase(ProcessHandle handle) {
   // process is its own /proc/<pid>/exe target.
   bool wine = linuxproc::EndsWithExe(name);
 
-  std::ifstream maps(ProcPath(pid, "maps"));
-  if (!maps) return 0;
-  std::string line;
-  uintptr_t lowest = 0;
-  while (std::getline(maps, line)) {
-    linuxproc::MapsEntry m;
-    if (!linuxproc::ParseMapsLine(line, m) || m.path.empty()) continue;
-    bool match = wine ? EqualsIgnoreCase(linuxproc::BaseName(m.path), name) : m.path == exe;
-    if (match && (lowest == 0 || m.start < lowest)) lowest = m.start;
-  }
-  return lowest;
+  std::string maps;
+  if (!ReadFile(ProcPath(pid, "maps"), maps)) return 0;
+  return linuxproc::LowestMappingBase(maps, name, exe, wine);
 }
 
 } // namespace platform

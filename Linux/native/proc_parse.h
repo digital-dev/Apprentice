@@ -89,6 +89,29 @@ inline bool ParseMapsLine(const std::string& line, MapsEntry& out) {
   return true;
 }
 
+// Base address of the main executable image, from the text of /proc/<pid>/maps.
+// Wine: the lowest-start mapping whose path basename equals `exeName`
+// (case-insensitive, since Wine's file system is). Native: the lowest-start
+// mapping whose path equals `exeLinkTarget`. 0 when nothing matches. A
+// preloader or .so mapped below the exe never matches: its basename differs.
+inline uintptr_t LowestMappingBase(const std::string& mapsText, const std::string& exeName,
+                                   const std::string& exeLinkTarget, bool wine) {
+  uintptr_t lowest = 0;
+  size_t pos = 0;
+  while (pos < mapsText.size()) {
+    size_t nl = mapsText.find('\n', pos);
+    if (nl == std::string::npos) nl = mapsText.size();
+    MapsEntry m;
+    if (ParseMapsLine(mapsText.substr(pos, nl - pos), m) && !m.path.empty()) {
+      bool match = wine ? strcasecmp(BaseName(m.path).c_str(), exeName.c_str()) == 0
+                        : m.path == exeLinkTarget;
+      if (match && (lowest == 0 || m.start < lowest)) lowest = m.start;
+    }
+    pos = nl + 1;
+  }
+  return lowest;
+}
+
 // State letter from /proc/<pid>/stat. comm (field 2) may contain spaces and
 // parentheses, so the state is the first non-space char after the LAST ')'.
 // Returns 0 when the line is malformed.
