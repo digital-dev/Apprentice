@@ -176,6 +176,8 @@ bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
   out.executable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
                    (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
                                    PAGE_EXECUTE_WRITECOPY));
+  out.execCopyOnWrite = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                        (mbi.Protect & PAGE_EXECUTE_WRITECOPY);
   return true;
 }
 

@@ -2,7 +2,7 @@
 #include "value_type.h"
 #include "chain_walk.h"
 #include "protected_write.h"
-#include <windows.h>
+#include "platform/platform.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -23,7 +23,7 @@ std::vector<uintptr_t> ParseOffsets(const Napi::Array& arr) {
 
 Napi::Value ReadValue(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
+  auto h = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   uintptr_t base = ParseHex(info[1].As<Napi::String>().Utf8Value());
   auto offsets = ParseOffsets(info[2].As<Napi::Array>());
@@ -41,8 +41,7 @@ Napi::Value ReadValue(const Napi::CallbackInfo& info) {
   }
 
   uint8_t buf[8]; // widest supported type (int64/double) is 8 bytes
-  SIZE_T read;
-  if (!ReadProcessMemory(h, (LPCVOID)*addr, buf, specOpt->size, &read) || read != specOpt->size) {
+  if (!platform::ReadMemory(h, *addr, buf, specOpt->size)) {
     Napi::Error::New(env, "ReadProcessMemory failed").ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -51,7 +50,7 @@ Napi::Value ReadValue(const Napi::CallbackInfo& info) {
 
 Napi::Value WriteValue(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
+  auto h = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   uintptr_t base = ParseHex(info[1].As<Napi::String>().Utf8Value());
   auto offsets = ParseOffsets(info[2].As<Napi::Array>());
@@ -72,7 +71,9 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
   // The DATA variant specifically: an 8-byte value landing in the last few
   // bytes of a page must keep working, as it always did before this dance
   // existed. See protected_write.h.
-  bool ok = ProtectedDataWrite(h, *addr, buf, specOpt->size);
+  // ProtectedDataWrite still takes a Win32 HANDLE (a void*) until the
+  // write-side files move to platform::; cast at this one boundary.
+  bool ok = ProtectedDataWrite(reinterpret_cast<void*>(h), *addr, buf, specOpt->size);
   return Napi::Boolean::New(env, ok);
 }
 
@@ -84,7 +85,7 @@ Napi::Value WriteValue(const Napi::CallbackInfo& info) {
 // require a dataType this caller has no reason to know).
 Napi::Value ResolveAddress(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
+  auto h = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   uintptr_t base = ParseHex(info[1].As<Napi::String>().Utf8Value());
   auto offsets = ParseOffsets(info[2].As<Napi::Array>());

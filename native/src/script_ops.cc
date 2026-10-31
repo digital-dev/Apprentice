@@ -280,9 +280,12 @@ int LuaResolvePointer(lua_State* L) {
     lua_pop(L, 1);
   }
   HANDLE h = HandleFromRegistry(L);
-  auto base = FindModuleBase(h, moduleName);
+  // chain_walk.h now takes a platform::ProcessHandle; this file still holds
+  // a Win32 HANDLE until it is ported.
+  auto ph = reinterpret_cast<platform::ProcessHandle>(h);
+  auto base = FindModuleBase(ph, moduleName);
   if (!base) { lua_pushnil(L); return 1; }
-  auto resolved = ResolveChain(h, *base, offsets);
+  auto resolved = ResolveChain(ph, *base, offsets);
   if (!resolved) { lua_pushnil(L); return 1; }
   lua_pushinteger(L, static_cast<lua_Integer>(*resolved));
   return 1;

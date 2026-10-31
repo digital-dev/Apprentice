@@ -1,7 +1,7 @@
 #pragma once
-#include <windows.h>
-#include <psapi.h>
+#include "platform/platform.h"
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,15 +19,13 @@ inline uintptr_t ParseHex(const std::string& s) {
 }
 
 inline std::optional<uintptr_t> ResolveChain(
-    HANDLE h, uintptr_t base, const std::vector<uintptr_t>& offsets) {
+    platform::ProcessHandle h, uintptr_t base, const std::vector<uintptr_t>& offsets) {
   uintptr_t addr = base;
   for (size_t i = 0; i < offsets.size(); i++) {
     addr += offsets[i];
     if (i + 1 < offsets.size()) {
       uintptr_t next;
-      SIZE_T read;
-      if (!ReadProcessMemory(h, (LPCVOID)addr, &next, sizeof(next), &read) || read != sizeof(next))
-        return std::nullopt;
+      if (!platform::ReadMemory(h, addr, &next, sizeof(next))) return std::nullopt;
       addr = next;
     }
   }
@@ -38,18 +36,11 @@ inline std::optional<uintptr_t> ResolveChain(
 // only needs the base address, not pointer.cc's full ModuleRange/
 // FindContainingModule machinery (that supports the REVERSE pointer scan;
 // this supports the forward walk above).
-inline std::optional<uintptr_t> FindModuleBase(HANDLE h, const std::string& moduleName) {
-  HMODULE mods[1024];
-  DWORD needed;
-  if (!EnumProcessModulesEx(h, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) return std::nullopt;
-  DWORD count = needed / sizeof(HMODULE);
-  if (count > 1024) count = 1024;
-  for (DWORD i = 0; i < count; i++) {
-    char nameBuf[MAX_PATH];
-    if (GetModuleBaseNameA(h, mods[i], nameBuf, sizeof(nameBuf)) &&
-        _stricmp(nameBuf, moduleName.c_str()) == 0) {
-      return reinterpret_cast<uintptr_t>(mods[i]);
-    }
+inline std::optional<uintptr_t> FindModuleBase(platform::ProcessHandle h, const std::string& moduleName) {
+  std::vector<platform::ModuleInfo> mods;
+  if (!platform::ListModules(h, mods)) return std::nullopt;
+  for (const auto& m : mods) {
+    if (_stricmp(m.name.c_str(), moduleName.c_str()) == 0) return m.base;
   }
   return std::nullopt;
 }

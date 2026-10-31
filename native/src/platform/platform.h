@@ -23,6 +23,11 @@ struct Region {
   bool readable = false;
   bool writable = false;
   bool executable = false;
+  // Windows PAGE_EXECUTE_WRITECOPY (a copy-on-write executable image page).
+  // `writable` is true for it, but the data scanners (scanner.cc,
+  // pointer.cc) have always skipped it, so they need to tell it apart to
+  // keep their results byte-identical. Always false on Linux.
+  bool execCopyOnWrite = false;
 };
 
 struct ModuleInfo {
