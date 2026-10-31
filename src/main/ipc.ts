@@ -844,11 +844,15 @@ function refreshModuleContext(exeName: string): void {
 }
 
 // Linux/native/ptrace_core.cc's kPtraceDeniedMessage, thrown verbatim as the
-// native attach error's message (see platform_linux_debug.cc's
-// ClassifySeizeError). It can't be imported here — it's a C++ constant, and
-// PtraceDenied() isn't exposed to the addon — so this matches the exact
-// string, the only signal available at this boundary, and rewrites it into
-// something a user can act on without knowing what ptrace_scope is.
+// write-watch attach error's message (see write_watch.cc's DebugLoop/
+// StartWriteWatch, which now forward DebugSession::Attach's own error text
+// instead of a hardcoded one, and platform_linux_debug.cc's
+// ClassifySeizeError, which is what actually produces this string). It
+// can't be imported here — it's a C++ constant, and PtraceDenied() isn't
+// exposed to the addon — so this matches the exact string, the only signal
+// available at this boundary, and rewrites it into something a user can
+// act on without knowing what ptrace_scope is. nativeAddon.attach (used by
+// attachTo, below) never produces this string — see the comment there.
 const PTRACE_DENIED_MESSAGE =
   'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
 
@@ -859,6 +863,15 @@ export function describeAttachError(message: string): string {
     'CAP_SYS_PTRACE, or allow attaching for this session with ' +
     '"sudo sysctl kernel.yama.ptrace_scope=0" (/proc/sys/kernel/yama/ptrace_scope).'
   )
+}
+
+// What the writeWatch:start handler's catch block below actually runs on
+// whatever nativeAddon.startWriteWatch throws — pulled out so the mapping
+// at the one real call site (not just describeAttachError in isolation) is
+// directly testable against an Error shaped like what the native layer
+// throws.
+export function mapWriteWatchStartError(err: unknown): Error {
+  return new Error(describeAttachError(err instanceof Error ? err.message : String(err)))
 }
 
 // Shared by the manual process:attach handler and the watcher's onAppear —
@@ -932,13 +945,13 @@ async function attachTo(
   attachedHandle = null
   resetUeDiscovery()
   if (previousHandle !== null) nativeAddon.detach(previousHandle)
-  let attached: { handle: number; baseAddress: string }
-  try {
-    attached = nativeAddon.attach(pid)
-  } catch (err) {
-    throw new Error(describeAttachError(err instanceof Error ? err.message : String(err)))
-  }
-  const { handle, baseAddress } = attached
+  // nativeAddon.attach only opens the process (stat("/proc/<pid>") on Linux
+  // — see platform_linux_process.cc's OpenProcess) — it never touches
+  // ptrace, so its errors are always "process not found" or a permissions
+  // message, never kPtraceDeniedMessage. describeAttachError's mapping
+  // belongs at writeWatch:start below, the one call path that actually goes
+  // through DebugSession::Attach.
+  const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
   attachedBase = baseAddress
   attachedPid = pid
@@ -1625,7 +1638,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       nativeAddon.startWriteWatch(attachedPid, address)
     } catch (err) {
       freezeLoop.start() // capture failed to start — don't leave freezing off
-      throw err
+      // The only call path that goes through DebugSession::Attach, so the
+      // only place kPtraceDeniedMessage (write_watch.cc's DebugLoop, via
+      // ptrace_core.cc) can actually reach ipc.ts.
+      throw mapWriteWatchStartError(err)
     }
   })
 

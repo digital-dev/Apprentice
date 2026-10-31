@@ -498,15 +498,19 @@ void DecodeCaught(uint32_t pid, const platform::WatchEvent& ev, Caught& out) {
 // caller (StartWriteWatch, waiting on the paired future) via `attachResult`,
 // since every DebugSession call must run on the thread that attached and
 // therefore the attach can't happen synchronously on the JS-calling thread.
-void DebugLoop(uint32_t pid, uintptr_t address, std::promise<bool> attachResult) {
+// An empty string means the attach succeeded; otherwise it carries
+// DebugSession::Attach's own error text (e.g. ptrace_core.cc's
+// kPtraceDeniedMessage on Linux) so StartWriteWatch can surface the real
+// reason instead of a generic one.
+void DebugLoop(uint32_t pid, uintptr_t address, std::promise<std::string> attachResult) {
   std::string attachError;
   std::unique_ptr<platform::DebugSession> dbg = platform::DebugSession::Attach(pid, attachError);
   if (!dbg) {
-    attachResult.set_value(false);
+    attachResult.set_value(attachError.empty() ? "failed to attach debugger to process" : attachError);
     g_session.running = false;
     return;
   }
-  attachResult.set_value(true);
+  attachResult.set_value(std::string());
 
   bool armed = false;
   platform::WatchEvent ev;
@@ -590,18 +594,18 @@ Napi::Value StartWriteWatch(const Napi::CallbackInfo& info) {
   g_session.stopRequested = false;
   g_session.running = true;
 
-  std::promise<bool> attachPromise;
-  std::future<bool> attachFuture = attachPromise.get_future();
+  std::promise<std::string> attachPromise;
+  std::future<std::string> attachFuture = attachPromise.get_future();
   g_session.loop = std::thread(DebugLoop, pid, address, std::move(attachPromise));
 
   // Block until the loop thread has attempted the debugger attach so attach
   // failures (bad pid, already-debugged, access denied) throw here instead
-  // of failing silently.
-  bool attached = attachFuture.get();
-  if (!attached) {
+  // of failing silently. Empty string means the attach succeeded.
+  std::string attachError = attachFuture.get();
+  if (!attachError.empty()) {
     g_session.running = false;
     if (g_session.loop.joinable()) g_session.loop.join();
-    Napi::Error::New(env, "failed to attach debugger to process")
+    Napi::Error::New(env, attachError)
         .ThrowAsJavaScriptException();
     return env.Null();
   }

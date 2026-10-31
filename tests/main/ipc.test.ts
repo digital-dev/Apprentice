@@ -10,7 +10,8 @@ import {
   checkTableSize,
   MAX_TABLE_BYTES,
   pushToWindow,
-  describeAttachError
+  describeAttachError,
+  mapWriteWatchStartError
 } from '../../src/main/ipc'
 import type { BrowserWindow } from 'electron'
 import { setGamesDir } from '../../src/main/store'
@@ -207,12 +208,16 @@ describe('applyRelearn', () => {
   })
 })
 
-// Linux/native/ptrace_core.cc's kPtraceDeniedMessage is thrown verbatim as
-// the native attach error's message (see platform_linux_debug.cc's
-// ClassifySeizeError, and ptrace_core.cc itself) — this is the only signal
-// ipc.ts has, since the C++ constant and PtraceDenied() aren't exposed to
-// the addon. describeAttachError matches that exact text and turns it into
-// something a user can act on without knowing what ptrace_scope is.
+// Linux/native/ptrace_core.cc's kPtraceDeniedMessage reaches JS only through
+// the writeWatch:start path: nativeAddon.startWriteWatch -> write_watch.cc's
+// StartWriteWatch/DebugLoop -> platform::DebugSession::Attach ->
+// platform_linux_debug.cc's ClassifySeizeError. nativeAddon.attach (the
+// process:attach/library:attach path) only opens /proc/<pid> and never
+// touches ptrace, so it can never produce this string — see the comment on
+// attachTo in ipc.ts. describeAttachError matches the exact text (the only
+// signal available, since the C++ constant and PtraceDenied() aren't
+// exposed to the addon) and turns it into something a user can act on
+// without knowing what ptrace_scope is.
 describe('describeAttachError', () => {
   it('maps the ptrace denied error to an actionable user message', () => {
     const raw = 'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
@@ -221,5 +226,29 @@ describe('describeAttachError', () => {
 
   it('passes through any other message unchanged', () => {
     expect(describeAttachError('process exited')).toBe('process exited')
+  })
+})
+
+// mapWriteWatchStartError is exactly what the writeWatch:start handler's
+// catch block runs on whatever nativeAddon.startWriteWatch throws — tested
+// here against an Error (the real shape a thrown Napi::Error arrives as in
+// JS), not just describeAttachError's string-in/string-out in isolation, so
+// the real reachable call site is what's actually pinned down.
+describe('mapWriteWatchStartError', () => {
+  it('maps the ptrace denied error thrown by nativeAddon.startWriteWatch to an actionable message', () => {
+    const native = new Error(
+      'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
+    )
+    expect(mapWriteWatchStartError(native).message).toContain('ptrace_scope')
+  })
+
+  it('passes through any other native error message unchanged', () => {
+    expect(mapWriteWatchStartError(new Error('failed to attach debugger to process')).message).toBe(
+      'failed to attach debugger to process'
+    )
+  })
+
+  it('stringifies a non-Error throw rather than crashing', () => {
+    expect(mapWriteWatchStartError('weird non-error throw').message).toBe('weird non-error throw')
   })
 })
