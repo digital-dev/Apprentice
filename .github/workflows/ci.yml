@@ -162,6 +162,28 @@ jobs:
           (cd Linux/native/tests && ./platform_memory_test)
           npx vitest run tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts tests/native/linux_memory.test.ts
 
+      # The Proton path: test-harness/harness.c built with mingw-w64 and run under real Wine, so the
+      # same tests see a PE process with PE modules through /proc. `wine` is only the launcher script;
+      # wine64 satisfies it, so no i386 architecture is needed. Mono/Gecko are disabled, nothing is
+      # downloaded, and no display is needed for the console harness.
+      - name: Install Wine and mingw-w64
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine wine64 mingw-w64
+
+      - name: Linux tests under Wine
+        env:
+          APPRENTICE_HARNESS: wine
+          WINEARCH: win64
+          WINEDEBUG: -all
+          WINEDLLOVERRIDES: "mscoree,mshtml="
+        run: |
+          bash Linux/test-harness/build-wine-harness.sh
+          export WINEPREFIX="$HOME/.wine-apprentice-test"
+          wine wineboot --init
+          wineserver -w
+          npx vitest run tests/native/platform.test.ts tests/native/module_info.test.ts tests/native/scanner.test.ts tests/native/pointer.test.ts
+
   release:
     name: Publish release
     needs: test

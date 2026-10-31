@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { spawnHarness, HARNESS_NAME, HARNESS_IS_PE, HARNESS_WINE } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
-// Windows names its modules .exe/.dll; the Linux harness is an ELF and its probes are .so files.
-const IS_WIN = process.platform === 'win32'
-const HARNESS_NAME = IS_WIN ? 'harness.exe' : 'harness'
-const PROBE_NAME = IS_WIN ? 'probe.dll' : 'probe.so'
-const PROBE2_NAME = IS_WIN ? 'probe2.dll' : 'probe2.so'
+// A PE target (Windows, or the mingw harness under Wine) names its modules .exe/.dll and its
+// images carry a TimeDateStamp; the Linux ELF harness's probes are .so files and have none.
+const IS_PE = HARNESS_IS_PE
+const PROBE_NAME = IS_PE ? 'probe.dll' : 'probe.so'
+const PROBE2_NAME = IS_PE ? 'probe2.dll' : 'probe2.so'
 
 let harness: ChildProcessWithoutNullStreams
 let handle: number
@@ -40,7 +40,7 @@ describe('listModules', () => {
     expect(self.size % 4096).toBe(0)
     // TimeDateStamp is seconds since 1970 for a normally-linked PE image. An ELF has
     // none, and the Linux backend reports 0 for it.
-    if (IS_WIN) expect(self.timestamp).toBeGreaterThan(0)
+    if (IS_PE) expect(self.timestamp).toBeGreaterThan(0)
     else expect(self.timestamp).toBe(0)
   })
 
@@ -55,6 +55,33 @@ describe('listModules', () => {
       expect(typeof m.timestamp).toBe('number')
       expect(m.version === null || typeof m.version === 'string').toBe(true)
     }
+  })
+
+  // The Proton path: a PE exe and Wine's PE builtin DLLs, found through /proc/<pid>/maps and read
+  // through their own PE headers. There is no version-resource lookup on Linux, so `version` is
+  // always null there (it is checked here only to pin that down).
+  it.runIf(HARNESS_WINE)('lists a PE module with version info under Wine', () => {
+    const a = addon as any
+    const mods = a.listModules(handle)
+    for (const name of ['harness-wine.exe', 'kernel32.dll']) {
+      const m = mods.find((x: any) => x.name.toLowerCase() === name)
+      expect(m, name).toBeDefined()
+      expect(m.base).toMatch(/^0x[0-9a-f]+$/)
+      expect(BigInt(m.base) % 0x1000n).toBe(0n)
+      expect(m.size).toBeGreaterThan(0)
+      expect(m.size % 4096).toBe(0)
+      expect(m.timestamp).toBeGreaterThan(0)
+      expect(m.version).toBeNull()
+      expect(a.readBytes(handle, m.base, 2)).toBe('4d5a') // MZ: the base really is the image start
+    }
+
+    const k32 = mods.find((x: any) => x.name.toLowerCase() === 'kernel32.dll')
+    const gpa = a.resolveExport(handle, k32.base, 'GetProcAddress')
+    expect(gpa).not.toBeNull()
+    const addr = BigInt(gpa)
+    expect(addr).toBeGreaterThan(BigInt(k32.base))
+    expect(addr).toBeLessThan(BigInt(k32.base) + BigInt(k32.size))
+    expect(a.platformQueryRegion(handle, gpa).executable).toBe(true)
   })
 
   it('throws on a handle that is not a number', () => {
@@ -83,7 +110,7 @@ describe('probe dll', () => {
     expect(probe).toBeDefined()
     expect(probe.base).toBe(reportedBase)
     expect(probe.size).toBeGreaterThan(0)
-    if (IS_WIN) expect(probe.timestamp).toBeGreaterThan(0)
+    if (IS_PE) expect(probe.timestamp).toBeGreaterThan(0)
 
     await send('unloaddll')
     const after = (addon as any).listModules(handle)

@@ -12,7 +12,7 @@ IMAGE="${IMAGE:-apprentice-linux-build}"
 
 docker build -t "$IMAGE" Linux/docker
 mkdir -p Linux/dist
-docker run --rm --cap-add=SYS_PTRACE \
+docker run --rm --cap-add=SYS_PTRACE -e APPRENTICE_HARNESS \
   -v "$PWD":/src:ro -v "$PWD/Linux/dist":/out \
   "$IMAGE" bash -lc '
     set -euo pipefail

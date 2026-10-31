@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { spawnHarness, HARNESS_NAME } from '../helpers/spawnHarness'
 import addon from '../../native/build/Release/memory_addon.node'
 
 describe('platform seam', () => {
@@ -23,9 +23,7 @@ describe('platform seam', () => {
   })
 })
 
-// The harness is an ELF on Linux (no .exe suffix); Windows assertions are unchanged.
-const HARNESS_NAME = process.platform === 'win32' ? 'harness.exe' : 'harness'
-
+// HARNESS_NAME: harness.exe on Windows, harness (ELF) on Linux, harness-wine.exe under Wine.
 describe('process and region primitives', () => {
   let harness: ChildProcessWithoutNullStreams
   const a = addon as any

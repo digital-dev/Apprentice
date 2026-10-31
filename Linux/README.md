@@ -11,6 +11,7 @@ Windows build.
 | `scripts/run-tests.sh` | Build harness + addon and run the Linux test set |
 | `scripts/apprentice.sh` | Dev launcher with a ptrace-policy check |
 | `test-harness/harness.c` | ELF counterpart of `test-harness/harness.c` for the native tests |
+| `test-harness/build-wine-harness.sh` | Builds the Windows harness with mingw-w64 for the Wine (Proton path) tests; see `test-harness/README.md` |
 | `dist/` | Build output (gitignored) |
 
 ## Build from Windows (WSL2)
@@ -50,7 +51,9 @@ liveness (`/proc`), and the whole read side: regions (`/proc/<pid>/maps`), memor
 resolution (PE export directory, ELF `.dynsym`). Writes, injection, threads, ptrace write-watch and
 Mono are still stubs, `IsSupported()` is false, and write operations refuse. The tests that need
 only the read side run on Linux (the list in `scripts/run-tests.sh`); the rest need the later tasks.
-The PE/ELF parsers are covered by `native/tests/module_parse_test.cc`.
+The PE/ELF parsers are covered by `native/tests/module_parse_test.cc`. When `wine` and `mingw-w64`
+are installed, `run-tests.sh` also runs a second set against the Windows harness under real Wine
+(`APPRENTICE_HARNESS=wine`, see `test-harness/README.md`).
 
 ## ptrace permissions
 

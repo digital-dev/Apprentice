@@ -11,6 +11,7 @@ release/
 fixtures/snapshots/
 Linux/dist/
 Linux/test-harness/harness
+Linux/test-harness/harness-wine.exe
 Linux/native/tests/proc_parse_test
 Linux/native/tests/module_parse_test
 Linux/native/tests/fixtures/*.so
