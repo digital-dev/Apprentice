@@ -65,7 +65,7 @@ g++ -std=c++17 -O0 -g -Wall -Inative/src/platform -o Linux/native/tests/platform
 (cd Linux/native/tests && ./platform_memory_test)
 # Writes through /proc/<pid>/mem against this process and a forked child: r-x/PROT_NONE/r-- pages, all-or-nothing
 # refusal, rollback, fd leaks, threads.
-g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -o Linux/native/tests/platform_write_test Linux/native/tests/platform_write_test.cc Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
+g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -ILinux/native -o Linux/native/tests/platform_write_test Linux/native/tests/platform_write_test.cc Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
 (cd Linux/native/tests && ./platform_write_test)
 
 (cd native && npx node-gyp configure --target="${NODE_GYP_TARGET:-22.12.0}" \

@@ -1,9 +1,10 @@
 // Tests platform::WriteMemory / WriteMemoryUnprotected of the real Linux backend (pwrite on
 // /proc/<pid>/mem) against this very process, and against a forked child. Build (run-tests.sh does):
-//   g++ -std=c++17 -O0 -g -Wall -pthread -I../../../native/src/platform -o platform_write_test
+//   g++ -std=c++17 -O0 -g -Wall -pthread -I../../../native/src/platform -I.. -o platform_write_test
 //     platform_write_test.cc ../platform_linux.cc ../platform_linux_process.cc
 //     ../platform_linux_memory.cc ../platform_linux_write.cc -ldl
 #include "platform.h"
+#include "platform_linux_write.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -13,6 +14,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,6 +40,46 @@ static int OpenFdCount() {
 }
 
 static uintptr_t A(void* p) { return (uintptr_t)p; }
+
+// Captures what this process writes to fd 2 between construction and Finish().
+struct StderrCapture {
+  int saved, rd;
+  StderrCapture() {
+    int pp[2];
+    CHECK(pipe(pp) == 0);
+    fflush(stderr);
+    saved = dup(2);
+    dup2(pp[1], 2);
+    close(pp[1]);
+    rd = pp[0];
+  }
+  std::string Finish() {
+    fflush(stderr);
+    dup2(saved, 2);
+    close(saved);
+    std::string out;
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(rd, buf, sizeof(buf))) > 0) out.append(buf, (size_t)n);
+    close(rd);
+    return out;
+  }
+};
+
+static std::string Line(uintptr_t addr, size_t size, size_t after, const char* restore) {
+  char b[256];
+  snprintf(b, sizeof(b), "apprentice: write at 0x%llx+%zu failed after %zu bytes; restore %s%c",
+           (unsigned long long)addr, size, after, restore, 10);
+  return b;
+}
+
+// Test seam: real pwrite for the first `g_realCalls` calls, then failure (so the restore fails).
+static int g_calls = 0, g_realCalls = 0;
+static ssize_t HookPwrite(int fd, const void* buf, size_t n, off_t off) {
+  if (++g_calls <= g_realCalls) return pwrite(fd, buf, n, off);
+  errno = EIO;
+  return -1;
+}
 
 int main() {
   std::string err;
@@ -109,9 +151,88 @@ int main() {
   char shared0 = two[kPage];
   CHECK(!platform::WriteMemory(h, A(two + kPage + 8), ff, 4));
   CHECK(two[kPage] == shared0);
-  CHECK(!platform::WriteMemory(h, A(two + kPage - 4), ff, 8));  // page 0 takes 4 bytes, page 1 refuses
-  uint8_t expect[4] = { 0xC3, 0xC3, 0xC3, 0xC3 };
-  CHECK(memcmp(two + kPage - 4, expect, 4) == 0);               // rolled back
+  // Refused with nothing written: no event, no stderr line.
+  {
+    StderrCapture cap;
+    CHECK(!platform::WriteMemory(h, A(two + kPage + 8), ff, 4));
+    CHECK(cap.Finish().empty());
+    const auto& f = linuxwrite::LastWriteFailure();
+    CHECK(f.written == 0 && f.restored && f.reason.empty());
+    CHECK(!platform::WriteMemory(h, A(p + 4 * kPage), ff, 4));  // unmapped: refused up front
+    CHECK(linuxwrite::LastWriteFailure().attempted == 0);
+  }
+
+  // (1) Page 0 takes 4 bytes, page 1 refuses: rolled back from the backup, and reported.
+  {
+    StderrCapture cap;
+    CHECK(!platform::WriteMemory(h, A(two + kPage - 4), ff, 8));
+    std::string err1 = cap.Finish();
+    CHECK(err1 == Line(A(two + kPage - 4), 8, 4, "ok"));
+    const auto& f = linuxwrite::LastWriteFailure();
+    CHECK(f.attempted == 8 && f.written == 4 && f.restored && f.reason == "ok");
+    uint8_t expect[4] = { 0xC3, 0xC3, 0xC3, 0xC3 };
+    CHECK(memcmp(two + kPage - 4, expect, 4) == 0);  // rolled back
+    // A following successful write clears the report.
+    CHECK(platform::WriteMemory(h, A(two + 16), ff, 4));
+    CHECK(linuxwrite::LastWriteFailure().written == 0 && linuxwrite::LastWriteFailure().reason.empty());
+    memset(two, 0xC3, kPage);
+  }
+
+  // (2) The restore itself fails (pwrite hooked: the two write calls are real, every restore fails).
+  {
+    g_calls = 0;
+    g_realCalls = 2;
+    linuxwrite::SetPwriteHookForTest(HookPwrite);
+    StderrCapture cap;
+    CHECK(!platform::WriteMemory(h, A(two + kPage - 4), ff, 8));
+    std::string err2 = cap.Finish();
+    linuxwrite::SetPwriteHookForTest(nullptr);
+    CHECK(err2 == Line(A(two + kPage - 4), 8, 4, "FAILED"));
+    const auto& f = linuxwrite::LastWriteFailure();
+    CHECK(f.attempted == 8 && f.written == 4 && !f.restored && f.reason == "FAILED");
+    CHECK(memcmp(two + kPage - 4, ff, 4) == 0);  // the landed bytes really are still there
+    memset(two, 0xC3, kPage);
+  }
+
+  // (3) [PROT_NONE][rw][shared ro]: the write lands in the first two pages and fails at the third.
+  // The rw page is restored from ITS backup; the unreadable page has none, so it is reported skipped.
+  {
+    char* three = (char*)mmap(nullptr, 3 * kPage, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(three != MAP_FAILED);
+    memset(three, 0xC3, 3 * kPage);
+    CHECK(mprotect(three, kPage, PROT_NONE) == 0);
+    CHECK(mmap(three + 2 * kPage, kPage, PROT_READ, MAP_SHARED | MAP_FIXED, rofd, 0) == three + 2 * kPage);
+    std::vector<uint8_t> src(kPage + 8, 0x66);
+    StderrCapture cap;
+    CHECK(!platform::WriteMemory(h, A(three + kPage - 4), src.data(), src.size()));
+    std::string err3 = cap.Finish();
+    CHECK(err3 == Line(A(three + kPage - 4), kPage + 8, kPage + 4, "skipped: unreadable"));
+    const auto& f = linuxwrite::LastWriteFailure();
+    CHECK(f.written == kPage + 4 && !f.restored && f.reason == "skipped: unreadable");
+    bool rwRestored = true;
+    for (size_t i = 0; i < kPage; ++i) rwRestored &= (uint8_t)three[kPage + i] == 0xC3;
+    CHECK(rwRestored);
+    CHECK(mprotect(three, kPage, PROT_READ) == 0);
+    CHECK(memcmp(three + kPage - 4, src.data(), 4) == 0);  // the PROT_NONE page keeps its 4 bytes
+    munmap(three, 3 * kPage);
+  }
+
+  // (4) More than 16 MiB: no backup is taken, a mid-way failure is reported as "too large".
+  {
+    const size_t total = (size_t)17 << 20;
+    char* big17 = (char*)mmap(nullptr, total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(big17 != MAP_FAILED);
+    CHECK(mmap(big17 + total - kPage, kPage, PROT_READ, MAP_SHARED | MAP_FIXED, rofd, 0) == big17 + total - kPage);
+    std::vector<uint8_t> src(total - kPage + 4, 0x77);
+    StderrCapture cap;
+    CHECK(!platform::WriteMemory(h, A(big17), src.data(), src.size()));
+    std::string err4 = cap.Finish();
+    CHECK(err4 == Line(A(big17), src.size(), total - kPage, "skipped: too large"));
+    const auto& f = linuxwrite::LastWriteFailure();
+    CHECK(f.written == total - kPage && !f.restored && f.reason == "skipped: too large");
+    CHECK((uint8_t)big17[0] == 0x77);  // left in place, as reported
+    munmap(big17, total);
+  }
   close(fd);
   close(rofd);
 
