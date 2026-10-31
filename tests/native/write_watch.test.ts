@@ -336,6 +336,34 @@ describe('write watch — detaching while the target is still writing', () => {
   }, 15000)
 })
 
+describe('write watch — stop releases the target', () => {
+  // The contract the DebugSession abstraction has to keep on every platform:
+  // stopping a watch disarms the breakpoint on every thread and detaches,
+  // leaving the target running with no debugger. A breakpoint left armed
+  // after detach kills the target on its next write to the field (an
+  // unhandled single-step with no debugger to take it), and a debugger left
+  // attached makes the next attach fail.
+  it('stops watching and the target keeps running after stop', async () => {
+    const address = await staminaAddress()
+
+    ;(addon as any).startWriteWatch(harness.pid, address)
+    await sleep(200)
+    const final = (addon as any).stopWriteWatch()
+    expect(Array.isArray(final)).toBe(true)
+
+    // Write the formerly watched field from the harness's own thread, then
+    // ping it: both only answer if the breakpoint really came down.
+    expect((await send('setp 12')).startsWith('OK')).toBe(true)
+    const reply = await send('get')
+    expect(reply.startsWith('OK')).toBe(true)
+
+    // Detached for real: a fresh session attaches and stops cleanly.
+    ;(addon as any).startWriteWatch(harness.pid, address)
+    ;(addon as any).stopWriteWatch()
+    expect((await send('get')).startsWith('OK')).toBe(true)
+  }, 15000)
+})
+
 describe('write watch — attach failure handling', () => {
   // A pid this large should not exist, so DebugActiveProcess fails to attach.
   const badPid = 999999999

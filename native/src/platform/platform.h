@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -189,5 +190,89 @@ bool ListThreads(uint32_t pid, std::vector<ThreadInfo>& out);
 // a point-in-time copy — same race SuspendAll's own OpenThread failure
 // handling documents) or the platform doesn't support this.
 bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out);
+
+// Whether DebugSession works on this platform (hardware data breakpoints
+// through a debugger attachment).
+bool SupportsHardwareWatch();
+
+// What a DebugSession::Wait reported. Every event except `detached` leaves
+// the target stopped until Continue.
+enum class DebugEventKind {
+  // First stop after attach: the safe point to arm every existing thread.
+  // (Windows: CREATE_PROCESS_DEBUG_EVENT.)
+  Attached,
+  // A thread born mid-session; `tid` is the new thread, which has none of
+  // the session's breakpoints yet and must be armed by the caller.
+  ThreadCreated,
+  // A hardware breakpoint fired. `rip` is the trap address, which for a
+  // data breakpoint is the instruction AFTER the write (trap-style #DB).
+  Hit,
+  // Anything else (DLL load, the attach breakpoint, the target's own
+  // exceptions, thread exit...). Handled inside the session; the caller
+  // only has to Continue it.
+  Other,
+};
+
+struct WatchEvent {
+  DebugEventKind kind = DebugEventKind::Other;
+  uint32_t tid = 0;
+  uint64_t rip = 0;
+  // Debug-register slot that fired, or -1 when the backend does not say.
+  // Windows reports -1: it treats every single-step exception as a hit
+  // without consulting Dr6, as write-watch always has.
+  int slot = -1;
+  // The trapping thread's registers, Hit only; `hasRegs` false when they
+  // could not be read (the thread can be gone by then).
+  ThreadRegisters regs;
+  bool hasRegs = false;
+  // The target exited. The session is over: do not Continue this event, but
+  // still Detach (or destroy the session).
+  bool detached = false;
+};
+
+// A debugger attachment to one process, for hardware write breakpoints.
+//
+// Thread rule: Attach, SetHwBreakpoint, Wait, Continue and Detach must all
+// run on the SAME thread. Windows delivers debug events only to the thread
+// that called DebugActiveProcess, and Linux ptrace only lets the tracing
+// thread operate on its tracees, so a caller runs the whole session on one
+// dedicated thread.
+class DebugSession {
+ public:
+  // Attaches as a debugger. The target is NOT killed when this process
+  // exits or detaches. Returns null and fills `error` on failure (bad pid,
+  // already being debugged, access denied).
+  static std::unique_ptr<DebugSession> Attach(uint32_t pid, std::string& error);
+
+  // Arms (or with enable=false disarms) an on-write data breakpoint in
+  // debug-register `slot` (0-3) of one thread. `len` must be 1, 2, 4 or 8
+  // and `address` aligned to it: x86 leaves a misaligned data breakpoint
+  // undefined, so this refuses one. `address`/`len` are ignored when
+  // disarming. Call it only while the target is stopped at an event from
+  // Wait (Attached for existing threads, ThreadCreated for a new one).
+  bool SetHwBreakpoint(uint32_t tid, int slot, uintptr_t address, size_t len, bool enable);
+
+  // Waits up to timeoutMs for the next debug event. False on timeout.
+  bool Wait(uint32_t timeoutMs, WatchEvent& out);
+
+  // Resumes the target after `ev`, with whatever continue status the event
+  // needs (the target's own exceptions go back to it unhandled).
+  void Continue(const WatchEvent& ev);
+
+  // Drains any debug event already in flight, then detaches, leaving the
+  // target running. Idempotent. Callers disarm their breakpoints first: an
+  // exception that fires after detach has no debugger to take it and kills
+  // the target.
+  void Detach();
+
+  ~DebugSession();
+  DebugSession(const DebugSession&) = delete;
+  DebugSession& operator=(const DebugSession&) = delete;
+
+ private:
+  struct State; // per-backend
+  explicit DebugSession(std::unique_ptr<State> state);
+  std::unique_ptr<State> state_;
+};
 
 } // namespace platform

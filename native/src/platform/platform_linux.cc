@@ -63,4 +63,23 @@ bool ListThreads(uint32_t, std::vector<ThreadInfo>& out) {
 }
 bool GetThreadRegisters(uint32_t, ThreadRegisters&) { return false; }
 
+// Stub. The ptrace backend: Attach seizes every thread in /proc/<pid>/task
+// with PTRACE_O_TRACECLONE and reports Attached once all are stopped;
+// SetHwBreakpoint is PTRACE_POKEUSER on u_debugreg; Hit is a SIGTRAP whose
+// Dr6 names the slot; ThreadCreated is PTRACE_EVENT_CLONE (debug registers
+// are not inherited by the new thread). All on the one tracer thread.
+bool SupportsHardwareWatch() { return false; }
+
+struct DebugSession::State {};
+DebugSession::DebugSession(std::unique_ptr<State> state) : state_(std::move(state)) {}
+DebugSession::~DebugSession() { Detach(); }
+std::unique_ptr<DebugSession> DebugSession::Attach(uint32_t, std::string& error) {
+  error = "not supported on this platform yet";
+  return nullptr;
+}
+bool DebugSession::SetHwBreakpoint(uint32_t, int, uintptr_t, size_t, bool) { return false; }
+bool DebugSession::Wait(uint32_t, WatchEvent&) { return false; }
+void DebugSession::Continue(const WatchEvent&) {}
+void DebugSession::Detach() {}
+
 } // namespace platform

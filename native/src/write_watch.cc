@@ -1,8 +1,6 @@
 #include "write_watch.h"
 #include "sigbuild.h"
-#include <windows.h>
-#include <tlhelp32.h>
-#include <psapi.h>
+#include "platform.h"
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -80,7 +78,7 @@ struct Session {
   std::thread loop;
   std::atomic<bool> running{false};
   std::atomic<bool> stopRequested{false};
-  DWORD pid = 0;
+  uint32_t pid = 0;
   uintptr_t address = 0;
   std::mutex mtx;
   std::vector<Caught> caught; // deduped by trapAddress
@@ -88,113 +86,75 @@ struct Session {
 
 Session g_session;
 
-// Set or clear a hardware write breakpoint (Dr0, 4-byte, on-write) on one
-// thread. `address==0` clears it. Uses suspend/get/set/resume.
-void SetHwBreakpointOnThread(DWORD tid, uintptr_t address) {
-  HANDLE th = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME,
-      FALSE, tid);
-  if (!th) return;
-  SuspendThread(th);
-  CONTEXT ctx{};
-  ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-  if (GetThreadContext(th, &ctx)) {
-    if (address) {
-      ctx.Dr0 = address;
-      // Dr7: bit0 = L0 (local enable Dr0). Bits 16-17 = condition for Dr0:
-      // 01 = break on data write. Bits 18-19 = length for Dr0 (LEN encoding:
-      // 00=1 byte, 01=2 bytes, 11=4 bytes).
-      //
-      // CRITICAL: x86 requires a data breakpoint's address to be aligned to
-      // its length — a 4-byte breakpoint on a non-4-aligned address is
-      // architecturally UNDEFINED and can make the CPU raise malformed
-      // exceptions (crashing the target). The watched address comes from a
-      // scan and has arbitrary alignment (e.g. a float in a heap object), so
-      // pick the largest length the address is actually aligned to. Any
-      // store that writes the value necessarily writes its first byte, so a
-      // shorter aligned watch on that byte still catches every write to it.
-      DWORD64 lenBits;
-      if ((address & 0x3) == 0) lenBits = 0x3;      // 4-byte watch (4-aligned)
-      else if ((address & 0x1) == 0) lenBits = 0x1; // 2-byte watch (2-aligned)
-      else lenBits = 0x0;                           // 1-byte watch (any address)
-      ctx.Dr7 &= ~((DWORD64)0xF << 16); // clear Dr0 condition+len
-      ctx.Dr7 |= (DWORD64)0x1;          // L0
-      ctx.Dr7 |= ((DWORD64)0x1 << 16);  // write
-      ctx.Dr7 |= (lenBits << 18);       // length by alignment
-    } else {
-      ctx.Dr0 = 0;
-      ctx.Dr7 &= ~((DWORD64)0x1);       // clear L0
-      ctx.Dr7 &= ~((DWORD64)0xF << 16); // clear Dr0 condition+len
-    }
-    ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-    SetThreadContext(th, &ctx);
+// The write watch uses debug-register slot 0 only.
+constexpr int kWatchSlot = 0;
+
+// Set or clear the hardware write breakpoint on one thread. `address==0`
+// clears it.
+void SetHwBreakpointOnThread(platform::DebugSession& dbg, uint32_t tid, uintptr_t address) {
+  if (address) {
+    // CRITICAL: x86 requires a data breakpoint's address to be aligned to
+    // its length — a 4-byte breakpoint on a non-4-aligned address is
+    // architecturally UNDEFINED and can make the CPU raise malformed
+    // exceptions (crashing the target). The watched address comes from a
+    // scan and has arbitrary alignment (e.g. a float in a heap object), so
+    // pick the largest length the address is actually aligned to. Any
+    // store that writes the value necessarily writes its first byte, so a
+    // shorter aligned watch on that byte still catches every write to it.
+    size_t len;
+    if ((address & 0x3) == 0) len = 4;      // 4-byte watch (4-aligned)
+    else if ((address & 0x1) == 0) len = 2; // 2-byte watch (2-aligned)
+    else len = 1;                           // 1-byte watch (any address)
+    dbg.SetHwBreakpoint(tid, kWatchSlot, address, len, true);
+  } else {
+    dbg.SetHwBreakpoint(tid, kWatchSlot, 0, 0, false);
   }
-  ResumeThread(th);
-  CloseHandle(th);
 }
 
 // Apply/clear the breakpoint on every thread belonging to pid.
-void SetHwBreakpointAllThreads(DWORD pid, uintptr_t address) {
-  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-  if (snap == INVALID_HANDLE_VALUE) return;
-  THREADENTRY32 te{};
-  te.dwSize = sizeof(te);
-  if (Thread32First(snap, &te)) {
-    do {
-      if (te.th32OwnerProcessID == pid) SetHwBreakpointOnThread(te.th32ThreadID, address);
-    } while (Thread32Next(snap, &te));
-  }
-  CloseHandle(snap);
+void SetHwBreakpointAllThreads(platform::DebugSession& dbg, uint32_t pid, uintptr_t address) {
+  std::vector<platform::ThreadInfo> threads;
+  platform::ListThreads(pid, threads);
+  for (const auto& t : threads) SetHwBreakpointOnThread(dbg, t.tid, address);
 }
 
-// Maps a Zydis GPR register enum to the matching value in a CONTEXT.
-uintptr_t RegValue(const CONTEXT& ctx, ZydisRegister reg) {
+// Maps a Zydis GPR register enum to the matching value in a register file.
+uintptr_t RegValue(const platform::ThreadRegisters& ctx, ZydisRegister reg) {
   switch (reg) {
-    case ZYDIS_REGISTER_RAX: return ctx.Rax;
-    case ZYDIS_REGISTER_RBX: return ctx.Rbx;
-    case ZYDIS_REGISTER_RCX: return ctx.Rcx;
-    case ZYDIS_REGISTER_RDX: return ctx.Rdx;
-    case ZYDIS_REGISTER_RSI: return ctx.Rsi;
-    case ZYDIS_REGISTER_RDI: return ctx.Rdi;
-    case ZYDIS_REGISTER_RBP: return ctx.Rbp;
-    case ZYDIS_REGISTER_RSP: return ctx.Rsp;
-    case ZYDIS_REGISTER_R8:  return ctx.R8;
-    case ZYDIS_REGISTER_R9:  return ctx.R9;
-    case ZYDIS_REGISTER_R10: return ctx.R10;
-    case ZYDIS_REGISTER_R11: return ctx.R11;
-    case ZYDIS_REGISTER_R12: return ctx.R12;
-    case ZYDIS_REGISTER_R13: return ctx.R13;
-    case ZYDIS_REGISTER_R14: return ctx.R14;
-    case ZYDIS_REGISTER_R15: return ctx.R15;
+    case ZYDIS_REGISTER_RAX: return ctx.rax;
+    case ZYDIS_REGISTER_RBX: return ctx.rbx;
+    case ZYDIS_REGISTER_RCX: return ctx.rcx;
+    case ZYDIS_REGISTER_RDX: return ctx.rdx;
+    case ZYDIS_REGISTER_RSI: return ctx.rsi;
+    case ZYDIS_REGISTER_RDI: return ctx.rdi;
+    case ZYDIS_REGISTER_RBP: return ctx.rbp;
+    case ZYDIS_REGISTER_RSP: return ctx.rsp;
+    case ZYDIS_REGISTER_R8:  return ctx.r8;
+    case ZYDIS_REGISTER_R9:  return ctx.r9;
+    case ZYDIS_REGISTER_R10: return ctx.r10;
+    case ZYDIS_REGISTER_R11: return ctx.r11;
+    case ZYDIS_REGISTER_R12: return ctx.r12;
+    case ZYDIS_REGISTER_R13: return ctx.r13;
+    case ZYDIS_REGISTER_R14: return ctx.r14;
+    case ZYDIS_REGISTER_R15: return ctx.r15;
     default: return 0;
   }
 }
 
 // Finds the module containing `addr`; returns name + offset, or empty.
-bool ModuleOf(DWORD pid, uintptr_t addr, std::string& nameOut, uintptr_t& offsetOut) {
-  HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-  if (!proc) return false;
-  HMODULE mods[1024];
-  DWORD needed = 0;
-  bool found = false;
-  if (EnumProcessModulesEx(proc, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) {
-    DWORD count = needed / sizeof(HMODULE);
-    if (count > 1024) count = 1024;
-    for (DWORD i = 0; i < count && !found; i++) {
-      MODULEINFO mi{};
-      char name[MAX_PATH];
-      if (GetModuleInformation(proc, mods[i], &mi, sizeof(mi)) &&
-          GetModuleBaseNameA(proc, mods[i], name, sizeof(name))) {
-        uintptr_t base = (uintptr_t)mods[i];
-        if (addr >= base && addr < base + mi.SizeOfImage) {
-          nameOut = name;
-          offsetOut = addr - base;
-          found = true;
-        }
-      }
+// A module whose size the OS could not report (size 0) never matches.
+bool ModuleOf(platform::ProcessHandle proc, uintptr_t addr, std::string& nameOut,
+              uintptr_t& offsetOut) {
+  std::vector<platform::ModuleRange> mods;
+  if (!platform::ListModuleRanges(proc, mods)) return false;
+  for (const auto& m : mods) {
+    if (addr >= m.base && addr < m.base + m.size) {
+      nameOut = m.name;
+      offsetOut = addr - m.base;
+      return true;
     }
   }
-  CloseHandle(proc);
-  return found;
+  return false;
 }
 
 // A hardware data breakpoint (Dr0-3, on-write) is trap-style: the CPU
@@ -258,17 +218,17 @@ bool IsInertPrefixExtensionOf(const ZydisDecodedInstruction& longer,
   return true;
 }
 
-bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
-                           uintptr_t rip, uintptr_t watchedAddress,
+bool FindWriteInstruction(platform::ProcessHandle proc, const platform::ThreadRegisters& ctx,
+                           bool haveCtx, uintptr_t rip, uintptr_t watchedAddress,
                            ZydisDecoder& decoder, uintptr_t& insnAddrOut,
                            ZydisDecodedInstruction& insnOut,
                            ZydisDecodedOperand* opsOut, uint8_t* bytesOut) {
   constexpr int kMaxLen = 15;
   uintptr_t winStart = (rip >= (uintptr_t)kMaxLen) ? rip - kMaxLen : 0;
   uint8_t window[kMaxLen] = {0};
-  SIZE_T got = 0;
-  if (!ReadProcessMemory(proc, (LPCVOID)winStart, window,
-                         (SIZE_T)(rip - winStart), &got)) {
+  // All-or-nothing read, as before: a partial read was already a failure.
+  size_t got = (size_t)(rip - winStart);
+  if (!platform::ReadMemory(proc, winStart, window, got)) {
     return false;
   }
 
@@ -407,17 +367,17 @@ bool FindWriteInstruction(HANDLE proc, const CONTEXT& ctx, bool haveCtx,
 // (see FindWriteInstruction), and decodes its memory-destination operand
 // into base register, displacement, and the runtime base address the game
 // used.
-void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
-  HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+void DecodeCaught(uint32_t pid, const platform::WatchEvent& ev, Caught& out) {
+  std::string openError;
+  platform::ProcessHandle proc = platform::OpenProcess(pid, openError);
   if (!proc) {
     return;
   }
 
-  HANDLE th = OpenThread(THREAD_GET_CONTEXT, FALSE, tid);
-  CONTEXT ctx{};
-  ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-  bool haveCtx = th && GetThreadContext(th, &ctx);
-  if (th) CloseHandle(th);
+  // The trapping thread's registers, read by the session at the trap.
+  const platform::ThreadRegisters& ctx = ev.regs;
+  const bool haveCtx = ev.hasRegs;
+  const uintptr_t rip = (uintptr_t)ev.rip;
 
   ZydisDecoder decoder;
   ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
@@ -430,7 +390,7 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
   bool found = FindWriteInstruction(proc, ctx, haveCtx, rip, g_session.address,
                                      decoder, insnAddr, insn, operands, bytes);
   if (!found) {
-    CloseHandle(proc);
+    platform::CloseProcess(proc);
     return;
   }
 
@@ -449,18 +409,17 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
   // promise that stackTop[0] is a return address in general — best-effort,
   // for the caller to judge against the disassembled context.
   if (haveCtx) {
-    out.rax = ctx.Rax; out.rbx = ctx.Rbx; out.rcx = ctx.Rcx; out.rdx = ctx.Rdx;
-    out.rsi = ctx.Rsi; out.rdi = ctx.Rdi; out.rbp = ctx.Rbp; out.rsp = ctx.Rsp;
-    out.r8 = ctx.R8; out.r9 = ctx.R9; out.r10 = ctx.R10; out.r11 = ctx.R11;
-    out.r12 = ctx.R12; out.r13 = ctx.R13; out.r14 = ctx.R14; out.r15 = ctx.R15;
+    out.rax = ctx.rax; out.rbx = ctx.rbx; out.rcx = ctx.rcx; out.rdx = ctx.rdx;
+    out.rsi = ctx.rsi; out.rdi = ctx.rdi; out.rbp = ctx.rbp; out.rsp = ctx.rsp;
+    out.r8 = ctx.r8; out.r9 = ctx.r9; out.r10 = ctx.r10; out.r11 = ctx.r11;
+    out.r12 = ctx.r12; out.r13 = ctx.r13; out.r14 = ctx.r14; out.r15 = ctx.r15;
     out.hasRegisters = true;
 
     constexpr int kStackQwords = 8;
     uintptr_t stackBuf[kStackQwords] = {0};
-    SIZE_T stackBytesRead = 0;
-    if (ReadProcessMemory(proc, (LPCVOID)ctx.Rsp, stackBuf, sizeof(stackBuf), &stackBytesRead)) {
-      size_t count = stackBytesRead / sizeof(uintptr_t);
-      out.stackTop.assign(stackBuf, stackBuf + count);
+    // All-or-nothing, as before: a partial read was already a failure.
+    if (platform::ReadMemory(proc, (uintptr_t)ctx.rsp, stackBuf, sizeof(stackBuf))) {
+      out.stackTop.assign(stackBuf, stackBuf + kStackQwords);
     }
   }
 
@@ -507,19 +466,18 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
 
   {
     struct LiveSigMemory : SigMemory {
-      HANDLE proc;
-      explicit LiveSigMemory(HANDLE p) : proc(p) {}
+      platform::ProcessHandle proc;
+      explicit LiveSigMemory(platform::ProcessHandle p) : proc(p) {}
       size_t Read(uintptr_t addr, uint8_t* buf, size_t len) const override {
-        SIZE_T got = 0;
-        // FALSE with a nonzero partial count counts as failure, as it did
-        // when this code called ReadProcessMemory inline.
-        if (!ReadProcessMemory(proc, (LPCVOID)addr, buf, len, &got)) return 0;
-        return (size_t)got;
+        // A partial read counts as failure, as it did when this code called
+        // ReadProcessMemory inline.
+        if (!platform::ReadMemory(proc, addr, buf, len)) return 0;
+        return len;
       }
       bool RegionBase(uintptr_t addr, uintptr_t& base) const override {
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (VirtualQueryEx(proc, (LPCVOID)addr, &mbi, sizeof(mbi)) != sizeof(mbi)) return false;
-        base = (uintptr_t)mbi.BaseAddress;
+        platform::Region r;
+        if (!platform::QueryRegion(proc, addr, r)) return false;
+        base = r.base;
         return true;
       }
     } live(proc);
@@ -530,146 +488,71 @@ void DecodeCaught(DWORD pid, DWORD tid, uintptr_t rip, Caught& out) {
     out.signatureOffset = sig.signatureOffset;
   }
 
-  out.hasModule = ModuleOf(pid, insnAddr, out.moduleName, out.moduleOffset);
-  CloseHandle(proc);
+  out.hasModule = ModuleOf(proc, insnAddr, out.moduleName, out.moduleOffset);
+  platform::CloseProcess(proc);
 }
 
 // Runs on its own thread for the lifetime of a capture. Owns the debugger:
-// DebugActiveProcess -> kill-on-exit FALSE -> arm breakpoints -> event loop.
-// The attach attempt's outcome is signaled back to the caller (StartWriteWatch,
-// waiting on the paired future) via `attachResult`, since WaitForDebugEvent
-// must run on the same thread that called DebugActiveProcess and therefore
-// the attach can't happen synchronously on the JS-calling thread.
-void DebugLoop(DWORD pid, uintptr_t address, std::promise<bool> attachResult) {
-  if (!DebugActiveProcess(pid)) {
+// attach (kill-on-exit off) -> arm breakpoints -> event loop -> disarm ->
+// drain and detach. The attach attempt's outcome is signaled back to the
+// caller (StartWriteWatch, waiting on the paired future) via `attachResult`,
+// since every DebugSession call must run on the thread that attached and
+// therefore the attach can't happen synchronously on the JS-calling thread.
+void DebugLoop(uint32_t pid, uintptr_t address, std::promise<bool> attachResult) {
+  std::string attachError;
+  std::unique_ptr<platform::DebugSession> dbg = platform::DebugSession::Attach(pid, attachError);
+  if (!dbg) {
     attachResult.set_value(false);
     g_session.running = false;
     return;
   }
-  DebugSetProcessKillOnExit(FALSE); // never take the game down with us
   attachResult.set_value(true);
 
   bool armed = false;
-  bool seenInitialBreakpoint = false;
-  DEBUG_EVENT ev{};
+  platform::WatchEvent ev;
 
   while (!g_session.stopRequested) {
-    if (!WaitForDebugEvent(&ev, 100)) continue; // timeout -> re-check stop flag
+    if (!dbg->Wait(100, ev)) continue; // timeout -> re-check stop flag
 
-    DWORD continueStatus = DBG_CONTINUE;
+    if (ev.detached) break; // target gone
 
-    if (ev.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
+    if (ev.kind == platform::DebugEventKind::Attached) {
       // First stop: safe point to arm all existing threads.
-      SetHwBreakpointAllThreads(pid, address);
+      SetHwBreakpointAllThreads(*dbg, pid, address);
       armed = true;
-      if (ev.u.CreateProcessInfo.hFile) CloseHandle(ev.u.CreateProcessInfo.hFile);
-    } else if (ev.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) {
-      // The debug API contract requires the debugger to close this handle;
-      // leaving it open both leaks a handle in Apprentice's own process AND
-      // keeps the loaded DLL file locked on disk for as long as the
-      // write-watch session stays armed. A Mono/Unity game loading
-      // assemblies continuously would otherwise leak one handle per DLL
-      // load for the duration of the session.
-      if (ev.u.LoadDll.hFile) CloseHandle(ev.u.LoadDll.hFile);
-    } else if (ev.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT) {
+    } else if (ev.kind == platform::DebugEventKind::ThreadCreated) {
       // A thread born mid-capture must get the breakpoint too.
-      if (armed) SetHwBreakpointOnThread(ev.dwThreadId, address);
-    } else if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT) {
-      break; // target gone
-    } else if (ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
-      const EXCEPTION_RECORD& er = ev.u.Exception.ExceptionRecord;
-      if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
-        uintptr_t rip = (uintptr_t)er.ExceptionAddress;
-        bool seen = false;
-        {
-          std::lock_guard<std::mutex> lk(g_session.mtx);
-          for (const auto& c : g_session.caught)
-            if (c.trapAddress == rip) { seen = true; break; }
-        }
-        if (!seen) {
-          Caught c;
-          c.instructionAddress = rip; // overwritten with the true write-insn address on success
-          c.trapAddress = rip;        // dedup key: rip is the post-instruction trap address
-          DecodeCaught(pid, ev.dwThreadId, rip, c); // fills bytes/length/base/disp/baseAddress
-          std::lock_guard<std::mutex> lk(g_session.mtx);
-          // re-check under lock in case of races (single debug thread, but cheap)
-          bool seen2 = false;
-          for (const auto& e : g_session.caught)
-            if (e.trapAddress == rip) { seen2 = true; break; }
-          if (!seen2) g_session.caught.push_back(std::move(c));
-        }
-        continueStatus = DBG_CONTINUE;
-      } else if (er.ExceptionCode == EXCEPTION_BREAKPOINT && !seenInitialBreakpoint) {
-        // On attach the OS injects a thread that executes an int3
-        // (DbgUiRemoteBreakin) — the expected "debugger attached" signal.
-        // It MUST be consumed with DBG_CONTINUE; passing it back unhandled
-        // can be delivered to the target as a fatal exception. Consume only
-        // the first breakpoint; later int3s (if the game uses them) pass
-        // through.
-        seenInitialBreakpoint = true;
-        continueStatus = DBG_CONTINUE;
-      } else {
-        // Not ours (e.g. the game's own exceptions) — pass it back so the
-        // game's own handlers still run.
-        continueStatus = DBG_EXCEPTION_NOT_HANDLED;
+      if (armed) SetHwBreakpointOnThread(*dbg, ev.tid, address);
+    } else if (ev.kind == platform::DebugEventKind::Hit) {
+      uintptr_t rip = (uintptr_t)ev.rip;
+      bool seen = false;
+      {
+        std::lock_guard<std::mutex> lk(g_session.mtx);
+        for (const auto& c : g_session.caught)
+          if (c.trapAddress == rip) { seen = true; break; }
+      }
+      if (!seen) {
+        Caught c;
+        c.instructionAddress = rip; // overwritten with the true write-insn address on success
+        c.trapAddress = rip;        // dedup key: rip is the post-instruction trap address
+        DecodeCaught(pid, ev, c);   // fills bytes/length/base/disp/baseAddress
+        std::lock_guard<std::mutex> lk(g_session.mtx);
+        // re-check under lock in case of races (single debug thread, but cheap)
+        bool seen2 = false;
+        for (const auto& e : g_session.caught)
+          if (e.trapAddress == rip) { seen2 = true; break; }
+        if (!seen2) g_session.caught.push_back(std::move(c));
       }
     }
 
-    ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, continueStatus);
+    dbg->Continue(ev);
   }
 
-  SetHwBreakpointAllThreads(pid, 0); // clear
+  SetHwBreakpointAllThreads(*dbg, pid, 0); // clear
 
-  // Drain whatever the CPU already raised before those breakpoints came
-  // down. Clearing Dr7 does not un-raise an exception that has already
-  // fired: any in-flight debug exception sits queued for the debugger, and
-  // DebugActiveProcessStop delivers the queue to a process that no longer
-  // has one. Unhandled, that is a fatal STATUS_SINGLE_STEP — the target
-  // dies moments after we let go, which is exactly what "closing Tamper
-  // crashes the game" was. The existing tests never saw it because they
-  // stop the target's writes before stopping the watch, so the queue is
-  // always empty by then.
-  //
-  // Pump until WaitForDebugEvent times out, meaning nothing is left
-  // pending, and consume debug exceptions rather than passing them back —
-  // they are ours, and the game has no handler for them.
-  //
-  // "No event within the timeout" is NOT the same as "the queue is drained"
-  // on a live process: CREATE_THREAD/EXIT_THREAD, LOAD_DLL/UNLOAD_DLL, and
-  // the game's own first-chance exceptions are all real debug events that
-  // reset a plain per-call timeout. A Unity/Mono game with steady thread
-  // churn can keep events arriving indefinitely, and since StopWriteWatch
-  // joins this thread and before-quit calls it synchronously, an unbounded
-  // loop here hangs the whole app on quit with the debugger still attached
-  // — worse than the crash this drain exists to prevent. So bound it by
-  // wall clock instead: a few hundred ms is far more than the queue actually
-  // needs (it's typically empty on the very first check), and once we're
-  // past the deadline we give up and detach regardless of what's still
-  // arriving.
-  constexpr ULONGLONG kDrainBudgetMs = 300;
-  ULONGLONG drainDeadline = GetTickCount64() + kDrainBudgetMs;
-  DEBUG_EVENT drain;
-  DWORD waitMs = 100; // first wait: same as before, for the common empty-queue case
-  while (GetTickCount64() < drainDeadline && WaitForDebugEvent(&drain, waitMs)) {
-    DWORD status = DBG_CONTINUE;
-    if (drain.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
-      DWORD code = drain.u.Exception.ExceptionRecord.ExceptionCode;
-      // Anything that isn't one of ours still belongs to the game.
-      if (code != EXCEPTION_SINGLE_STEP && code != EXCEPTION_BREAKPOINT) {
-        status = DBG_EXCEPTION_NOT_HANDLED;
-      }
-    } else if (drain.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) {
-      // Same handle-close obligation as the main loop above — DLL loads
-      // keep arriving right up to detach (a Mono/Unity game loads
-      // assemblies continuously), and this drain loop is exactly the place
-      // those trailing loads land.
-      if (drain.u.LoadDll.hFile) CloseHandle(drain.u.LoadDll.hFile);
-    }
-    ContinueDebugEvent(drain.dwProcessId, drain.dwThreadId, status);
-    waitMs = 20; // subsequent waits: re-check the deadline often, not block on it
-  }
-
-  DebugActiveProcessStop(pid); // detach cleanly
+  // Drains any debug exception already raised before those breakpoints came
+  // down, then detaches cleanly. See DebugSession::Detach.
+  dbg->Detach();
   g_session.running = false;
 }
 
@@ -689,7 +572,13 @@ Napi::Value StartWriteWatch(const Napi::CallbackInfo& info) {
   // std::thread, which would call std::terminate() and abort this process.
   if (g_session.loop.joinable()) g_session.loop.join();
 
-  DWORD pid = info[0].As<Napi::Number>().Uint32Value();
+  if (!platform::SupportsHardwareWatch()) {
+    Napi::Error::New(env, "hardware write-watch is not supported on this platform yet")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  uint32_t pid = info[0].As<Napi::Number>().Uint32Value();
   uintptr_t address = ParseHex(info[1].As<Napi::String>().Utf8Value());
 
   {
@@ -705,7 +594,7 @@ Napi::Value StartWriteWatch(const Napi::CallbackInfo& info) {
   std::future<bool> attachFuture = attachPromise.get_future();
   g_session.loop = std::thread(DebugLoop, pid, address, std::move(attachPromise));
 
-  // Block until the loop thread has attempted DebugActiveProcess so attach
+  // Block until the loop thread has attempted the debugger attach so attach
   // failures (bad pid, already-debugged, access denied) throw here instead
   // of failing silently.
   bool attached = attachFuture.get();
