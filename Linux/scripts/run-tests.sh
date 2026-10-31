@@ -61,8 +61,12 @@ g++ -std=c++17 -O0 -g -Wall -fsanitize=address,undefined -fno-sanitize-recover=u
   -o Linux/native/tests/module_parse_test Linux/native/tests/module_parse_test.cc -ldl
 (cd Linux/native/tests && ./module_parse_test)
 # The real backend against this process as target: module extents (.bss), image filter, exports.
-g++ -std=c++17 -O0 -g -Wall -Inative/src/platform -o Linux/native/tests/platform_memory_test   Linux/native/tests/platform_memory_test.cc Linux/native/platform_linux.cc   Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc -ldl
+g++ -std=c++17 -O0 -g -Wall -Inative/src/platform -o Linux/native/tests/platform_memory_test   Linux/native/tests/platform_memory_test.cc Linux/native/platform_linux.cc   Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
 (cd Linux/native/tests && ./platform_memory_test)
+# Writes through /proc/<pid>/mem against this process and a forked child: r-x/PROT_NONE/r-- pages, all-or-nothing
+# refusal, rollback, fd leaks, threads.
+g++ -std=c++17 -O0 -g -Wall -pthread -Inative/src/platform -o Linux/native/tests/platform_write_test Linux/native/tests/platform_write_test.cc Linux/native/platform_linux.cc Linux/native/platform_linux_process.cc Linux/native/platform_linux_memory.cc Linux/native/platform_linux_write.cc -ldl
+(cd Linux/native/tests && ./platform_write_test)
 
 (cd native && npx node-gyp configure --target="${NODE_GYP_TARGET:-22.12.0}" \
   && npx node-gyp build --target="${NODE_GYP_TARGET:-22.12.0}")
@@ -70,17 +74,19 @@ g++ -std=c++17 -O0 -g -Wall -Inative/src/platform -o Linux/native/tests/platform
 if [ -n "${TEST_NODE_BIN:-}" ]; then export PATH="$TEST_NODE_BIN:$PATH"; fi
 node -v
 
-# Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: memory_ops/patch_ops/
-# script_ops/cave_ops (writes), write_watch/signature_golden/snapshot_ops (ptrace), thread_ops, mono_*.
+# Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: cave_ops/cloneStackScript (caves),
+# thread_ops, write_watch/signature_golden/snapshot_ops (ptrace), mono_*. patch_ops skips its two
+# write-watch tests on Linux (Task 15).
 DEFAULT_TESTS=(tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts
   tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts
-  tests/native/linux_memory.test.ts)
+  tests/native/linux_memory.test.ts tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts
+  tests/native/script_ops.test.ts)
 # Step 2: the Proton path, test-harness/harness.c built with mingw and run under Wine
-# (APPRENTICE_HARNESS=wine, see Linux/test-harness/README.md). memory_ops joins once writes land:
-# its reads already pass under Wine, every test in it ends in a write.
+# (APPRENTICE_HARNESS=wine, see Linux/test-harness/README.md).
 WINE_TESTS=(tests/native/platform.test.ts tests/native/module_info.test.ts
-  tests/native/scanner.test.ts tests/native/pointer.test.ts)
+  tests/native/scanner.test.ts tests/native/pointer.test.ts
+  tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts)
 
 run_wine_step() {
   wine_env

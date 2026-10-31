@@ -28,8 +28,6 @@ const char* Name() { return "linux"; }
 // Stub; a later task replaces this with a real ABI probe.
 Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::SysV; }
 
-bool WriteMemory(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
-bool WriteMemoryUnprotected(ProcessHandle, uintptr_t, const void*, size_t) { return false; }
 uintptr_t AllocateNear(ProcessHandle, uintptr_t, size_t) { return 0; }
 bool FreeMemory(ProcessHandle, uintptr_t) { return false; }
 bool SuspendAll(ProcessHandle, uint32_t) { return false; }

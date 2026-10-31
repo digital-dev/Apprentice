@@ -1,7 +1,7 @@
 // Tests ListModules / ListModuleRanges / ResolveExport of the real Linux backend
 // against this very process as the target. Build (run-tests.sh does):
 //   g++ -std=c++17 -O0 -g -Wall -I../../../native/src/platform -o platform_memory_test \
-//     platform_memory_test.cc ../platform_linux.cc ../platform_linux_process.cc ../platform_linux_memory.cc -ldl
+//     platform_memory_test.cc ../platform_linux.cc ../platform_linux_process.cc ../platform_linux_memory.cc ../platform_linux_write.cc -ldl
 // Run from Linux/native/tests, after Linux/test-harness/probe.so has been built.
 #include "platform.h"
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS, HARNESS_NAME } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -20,17 +20,13 @@ describe('runScript', () => {
   }
 
   beforeAll(async () => {
-    harness = spawnHarness()
-    await new Promise((r) => harness.stdout.once('data', r))
+    harness = await startHarness()
     const attached = (addon as any).attach(harness.pid)
     handle = attached.handle
     baseAddress = attached.baseAddress
-  })
+  }, HARNESS_HOOK_TIMEOUT_MS)
 
-  afterAll(() => {
-    harness.stdin.write('q\n')
-    harness.kill()
-  })
+  afterAll(() => stopHarness(harness))
 
   it('runs a trivial script and captures print output', async () => {
     const result = await (addon as any).runScript(handle, 'print("hello", 1, 2)', {})
@@ -146,7 +142,7 @@ describe('runScript', () => {
   })
 
   it('resolvePointer matches getModuleBase + arithmetic for a zero-offset chain', async () => {
-    const moduleName = 'harness.exe'
+    const moduleName = HARNESS_NAME
     const base = (addon as any).getModuleBase(handle, moduleName)
     const result = await (addon as any).runScript(
       handle,

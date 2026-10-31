@@ -82,6 +82,12 @@ static const unsigned char BIG_SIG_BYTES[16] = {
 };
 static void* g_big_data = NULL;
 static void* g_big_code = NULL;
+// "protpages": four fresh pages, [rw-][r-x][---][r--], then an unmapped guard page
+// (the mapping is one 5-page reservation whose last page is unmapped again). The
+// Windows harness cannot build these neighbours; mprotect can.
+#define PROT_PAGES 5
+static void* g_prot_pages = NULL;
+static const int g_prot_prot[4] = { PROT_READ | PROT_WRITE, PROT_READ | PROT_EXEC, PROT_NONE, PROT_READ };
 
 static void* g_probe_dll = NULL;
 static void (*g_probe_write)(float*, float) = NULL;
@@ -205,7 +211,7 @@ int main(void) {
   char line[256];
   while (fgets(line, sizeof(line), stdin)) {
     if (line[0] == 'q') break;
-    int val;
+    int val, peekoff;
     float fval;
     short val16;
     unsigned char val8;
@@ -240,6 +246,38 @@ int main(void) {
       }
       if (g_big_code == NULL) printf("ERR\n");
       else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_big_code);
+    } else if (strncmp(line, "protpagesfree", 13) == 0) {
+      if (g_prot_pages != NULL) { munmap(g_prot_pages, PROT_PAGES * 4096u); g_prot_pages = NULL; }
+      printf("OK\n");
+    } else if (sscanf(line, "protpeek %d %d", &val, &peekoff) == 2) {
+      // Hex of 8 bytes at byte <peekoff> of page <val> of protpages (the offset may cross into
+      // the next page), read through a temporary PROT_READ so a PROT_NONE page can be inspected.
+      if (g_prot_pages == NULL || val < 0 || val > 3 || peekoff < 0 || peekoff + 8 > 4096 * (4 - val)) {
+        printf("ERR\n");
+      } else {
+        char* base = (char*)g_prot_pages;
+        for (int i = 0; i < 4; ++i) mprotect(base + i * 4096, 4096, PROT_READ);
+        unsigned char b[8];
+        memcpy(b, base + val * 4096 + peekoff, 8);
+        for (int i = 0; i < 4; ++i) mprotect(base + i * 4096, 4096, g_prot_prot[i]);
+        printf("OK");
+        for (int i = 0; i < 8; ++i) printf(" %02x", b[i]);
+        printf("\n");
+      }
+    } else if (strncmp(line, "protpages", 9) == 0) {
+      if (g_prot_pages == NULL) {
+        char* p = mmap(NULL, PROT_PAGES * 4096u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (p != MAP_FAILED) {
+          memset(p, 0xAB, 4 * 4096u);
+          mprotect(p + 1 * 4096, 4096, PROT_READ | PROT_EXEC);
+          mprotect(p + 2 * 4096, 4096, PROT_NONE);
+          mprotect(p + 3 * 4096, 4096, PROT_READ);
+          munmap(p + 4 * 4096, 4096);
+          g_prot_pages = p;
+        }
+      }
+      if (g_prot_pages == NULL) printf("ERR\n");
+      else printf("OK 0x%llx\n", (unsigned long long)(uintptr_t)g_prot_pages);
     } else if (strncmp(line, "loadmono", 8) == 0) {
       void* m = dlopen("Linux/test-harness/probe_mono.so", RTLD_NOW);
       if (m == NULL) printf("ERR\n");

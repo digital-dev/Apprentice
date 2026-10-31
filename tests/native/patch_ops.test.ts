@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import {
+  startHarness,
+  stopHarness,
+  HARNESS_WINE,
+  HARNESS_IS_PE,
+  HARNESS_HOOK_TIMEOUT_MS,
+} from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -17,17 +23,15 @@ function send(cmd: string): Promise<string> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 beforeAll(async () => {
-  harness = spawnHarness()
-  await new Promise((r) => harness.stdout.once('data', r))
+  harness = await startHarness()
   const attached = (addon as any).attach(harness.pid)
   handle = attached.handle
   baseAddress = attached.baseAddress
-})
+}, HARNESS_HOOK_TIMEOUT_MS)
 
-afterAll(() => {
+afterAll(async () => {
   try { (addon as any).stopWriteWatch() } catch { /* ignore */ }
-  harness.stdin.write('q\n')
-  harness.kill()
+  await stopHarness(harness)
 })
 
 async function count(): Promise<number> {
@@ -78,7 +82,8 @@ async function catchDrainInstruction(): Promise<{
 }
 
 describe('readBytes / writeBytes', () => {
-  it('NOPs a live drain instruction and restores it', async () => {
+  // Task 15: catchDrainInstruction needs the write watch (ptrace debug session), not yet on Linux.
+  it.skipIf(process.platform === 'linux')('NOPs a live drain instruction and restores it', async () => {
     const insn = await catchDrainInstruction()
 
     // readBytes agrees with what the capture recorded.
@@ -238,6 +243,105 @@ describe('data writes (writeValue) straddling a page boundary', () => {
   })
 })
 
+describe('writes into pages that are not writable', () => {
+  // Pages with a known protection. Windows (and Wine, which runs the same harness): the harness's own
+  // first .text page, PAGE_EXECUTE_READ. Native Linux: the harness builds [rw][r-x][---][r--][unmapped]
+  // with `protpages`, so r-x, PROT_NONE and read-only neighbours exist side by side (the Windows
+  // harness cannot make those).
+  const NATIVE_LINUX = process.platform === 'linux' && !HARNESS_WINE
+  const hex = (n: bigint) => '0x' + n.toString(16)
+  let pages = 0n // protpages base (native Linux only)
+  const rxPage = () => (NATIVE_LINUX ? pages + 0x1000n : BigInt(baseAddress) + 0x1000n)
+  const flags = (a: bigint) => {
+    const r = (addon as any).platformQueryRegion(handle, hex(a))
+    return { readable: r.readable, writable: r.writable, executable: r.executable }
+  }
+
+  beforeAll(async () => {
+    if (NATIVE_LINUX) {
+      const reply = await send('protpages')
+      expect(reply).toMatch(/^OK 0x[0-9a-f]+$/)
+      pages = BigInt(reply.split(' ')[1])
+    }
+  })
+  afterAll(async () => {
+    if (NATIVE_LINUX) await send('protpagesfree')
+  })
+
+  it('write into read-execute page succeeds and leaves protection unchanged', () => {
+    const at = hex(rxPage() + 0x40n)
+    const before = (addon as any).readBytes(handle, at, 8)
+    const protBefore = flags(rxPage())
+    expect(protBefore.executable).toBe(true)
+    expect(protBefore.writable).toBe(false)
+
+    expect((addon as any).writeBytes(handle, at, 'cc'.repeat(8))).toBe(true)
+    expect((addon as any).readBytes(handle, at, 8)).toBe('cc'.repeat(8))
+    expect(flags(rxPage())).toEqual(protBefore)
+
+    expect((addon as any).writeBytes(handle, at, before)).toBe(true)
+    expect((addon as any).readBytes(handle, at, 8)).toBe(before)
+    expect(flags(rxPage())).toEqual(protBefore)
+  })
+
+  // /proc/<pid>/mem writes ignore page protections (FOLL_FORCE), so these hold only on native Linux.
+  describe.runIf(NATIVE_LINUX)('PROT_NONE and read-only neighbours (native Linux)', () => {
+    const peek = async (page: number, off: number) =>
+      (await send(`protpeek ${page} ${off}`)).split(' ').slice(1).join('')
+
+    it('writes a PROT_NONE page and a PROT_READ page and leaves both protections as found', async () => {
+      const none = pages + 0x2000n
+      const ro = pages + 0x3000n
+      const noneFlags = flags(none)
+      const roFlags = flags(ro)
+      expect(noneFlags).toEqual({ readable: false, writable: false, executable: false })
+      expect(roFlags).toEqual({ readable: true, writable: false, executable: false })
+
+      expect((addon as any).writeValue(handle, hex(none + 0x10n), [], 'int32', 0x11223344)).toBe(true)
+      expect(await peek(2, 0x10)).toBe('44332211' + 'abababab')
+      expect((addon as any).writeValue(handle, hex(ro + 0x10n), [], 'int32', 0x55667788)).toBe(true)
+      expect(await peek(3, 0x10)).toBe('88776655' + 'abababab')
+
+      expect(flags(none)).toEqual(noneFlags)
+      expect(flags(ro)).toEqual(roFlags)
+    })
+
+    it('a data write straddling r-x, PROT_NONE and r-- pages lands in all of them', async () => {
+      // Last 4 bytes of the r-x page + first 4 of the PROT_NONE page.
+      expect((addon as any).writeValue(handle, hex(pages + 0x2000n - 4n), [], 'int64', 0x05060708)).toBe(true)
+      expect(await peek(1, 0x1000 - 4)).toBe('0807060500000000')
+      // Last 4 bytes of the PROT_NONE page + first 4 of the r-- page.
+      expect((addon as any).writeValue(handle, hex(pages + 0x3000n - 4n), [], 'int64', 0x15161718)).toBe(true)
+      expect(await peek(2, 0x1000 - 4)).toBe('1817161500000000')
+    })
+  })
+
+  it('refuses a write straddling an unmapped page and writes nothing', async () => {
+    // Native Linux: protpages' last page is unmapped, the r-- page before it is mapped. Elsewhere: the
+    // end of the harness image's contiguous mappings (the same walk as the tests above).
+    let end: bigint
+    if (NATIVE_LINUX) {
+      end = pages + 0x4000n
+    } else {
+      end = BigInt(baseAddress)
+      for (;;) {
+        const r = (addon as any).platformQueryRegion(handle, hex(end))
+        if (!r || r.free) break
+        end += BigInt(r.size)
+      }
+    }
+    expect((addon as any).platformQueryRegion(handle, hex(end)).free).toBe(true)
+    const start = hex(end - 4n)
+    const before = (addon as any).readBytes(handle, start, 4)
+
+    expect((addon as any).writeValue(handle, start, [], 'int64', 0x05060708)).toBe(false)
+    expect((addon as any).readBytes(handle, start, 4)).toBe(before)
+    // A write wholly inside the unmapped page fails too.
+    expect((addon as any).writeValue(handle, hex(end + 0x10n), [], 'int32', 1)).toBe(false)
+    if (NATIVE_LINUX) expect(await send('protpeek 3 4088')).toBe('OK ' + 'ab '.repeat(7) + 'ab')
+  })
+})
+
 describe('readBytes on an unreadable address', () => {
   it('throws instead of returning garbage', () => {
     // Low, unmapped addresses in the target's address space are never
@@ -247,7 +351,8 @@ describe('readBytes on an unreadable address', () => {
 })
 
 describe('scanAob', () => {
-  it('relocates the drain instruction by signature and patches it there', async () => {
+  // Task 15: catchDrainInstruction needs the write watch (ptrace debug session), not yet on Linux.
+  it.skipIf(process.platform === 'linux')('relocates the drain instruction by signature and patches it there', async () => {
     const insn = await catchDrainInstruction()
     const original = (addon as any).readBytes(handle, insn.instructionAddress, insn.length)
 
@@ -315,7 +420,7 @@ describe('scanAob bounds', () => {
     const reply = await send('loaddll')
     const base = reply.split(' ')[1]
     const mods = (addon as any).listModules(handle)
-    const probe = mods.find((m: any) => m.name.toLowerCase() === 'probe.dll')
+    const probe = mods.find((m: any) => m.name.toLowerCase() === (HARNESS_IS_PE ? 'probe.dll' : 'probe.so'))
     const end = '0x' + (BigInt(probe.base) + BigInt(probe.size)).toString(16)
 
     // Take a real byte run out of the probe's code and scan for it. Not

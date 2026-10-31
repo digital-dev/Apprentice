@@ -1,5 +1,6 @@
 #include "platform.h"
 #include "proc_parse.h"
+#include "procmem_fd.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -94,10 +95,12 @@ ProcessHandle OpenProcess(uint32_t pid, std::string& error) {
                         : std::string("cannot access process (check permissions): ") + strerror(e);
     return 0;
   }
+  // A pid can be recycled: never inherit a descriptor cached for an earlier process of that number.
+  DropProcMemFd((ProcessHandle)pid);
   return (ProcessHandle)pid;
 }
 
-void CloseProcess(ProcessHandle) {}
+void CloseProcess(ProcessHandle handle) { DropProcMemFd(handle); }
 
 bool IsAlive(ProcessHandle handle) {
   char state = State((uint32_t)handle);
