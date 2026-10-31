@@ -1,0 +1,47 @@
+{
+  "appId": "com.apprentice.trainer",
+  "productName": "Apprentice",
+  "directories": {
+    "output": "Linux/dist"
+  },
+  "asar": false,
+  "files": [
+    "out/**/*",
+    "package.json",
+    {
+      "from": "Linux/dist",
+      "to": "native/build/Release",
+      "filter": [
+        "memory_addon.node"
+      ]
+    },
+    {
+      "from": "App Icon",
+      "to": "App Icon",
+      "filter": [
+        "Apprentice.png"
+      ]
+    },
+    {
+      "from": "games",
+      "to": "games",
+      "filter": [
+        "*.json",
+        "!*.draft.json"
+      ]
+    }
+  ],
+  "linux": {
+    "icon": "App Icon/Apprentice.png",
+    "target": [
+      "AppImage",
+      "deb"
+    ],
+    "category": "Utility",
+    "artifactName": "${productName}-${version}.${ext}"
+  },
+  "deb": {
+    "afterInstall": "Linux/packaging/after-install.sh",
+    "maintainer": "digital-dev <tvajgert@gmail.com>"
+  }
+}

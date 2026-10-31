@@ -52,15 +52,84 @@ std::string ReadFileVersion(const char* fullPath) {
   return out;
 }
 
+void CopyRegisters(const CONTEXT& ctx, ThreadRegisters& out) {
+  out.rax = ctx.Rax; out.rbx = ctx.Rbx; out.rcx = ctx.Rcx; out.rdx = ctx.Rdx;
+  out.rsi = ctx.Rsi; out.rdi = ctx.Rdi; out.rbp = ctx.Rbp; out.rsp = ctx.Rsp;
+  out.rip = ctx.Rip;
+  out.r8 = ctx.R8; out.r9 = ctx.R9; out.r10 = ctx.R10; out.r11 = ctx.R11;
+  out.r12 = ctx.R12; out.r13 = ctx.R13; out.r14 = ctx.R14; out.r15 = ctx.R15;
+  out.rflags = ctx.EFlags; // 32-bit in CONTEXT; zero-extended into the 64-bit field
+}
+
 } // namespace
 
 bool IsSupported() { return true; }
 const char* Name() { return "windows"; }
 
+bool ListProcesses(std::vector<ProcessEntry>& out) {
+  out.clear();
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) return false;
+  PROCESSENTRY32 entry;
+  entry.dwSize = sizeof(PROCESSENTRY32);
+  if (Process32First(snap, &entry)) {
+    do {
+      ProcessEntry e;
+      e.pid = entry.th32ProcessID;
+      e.name = entry.szExeFile;
+      out.push_back(std::move(e));
+    } while (Process32Next(snap, &entry));
+  }
+  CloseHandle(snap);
+  return true;
+}
+
+// Same access mask process_utils.cc's Attach has always used.
+ProcessHandle OpenProcess(uint32_t pid, std::string& error) {
+  HANDLE process = ::OpenProcess(
+      PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+      FALSE, pid);
+  if (process == NULL) {
+    error = "OpenProcess failed (access denied or process not found)";
+    return 0;
+  }
+  return reinterpret_cast<ProcessHandle>(process);
+}
+
+void CloseProcess(ProcessHandle handle) {
+  CloseHandle(reinterpret_cast<HANDLE>(handle));
+}
+
+bool IsAlive(ProcessHandle handle) {
+  DWORD exitCode = 0;
+  // The exit code, not GetExitCodeProcess's return value, says whether the
+  // process is still running.
+  if (!GetExitCodeProcess(reinterpret_cast<HANDLE>(handle), &exitCode)) return false;
+  return exitCode == STILL_ACTIVE;
+}
+
+uintptr_t MainModuleBase(ProcessHandle handle) {
+  HMODULE mod;
+  DWORD needed;
+  if (!EnumProcessModules(reinterpret_cast<HANDLE>(handle), &mod, sizeof(mod), &needed)) return 0;
+  return reinterpret_cast<uintptr_t>(mod);
+}
+
+Abi PlatformAbiFor(ProcessHandle, uintptr_t) { return Abi::Ms64; }
+
 bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size) {
   SIZE_T read = 0;
   return ReadProcessMemory((HANDLE)handle, (LPCVOID)address, out, size, &read) &&
          read == size;
+}
+
+uintptr_t PageSize() {
+  static const uintptr_t pageSize = [] {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return static_cast<uintptr_t>(si.dwPageSize);
+  }();
+  return pageSize;
 }
 
 // Writing into a live process's CODE, which normally sits on read-execute
@@ -81,11 +150,7 @@ bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size
   // captured instruction, so a straddling range is an anomaly: refuse it
   // rather than add per-page VirtualQueryEx/restore machinery for a case
   // that should not arise in normal use.
-  static const uintptr_t pageSize = [] {
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    return static_cast<uintptr_t>(si.dwPageSize);
-  }();
+  const uintptr_t pageSize = PageSize();
   uintptr_t firstPage = address & ~(pageSize - 1);
   uintptr_t lastPage = (address + size - 1) & ~(pageSize - 1);
   if (firstPage != lastPage) return false;
@@ -108,6 +173,14 @@ bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size
   return ok;
 }
 
+bool WriteMemoryUnprotected(ProcessHandle handle, uintptr_t address, const void* data, size_t size) {
+  HANDLE h = (HANDLE)handle;
+  SIZE_T written = 0;
+  bool ok = WriteProcessMemory(h, (LPVOID)address, data, size, &written) && written == size;
+  FlushInstructionCache(h, (LPCVOID)address, size);
+  return ok;
+}
+
 bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
   MEMORY_BASIC_INFORMATION mbi;
   if (VirtualQueryEx((HANDLE)handle, (LPCVOID)address, &mbi, sizeof(mbi)) != sizeof(mbi))
@@ -115,13 +188,19 @@ bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out) {
   out.base = (uintptr_t)mbi.BaseAddress;
   out.size = mbi.RegionSize;
   out.free = mbi.State == MEM_FREE;
+  out.committed = mbi.State == MEM_COMMIT;
   out.readable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
                  (mbi.Protect & (PAGE_READWRITE | PAGE_READONLY | PAGE_WRITECOPY |
                                  PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
                                  PAGE_EXECUTE_WRITECOPY));
+  out.writable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                 (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY |
+                                 PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
   out.executable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
                    (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
                                    PAGE_EXECUTE_WRITECOPY));
+  out.execCopyOnWrite = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+                        (mbi.Protect & PAGE_EXECUTE_WRITECOPY);
   return true;
 }
 
@@ -239,8 +318,31 @@ void ResumeAll() {
   g_suspended.clear();
 }
 
+std::string SuspendAllError() { return std::string(); }
+
 void SleepMs(uint32_t ms) {
   ::Sleep(ms);
+}
+
+bool ListModuleRanges(ProcessHandle handle, std::vector<ModuleRange>& out) {
+  out.clear();
+  HANDLE h = reinterpret_cast<HANDLE>(handle);
+  HMODULE mods[1024];
+  DWORD needed = 0;
+  if (!EnumProcessModulesEx(h, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) return false;
+  size_t count = needed / sizeof(HMODULE);
+  if (count > 1024) count = 1024;
+  for (size_t i = 0; i < count; i++) {
+    char name[MAX_PATH] = {0};
+    if (GetModuleBaseNameA(h, mods[i], name, MAX_PATH) == 0) continue;
+    MODULEINFO mi{};
+    ModuleRange r;
+    r.name = name;
+    r.base = reinterpret_cast<uintptr_t>(mods[i]);
+    if (GetModuleInformation(h, mods[i], &mi, sizeof(mi))) r.size = mi.SizeOfImage;
+    out.push_back(std::move(r));
+  }
+  return true;
 }
 
 bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out) {
@@ -376,18 +478,222 @@ bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out) {
     CONTEXT ctx{};
     ctx.ContextFlags = CONTEXT_INTEGER | CONTEXT_CONTROL;
     if (GetThreadContext(th, &ctx)) {
-      out.rax = ctx.Rax; out.rbx = ctx.Rbx; out.rcx = ctx.Rcx; out.rdx = ctx.Rdx;
-      out.rsi = ctx.Rsi; out.rdi = ctx.Rdi; out.rbp = ctx.Rbp; out.rsp = ctx.Rsp;
-      out.rip = ctx.Rip;
-      out.r8 = ctx.R8; out.r9 = ctx.R9; out.r10 = ctx.R10; out.r11 = ctx.R11;
-      out.r12 = ctx.R12; out.r13 = ctx.R13; out.r14 = ctx.R14; out.r15 = ctx.R15;
-      out.rflags = ctx.EFlags; // 32-bit in CONTEXT; zero-extended into the 64-bit field
+      CopyRegisters(ctx, out);
       ok = true;
     }
     ResumeThread(th);
   }
   CloseHandle(th);
   return ok;
+}
+
+bool SupportsHardwareWatch() { return true; }
+
+struct DebugSession::State {
+  DWORD pid = 0;
+  bool attached = false;
+  bool seenInitialBreakpoint = false;
+  // The event Wait last returned that still needs ContinueDebugEvent.
+  bool pending = false;
+  bool pendingIsExit = false;
+  DWORD pendingPid = 0;
+  DWORD pendingTid = 0;
+  DWORD pendingStatus = DBG_CONTINUE;
+};
+
+DebugSession::DebugSession(std::unique_ptr<State> state) : state_(std::move(state)) {}
+
+DebugSession::~DebugSession() { Detach(); }
+
+std::unique_ptr<DebugSession> DebugSession::Attach(uint32_t pid, std::string& error) {
+  if (!DebugActiveProcess(pid)) {
+    error = "DebugActiveProcess failed";
+    return nullptr;
+  }
+  DebugSetProcessKillOnExit(FALSE); // never take the game down with us
+  auto state = std::make_unique<State>();
+  state->pid = pid;
+  state->attached = true;
+  return std::unique_ptr<DebugSession>(new DebugSession(std::move(state)));
+}
+
+// Suspend/get/set/resume on one thread's debug registers.
+bool DebugSession::SetHwBreakpoint(uint32_t tid, int slot, uintptr_t address, size_t len,
+                                   bool enable) {
+  if (slot < 0 || slot > 3) return false;
+  DWORD64 lenBits = 0;
+  if (enable) {
+    // Dr7 LEN encoding: 00=1 byte, 01=2 bytes, 11=4 bytes, 10=8 bytes.
+    switch (len) {
+      case 1: lenBits = 0x0; break;
+      case 2: lenBits = 0x1; break;
+      case 4: lenBits = 0x3; break;
+      case 8: lenBits = 0x2; break;
+      default: return false;
+    }
+    if (address & (len - 1)) return false; // misaligned: architecturally undefined
+  }
+
+  HANDLE th = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME,
+      FALSE, tid);
+  if (!th) return false;
+  SuspendThread(th);
+  CONTEXT ctx{};
+  ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+  bool ok = false;
+  if (GetThreadContext(th, &ctx)) {
+    DWORD64* dr[4] = {&ctx.Dr0, &ctx.Dr1, &ctx.Dr2, &ctx.Dr3};
+    const DWORD64 enableBit = (DWORD64)0x1 << (slot * 2);  // Ln (local enable)
+    const int rwShift = 16 + slot * 4;                     // R/Wn, then LENn at +2
+    if (enable) {
+      *dr[slot] = address;
+      ctx.Dr7 &= ~((DWORD64)0xF << rwShift); // clear condition+len
+      ctx.Dr7 |= enableBit;
+      ctx.Dr7 |= ((DWORD64)0x1 << rwShift);  // 01 = break on data write
+      ctx.Dr7 |= (lenBits << (rwShift + 2));
+    } else {
+      *dr[slot] = 0;
+      ctx.Dr7 &= ~enableBit;
+      ctx.Dr7 &= ~((DWORD64)0xF << rwShift); // clear condition+len
+    }
+    ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    ok = SetThreadContext(th, &ctx) != 0;
+  }
+  ResumeThread(th);
+  CloseHandle(th);
+  return ok;
+}
+
+bool DebugSession::Wait(uint32_t timeoutMs, WatchEvent& out) {
+  State& s = *state_;
+  if (!s.attached) return false;
+  DEBUG_EVENT ev{};
+  if (!WaitForDebugEvent(&ev, timeoutMs)) return false;
+
+  out = WatchEvent{};
+  out.tid = ev.dwThreadId;
+  DWORD continueStatus = DBG_CONTINUE;
+
+  if (ev.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
+    out.kind = DebugEventKind::Attached;
+    if (ev.u.CreateProcessInfo.hFile) CloseHandle(ev.u.CreateProcessInfo.hFile);
+  } else if (ev.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) {
+    // The debug API contract requires the debugger to close this handle;
+    // leaving it open both leaks a handle in Apprentice's own process AND
+    // keeps the loaded DLL file locked on disk for as long as the
+    // write-watch session stays armed. A Mono/Unity game loading
+    // assemblies continuously would otherwise leak one handle per DLL
+    // load for the duration of the session.
+    if (ev.u.LoadDll.hFile) CloseHandle(ev.u.LoadDll.hFile);
+  } else if (ev.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT) {
+    out.kind = DebugEventKind::ThreadCreated;
+  } else if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT) {
+    out.detached = true; // target gone
+  } else if (ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
+    const EXCEPTION_RECORD& er = ev.u.Exception.ExceptionRecord;
+    if (er.ExceptionCode == EXCEPTION_SINGLE_STEP) {
+      out.kind = DebugEventKind::Hit;
+      out.rip = (uintptr_t)er.ExceptionAddress;
+      // The thread is stopped by the debugger, so no suspend is needed.
+      HANDLE th = OpenThread(THREAD_GET_CONTEXT, FALSE, ev.dwThreadId);
+      CONTEXT ctx{};
+      ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+      out.hasRegs = th && GetThreadContext(th, &ctx);
+      if (th) CloseHandle(th);
+      if (out.hasRegs) CopyRegisters(ctx, out.regs);
+      continueStatus = DBG_CONTINUE;
+    } else if (er.ExceptionCode == EXCEPTION_BREAKPOINT && !s.seenInitialBreakpoint) {
+      // On attach the OS injects a thread that executes an int3
+      // (DbgUiRemoteBreakin) — the expected "debugger attached" signal.
+      // It MUST be consumed with DBG_CONTINUE; passing it back unhandled
+      // can be delivered to the target as a fatal exception. Consume only
+      // the first breakpoint; later int3s (if the game uses them) pass
+      // through.
+      s.seenInitialBreakpoint = true;
+      continueStatus = DBG_CONTINUE;
+    } else {
+      // Not ours (e.g. the game's own exceptions) — pass it back so the
+      // game's own handlers still run.
+      continueStatus = DBG_EXCEPTION_NOT_HANDLED;
+    }
+  }
+
+  s.pending = true;
+  s.pendingIsExit = out.detached;
+  s.pendingPid = ev.dwProcessId;
+  s.pendingTid = ev.dwThreadId;
+  s.pendingStatus = continueStatus;
+  return true;
+}
+
+// `ev` is unused on Windows: one event is pending at a time and its
+// pid/tid/status are kept in State.
+void DebugSession::Continue(const WatchEvent&) {
+  State& s = *state_;
+  if (!s.pending) return;
+  s.pending = false;
+  ContinueDebugEvent(s.pendingPid, s.pendingTid, s.pendingStatus);
+}
+
+void DebugSession::Detach() {
+  State& s = *state_;
+  if (!s.attached) return;
+  // Never leave the target stopped at an event nobody continued. The exit
+  // event is the exception: write-watch has never continued it.
+  if (s.pending && !s.pendingIsExit) Continue(WatchEvent{});
+  s.pending = false;
+
+  // Drain whatever the CPU already raised before the caller's breakpoints
+  // came down. Clearing Dr7 does not un-raise an exception that has already
+  // fired: any in-flight debug exception sits queued for the debugger, and
+  // DebugActiveProcessStop delivers the queue to a process that no longer
+  // has one. Unhandled, that is a fatal STATUS_SINGLE_STEP — the target
+  // dies moments after we let go, which is exactly what "closing Tamper
+  // crashes the game" was. The existing tests never saw it because they
+  // stop the target's writes before stopping the watch, so the queue is
+  // always empty by then.
+  //
+  // Pump until WaitForDebugEvent times out, meaning nothing is left
+  // pending, and consume debug exceptions rather than passing them back —
+  // they are ours, and the game has no handler for them.
+  //
+  // "No event within the timeout" is NOT the same as "the queue is drained"
+  // on a live process: CREATE_THREAD/EXIT_THREAD, LOAD_DLL/UNLOAD_DLL, and
+  // the game's own first-chance exceptions are all real debug events that
+  // reset a plain per-call timeout. A Unity/Mono game with steady thread
+  // churn can keep events arriving indefinitely, and since StopWriteWatch
+  // joins the session thread and before-quit calls it synchronously, an
+  // unbounded loop here hangs the whole app on quit with the debugger still
+  // attached — worse than the crash this drain exists to prevent. So bound
+  // it by wall clock instead: a few hundred ms is far more than the queue
+  // actually needs (it's typically empty on the very first check), and once
+  // we're past the deadline we give up and detach regardless of what's
+  // still arriving.
+  constexpr ULONGLONG kDrainBudgetMs = 300;
+  ULONGLONG drainDeadline = GetTickCount64() + kDrainBudgetMs;
+  DEBUG_EVENT drain;
+  DWORD waitMs = 100; // first wait: same as before, for the common empty-queue case
+  while (GetTickCount64() < drainDeadline && WaitForDebugEvent(&drain, waitMs)) {
+    DWORD status = DBG_CONTINUE;
+    if (drain.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
+      DWORD code = drain.u.Exception.ExceptionRecord.ExceptionCode;
+      // Anything that isn't one of ours still belongs to the game.
+      if (code != EXCEPTION_SINGLE_STEP && code != EXCEPTION_BREAKPOINT) {
+        status = DBG_EXCEPTION_NOT_HANDLED;
+      }
+    } else if (drain.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) {
+      // Same handle-close obligation as Wait — DLL loads keep arriving
+      // right up to detach (a Mono/Unity game loads assemblies
+      // continuously), and this drain loop is exactly the place those
+      // trailing loads land.
+      if (drain.u.LoadDll.hFile) CloseHandle(drain.u.LoadDll.hFile);
+    }
+    ContinueDebugEvent(drain.dwProcessId, drain.dwThreadId, status);
+    waitMs = 20; // subsequent waits: re-check the deadline often, not block on it
+  }
+
+  DebugActiveProcessStop(s.pid); // detach cleanly
+  s.attached = false;
 }
 
 } // namespace platform

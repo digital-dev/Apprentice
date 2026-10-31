@@ -1,5 +1,7 @@
 #include "cave_ops.h"
 #include "platform/platform.h"
+#include "mono_call.h"
+#include "x64_abi.h"
 #include <string>
 #include <vector>
 #include <set>
@@ -511,7 +513,8 @@ Napi::Value EncodeScale(const Napi::CallbackInfo& info) {
 //   1. spill srcXmmReg to the slot (a real call is about to clobber it —
 //      xmm0-5 are all volatile under the Windows x64 ABI, and a Mono-JIT'd
 //      method is exactly the kind of callee that touches them)
-//   2. mov rcx, baseRegister                    ("this" for the call)
+//   2. mov ArgReg(abi,0), baseRegister           ("this" for the call — RCX
+//      on Ms64, RDI on SysV; see below)
 //   3. mov r10, rsp                              (save — see below)
 //   4. and rsp, -16                              (force 16-byte alignment:
 //      this cave runs from a mid-function jmp, NOT a call site, so unlike
@@ -529,19 +532,44 @@ Napi::Value EncodeScale(const Napi::CallbackInfo& info) {
 //  10. mulss srcXmmReg, [rip+factorSlot]
 //  skip:
 //
+// Step 2 is ABI-aware (x64_abi.h's ArgReg), not hardcoded to RCX, because
+// `methodAddress` is GAME code, and a native Linux (ELF/SysV) target passes
+// its first integer/pointer argument — including an implicit "this" — in
+// RDI, never RCX. Resolved via mono_call.h's ResolveAbiForFunction, the
+// same bare-function-address lookup RemoteCallWorker/RemoteCallFloatWorker
+// already use, since this encoder (unlike mono_bridge.cc's stubs) never has
+// a module base of its own to hand platform::PlatformAbiFor directly.
+//
+// Step 5's shadow-space reservation deliberately stays a flat 0x20
+// regardless of `abi` — unlike x64_abi.h's ShadowBytes(abi), which would
+// give 0x08 for SysV. ShadowBytes(abi) assumes the caller's entry RSP is
+// already known to be 8 mod 16 (true for a thread-hijack entry, never true
+// here — see step 4's comment); this blob instead forces 16-alignment
+// itself via `and rsp, -16` and then only needs ANY multiple-of-16
+// adjustment to stay aligned through the call. 0x20 happens to already be
+// such a multiple for both ABIs, so it is kept unconditionally: SysV simply
+// carries 32 bytes of unused (but harmless) reserved stack it doesn't
+// require, rather than needing a second, ABI-dependent constant here.
+//
 // Every RIP-relative displacement here is fixed at build time, not
 // two-pass like EncodeScale's own single mulss: x86-64 RIP-relative
 // addressing always encodes a full disp32 (there is no shorter form to
 // second-guess), so once srcXmmReg's width (REX or not) is known, every
 // instruction's length — and therefore every later instruction's start
-// offset — is already determined before any byte is written.
+// offset — is already determined before any byte is written. Substituting
+// ArgReg(abi,0) for RCX at step 2 never changes this: per x64_abi.h's own
+// note, any GPR 0-15 needs only a REX bit flip here, never an extra byte.
 Napi::Value EncodeConditionalScale(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::string srcRegName = info[0].As<Napi::String>().Utf8Value();
-  std::string baseRegName = info[1].As<Napi::String>().Utf8Value();
-  uintptr_t methodAddress = ParseHex(info[2].As<Napi::String>().Utf8Value());
-  uintptr_t at = ParseHex(info[3].As<Napi::String>().Utf8Value());
-  uintptr_t slot = ParseHex(info[4].As<Napi::String>().Utf8Value());
+  auto handle = static_cast<platform::ProcessHandle>(
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  std::string srcRegName = info[1].As<Napi::String>().Utf8Value();
+  std::string baseRegName = info[2].As<Napi::String>().Utf8Value();
+  uintptr_t methodAddress = ParseHex(info[3].As<Napi::String>().Utf8Value());
+  uintptr_t at = ParseHex(info[4].As<Napi::String>().Utf8Value());
+  uintptr_t slot = ParseHex(info[5].As<Napi::String>().Utf8Value());
+
+  const platform::Abi abi = ResolveAbiForFunction(handle, methodAddress);
 
   ZydisRegister srcReg = XmmRegisterByName(srcRegName);
   if (srcReg == ZYDIS_REGISTER_NONE) {
@@ -566,8 +594,6 @@ Napi::Value EncodeConditionalScale(const Napi::CallbackInfo& info) {
 
   const bool srcExt = srcReg >= ZYDIS_REGISTER_XMM8;
   const uint8_t srcLow = (uint8_t)((srcReg - ZYDIS_REGISTER_XMM0) & 0x7);
-  const bool baseExt = baseIdx >= 8;
-  const uint8_t baseLow = (uint8_t)(baseIdx & 0x7);
   const size_t xmmInsnLen = srcExt ? 9 : 8; // F3 0F 11/10 + [REX.R] + ModRM + disp32
 
   // Running offsets, computed once every earlier instruction's real length
@@ -575,7 +601,7 @@ Napi::Value EncodeConditionalScale(const Napi::CallbackInfo& info) {
   // forward pass rather than two-pass per instruction.
   size_t off = 0;
   const size_t spillEnd = off += xmmInsnLen;  // 1. spill srcXmmReg
-  off += 3;                                   // 2. mov rcx, base (REX+opcode+ModRM)
+  off += 3;                                   // 2. mov ArgReg(abi,0), base (REX+opcode+ModRM)
   off += 3;                                   // 3. mov r10, rsp
   off += 4;                                   // 4. and rsp, -16
   off += 4;                                   // 5. sub rsp, 0x20
@@ -613,10 +639,18 @@ Napi::Value EncodeConditionalScale(const Napi::CallbackInfo& info) {
   b[i++] = (uint8_t)(0x05 | (srcLow << 3));
   memcpy(&b[i], &dSpill32, 4); i += 4;
 
-  // 2. mov rcx, baseRegister  (REX.W[+R] 89 /r, dest=rcx in r/m field)
-  b[i++] = (uint8_t)(0x48 | (baseExt ? 0x04 : 0x00));
-  b[i++] = 0x89;
-  b[i++] = (uint8_t)(0xC1 | (baseLow << 3));
+  // 2. mov ArgReg(abi,0), baseRegister — RCX on Ms64, RDI on SysV (see the
+  // function comment above for why this must track the target's own ABI
+  // rather than staying hardcoded to RCX). EmitMovRegReg emits the same
+  // REX.W[+R/B] 89 /r shape the old hand-rolled encoding did; baseIdx's
+  // numbering already matches Gpr's (both follow x86's own register
+  // encoding, RAX=0..RDI=7,R8=8..R15=15), so the ZydisRegister is cast
+  // straight across with no translation table needed.
+  {
+    std::vector<uint8_t> movArg;
+    EmitMovRegReg(movArg, ArgReg(abi, 0), static_cast<Gpr>(baseIdx));
+    for (uint8_t byte : movArg) b[i++] = byte;
+  }
 
   // 3. mov r10, rsp
   b[i++] = 0x4C; b[i++] = 0x8B; b[i++] = 0xD4;
@@ -976,7 +1010,8 @@ Napi::Value SuspendThreads(const Napi::CallbackInfo& info) {
   uint32_t pid = info[1].As<Napi::Number>().Uint32Value();
 
   if (!platform::SuspendAll(h, pid)) {
-    Napi::Error::New(env, "failed to suspend every thread")
+    std::string why = platform::SuspendAllError();
+    Napi::Error::New(env, why.empty() ? "failed to suspend every thread" : why)
         .ThrowAsJavaScriptException();
     return env.Null();
   }

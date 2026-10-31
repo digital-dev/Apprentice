@@ -216,7 +216,14 @@ function resolveScriptAnchors(
 // resolved once per attach, the same way every other module lookup here
 // reuses that map rather than re-listing modules per cheat.
 function monoDllBase(): string | null {
-  const mono = loadedModules.get('mono.dll') ?? loadedModules.get('mono-2.0-bdwgc.dll')
+  // mono.dll/mono-2.0-bdwgc.dll on Windows and Wine (a PE module either
+  // way); libmonobdwgc-2.0.so on native Linux (an ELF module) — tried
+  // unconditionally rather than branching on process.platform, since the
+  // other name simply never exists on whichever platform this is.
+  const mono =
+    loadedModules.get('mono.dll') ??
+    loadedModules.get('mono-2.0-bdwgc.dll') ??
+    loadedModules.get('libmonobdwgc-2.0.so')
   return mono ? mono.base : null
 }
 
@@ -739,8 +746,20 @@ const patchOps: PatchOps = {
     nativeAddon.encodeStoreRegister(destRegister, offset, sourceRegister),
   encodeScale: (sourceXmmRegister, atAddress, slotAddress) =>
     nativeAddon.encodeScale(sourceXmmRegister, atAddress, slotAddress),
+  // attachedHandle lets the native encoder resolve methodAddress's own ABI
+  // (Ms64 vs SysV) rather than assuming Ms64 — see nativeAddon.ts/
+  // cave_ops.cc. Falls back to 0 when nothing is attached; the native side
+  // then resolves via the (nonexistent) main module, same as any other
+  // encode* call made with no attachment.
   encodeConditionalScale: (sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress) =>
-    nativeAddon.encodeConditionalScale(sourceXmmRegister, baseRegister, methodAddress, atAddress, slotAddress),
+    nativeAddon.encodeConditionalScale(
+      attachedHandle ?? 0,
+      sourceXmmRegister,
+      baseRegister,
+      methodAddress,
+      atAddress,
+      slotAddress
+    ),
   encodeCaptureOnce: (baseRegister, atAddress, slotAddress) =>
     nativeAddon.encodeCaptureOnce(baseRegister, atAddress, slotAddress),
   encodeGuardedSkip: (baseRegister, atAddress, slotAddress, returnAddress) =>
@@ -836,6 +855,54 @@ function refreshModuleContext(exeName: string): void {
   patchEngine.setAnchorContext(context.modules, context.verified)
 }
 
+// Linux/native/ptrace_core.cc's kPtraceDeniedMessage, thrown verbatim as the
+// write-watch attach error's message (see write_watch.cc's DebugLoop/
+// StartWriteWatch, which now forward DebugSession::Attach's own error text
+// instead of a hardcoded one, and platform_linux_debug.cc's
+// ClassifySeizeError, which is what actually produces this string). It
+// can't be imported here — it's a C++ constant, and PtraceDenied() isn't
+// exposed to the addon — so this matches the exact string, the only signal
+// available at this boundary, and rewrites it into something a user can
+// act on without knowing what ptrace_scope is. nativeAddon.attach (used by
+// attachTo, below) never produces this string — see the comment there.
+const PTRACE_DENIED_MESSAGE =
+  'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
+
+// Which ptrace fix to show depends on how this binary was installed. An
+// AppImage can't carry a capability bit at all — the squashfs it runs from
+// is mounted read-only, so after-install.sh's setcap step has nothing to
+// act on — leaving the Yama sysctl as its only route. electron-builder's
+// AppImage launcher sets APPIMAGE (to the mount's own path) before exec'ing
+// the app, which is also the documented way to detect running-as-AppImage
+// at runtime, so it doubles as that signal here. A .deb install already
+// has CAP_SYS_PTRACE from setcap unless that step was skipped (missing
+// `setcap`, see after-install.sh) or stripped by a later reinstall, so its
+// fix leads with reinstalling rather than the sysctl.
+export function ptraceHelp(): { isAppImage: boolean; fix: string } {
+  const isAppImage = Boolean(process.env.APPIMAGE)
+  const fix = isAppImage
+    ? 'Allow it for this login with "sudo sysctl kernel.yama.ptrace_scope=0", or make that persist ' +
+      'across reboots with "echo kernel.yama.ptrace_scope=0 | sudo tee /etc/sysctl.d/99-apprentice-ptrace.conf" ' +
+      '(see Linux/packaging/99-apprentice-ptrace.conf and Linux/README.md).'
+    : 'Reinstall the .deb — its after-install step grants CAP_SYS_PTRACE automatically — or allow it for ' +
+      'this login with "sudo sysctl kernel.yama.ptrace_scope=0" (/proc/sys/kernel/yama/ptrace_scope).'
+  return { isAppImage, fix }
+}
+
+export function describeAttachError(message: string): string {
+  if (message !== PTRACE_DENIED_MESSAGE) return message
+  return 'Could not attach: ptrace is blocked by this system’s Yama policy. ' + ptraceHelp().fix
+}
+
+// What the writeWatch:start handler's catch block below actually runs on
+// whatever nativeAddon.startWriteWatch throws — pulled out so the mapping
+// at the one real call site (not just describeAttachError in isolation) is
+// directly testable against an Error shaped like what the native layer
+// throws.
+export function mapWriteWatchStartError(err: unknown): Error {
+  return new Error(describeAttachError(err instanceof Error ? err.message : String(err)))
+}
+
 // Shared by the manual process:attach handler and the watcher's onAppear —
 // both must go through the same restore-before-switch guard (put a
 // previously-attached process's code back while its handle is still valid)
@@ -907,6 +974,12 @@ async function attachTo(
   attachedHandle = null
   resetUeDiscovery()
   if (previousHandle !== null) nativeAddon.detach(previousHandle)
+  // nativeAddon.attach only opens the process (stat("/proc/<pid>") on Linux
+  // — see platform_linux_process.cc's OpenProcess) — it never touches
+  // ptrace, so its errors are always "process not found" or a permissions
+  // message, never kPtraceDeniedMessage. describeAttachError's mapping
+  // belongs at writeWatch:start below, the one call path that actually goes
+  // through DebugSession::Attach.
   const { handle, baseAddress } = nativeAddon.attach(pid)
   attachedHandle = handle
   attachedBase = baseAddress
@@ -1594,7 +1667,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow): void {
       nativeAddon.startWriteWatch(attachedPid, address)
     } catch (err) {
       freezeLoop.start() // capture failed to start — don't leave freezing off
-      throw err
+      // The only call path that goes through DebugSession::Attach, so the
+      // only place kPtraceDeniedMessage (write_watch.cc's DebugLoop, via
+      // ptrace_core.cc) can actually reach ipc.ts.
+      throw mapWriteWatchStartError(err)
     }
   })
 

@@ -9,3 +9,14 @@ mcp-server/node_modules/
 mcp-server/dist/
 release/
 fixtures/snapshots/
+Linux/dist/
+Linux/test-harness/harness
+Linux/test-harness/harness-wine.exe
+Linux/native/tests/proc_parse_test
+Linux/native/tests/module_parse_test
+Linux/native/tests/fixtures/*.so
+Linux/test-harness/*.so
+Linux/native/tests/platform_memory_test
+Linux/native/tests/platform_write_test
+Linux/native/tests/ptrace_core_test
+Linux/native/tests/remote_exec_test

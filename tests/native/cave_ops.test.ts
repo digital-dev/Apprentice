@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { spawnHarness, HARNESS_IS_PE } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -157,7 +157,8 @@ describe('decodeRun', () => {
     expect(result.relocatable).toBe(false)
   })
 
-  it('refuses a run that must fold in the function\'s own ret', async () => {
+  // Task 15: needs the write watch (ptrace debug session), not yet on Linux.
+  it.skipIf(process.platform === 'linux')('refuses a run that must fold in the function\'s own ret', async () => {
     // harness.c's tight_write (`*p = v;`, deliberately unpadded — unlike
     // force_write above) compiles under /Od to a 4-byte `movss [reg], xmm`
     // sitting immediately against its `ret`, with no other code between
@@ -402,22 +403,22 @@ describe('encodeConditionalScale', () => {
 
   it('rejects an unknown source register', () => {
     expect(() =>
-      (addon as any).encodeConditionalScale('notareg', 'rcx', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'notareg', 'rcx', '0x1000', '0x1008', '0x1000')
     ).toThrow()
   })
 
   it('rejects an unknown base register', () => {
     expect(() =>
-      (addon as any).encodeConditionalScale('xmm0', 'notareg', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'xmm0', 'notareg', '0x1000', '0x1008', '0x1000')
     ).toThrow()
   })
 
   it('refuses r10 and r11 as the base register — they are this effect\'s own scratch', () => {
     expect(() =>
-      (addon as any).encodeConditionalScale('xmm0', 'r10', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'xmm0', 'r10', '0x1000', '0x1008', '0x1000')
     ).toThrow()
     expect(() =>
-      (addon as any).encodeConditionalScale('xmm0', 'r11', '0x1000', '0x1008', '0x1000')
+      (addon as any).encodeConditionalScale(handle, 'xmm0', 'r11', '0x1000', '0x1008', '0x1000')
     ).toThrow()
   })
 
@@ -429,8 +430,8 @@ describe('encodeConditionalScale', () => {
     // no guard/immune test below asks decodeRun to walk their blobs
     // either). The live end-to-end test above is this blob's real proof;
     // this just pins its size against silent drift.
-    const nonExt: string = (addon as any).encodeConditionalScale('xmm0', 'rsi', '0x140000000', '0x1000', '0x2000')
-    const ext: string = (addon as any).encodeConditionalScale('xmm9', 'rsi', '0x140000000', '0x1000', '0x2000')
+    const nonExt: string = (addon as any).encodeConditionalScale(handle, 'xmm0', 'rsi', '0x140000000', '0x1000', '0x2000')
+    const ext: string = (addon as any).encodeConditionalScale(handle, 'xmm9', 'rsi', '0x140000000', '0x1000', '0x2000')
     expect(nonExt.length / 2).toBe(70)
     // xmm8-15 costs one extra REX.R byte at each of the three places
     // srcXmmReg appears: the spill, the reload, and the mulss.
@@ -453,6 +454,23 @@ describe('encodeConditionalScale', () => {
     const codeAddress = '0x' + (BigInt(cave) + 16n).toString(16)
     const dataAddr = '0x' + (BigInt(cave) + 4000n).toString(16)
 
+    // Which register callRemoteFunctionFloat's stub (mono_call.cc's
+    // BuildCallStub) actually loads `hitArg` (this call's one argument)
+    // into: RCX on a Microsoft x64 target (Windows, and Wine's PE
+    // harness), RDI on a System V target (native Linux's ELF harness).
+    // `codeAddress` is a scratch cave, not a module, so this mirrors how
+    // mono_call.cc's own ResolveAbiForFunction falls back to the process's
+    // main module's ABI when `function` isn't inside any known module.
+    const argReg = HARNESS_IS_PE ? 'rcx' : 'rdi'
+    // mov dst, src (REX.W 89 /r, mod=11 register-direct) for the two
+    // registers this test ever needs as `dst`: encodes generically so it
+    // keeps working if either side's register choice ever changes.
+    const REG_CODE: Record<string, number> = { rax: 0, rcx: 1, rdx: 2, rbx: 3, rsp: 4, rbp: 5, rsi: 6, rdi: 7 }
+    function movRegReg(dst: string, src: string): string {
+      const modrm = (0xc0 | (REG_CODE[src] << 3) | REG_CODE[dst]).toString(16).padStart(2, '0')
+      return '4889' + modrm
+    }
+
     async function run(armedAddr: string, hitArg: string, factor: number, baseReg: string): Promise<number> {
       const slotHex =
         leHex(BigInt(armedAddr), 8) + leHex(BigInt(floatBits(factor)), 4) + '00000000'
@@ -461,10 +479,13 @@ describe('encodeConditionalScale', () => {
 
       const dPreamble = BigInt(dataAddr) - (BigInt(codeAddress) + 8n)
       let preamble = 'f30f1005' + leHex(dPreamble < 0n ? (1n << 32n) + dPreamble : dPreamble, 4)
-      if (baseReg === 'rsi') preamble += '4889ce' // mov rsi, rcx — hitArg arrives in rcx via the stub
+      // hitArg arrives in argReg via the stub; move it into baseReg only
+      // when they differ (baseReg is always 'rcx' or 'rsi' in this test).
+      if (baseReg !== argReg) preamble += movRegReg(baseReg, argReg)
 
       const blobAddress = '0x' + (BigInt(codeAddress) + BigInt(preamble.length / 2)).toString(16)
       const blob: string = (addon as any).encodeConditionalScale(
+        handle,
         'xmm0',
         baseReg,
         resolveAttackerAddr,
@@ -596,7 +617,8 @@ describe('suspendThreads / resumeThreads', () => {
   }, 15000)
 })
 
-describe('force injection — end to end', () => {
+// Task 15: every test here starts with the write watch (ptrace debug session), not yet on Linux.
+describe.skipIf(process.platform === 'linux')('force injection — end to end', () => {
   it('pins the value to a constant and releases it on restore', async () => {
     // Catch the instruction that writes the forced field, exactly as the
     // app does — this is the same provenance a real cheat has.
@@ -678,7 +700,8 @@ describe('force injection — end to end', () => {
   }, 30000)
 })
 
-describe('capture injection — end to end', () => {
+// Task 15: every test here starts with the write watch (ptrace debug session), not yet on Linux.
+describe.skipIf(process.platform === 'linux')('capture injection — end to end', () => {
   it('records the object pointer where a value cheat can read it', async () => {
     ;(addon as any).startWriteWatch(harness.pid, forceAddress)
     await send('forceloop')
@@ -734,7 +757,8 @@ describe('capture injection — end to end', () => {
   }, 30000)
 })
 
-describe('scale injection — end to end', () => {
+// Task 15: every test here starts with the write watch (ptrace debug session), not yet on Linux.
+describe.skipIf(process.platform === 'linux')('scale injection — end to end', () => {
   it('multiplies the live float the game stores, clobbering nothing', async () => {
     // The harness's force_write is `*p = v` under /Od, i.e. a real
     // `movss [reg], xmm` — the exact site shape scale mode exists for.

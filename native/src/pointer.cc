@@ -1,6 +1,5 @@
 #include "pointer.h"
-#include <windows.h>
-#include <psapi.h>
+#include "platform/platform.h"
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -39,24 +38,13 @@ struct ModuleRange {
 // static, valid chain gets reported as "not found" whenever the real
 // anchor lives in a different module. Enumerate every loaded module and
 // treat any of them as a valid anchor.
-std::vector<ModuleRange> ListModules(HANDLE h) {
+std::vector<ModuleRange> ListModules(platform::ProcessHandle h) {
   std::vector<ModuleRange> out;
-  HMODULE mods[1024];
-  DWORD needed;
-  if (!EnumProcessModulesEx(h, mods, sizeof(mods), &needed, LIST_MODULES_ALL)) {
-    return out;
-  }
-  DWORD count = needed / sizeof(HMODULE);
-  if (count > 1024) count = 1024;
-
-  for (DWORD i = 0; i < count; i++) {
-    char nameBuf[MAX_PATH];
-    MODULEINFO info{};
-    if (GetModuleBaseNameA(h, mods[i], nameBuf, sizeof(nameBuf)) &&
-        GetModuleInformation(h, mods[i], &info, sizeof(info))) {
-      uintptr_t base = reinterpret_cast<uintptr_t>(mods[i]);
-      out.push_back({nameBuf, base, base + info.SizeOfImage});
-    }
+  std::vector<platform::ModuleRange> mods;
+  if (!platform::ListModuleRanges(h, mods)) return out;
+  for (const auto& m : mods) {
+    if (m.size == 0) continue; // GetModuleInformation failed: old code dropped these
+    out.push_back({m.name, m.base, m.base + m.size});
   }
   return out;
 }
@@ -89,23 +77,22 @@ constexpr size_t kChunkSize = 4 * 1024 * 1024;
 static_assert(kChunkSize % sizeof(uintptr_t) == 0,
               "kChunkSize must be a multiple of the pointer stride");
 
-std::vector<PointerEntry> CollectPointers(HANDLE h) {
+std::vector<PointerEntry> CollectPointers(platform::ProcessHandle h) {
   std::vector<PointerEntry> out;
-  MEMORY_BASIC_INFORMATION mbi;
+  platform::Region region;
   uintptr_t addr = 0;
-  while (out.size() < kMaxPointerEntries &&
-         VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
-    bool readable = (mbi.State == MEM_COMMIT) &&
-        (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
-        !(mbi.Protect & PAGE_GUARD);
-    // One bulk read per chunk instead of one ReadProcessMemory syscall per
+  while (out.size() < kMaxPointerEntries && platform::QueryRegion(h, addr, region)) {
+    // Same page set as scanner.cc: committed, unguarded, writable data pages
+    // (execCopyOnWrite excludes PAGE_EXECUTE_WRITECOPY, as the old mask did).
+    bool readable = region.writable && !region.execCopyOnWrite;
+    // One bulk read per chunk instead of one ReadMemory syscall per
     // 8-byte candidate — the latter is hundreds of millions of syscalls
     // against a real game process and makes this look hung (same issue
     // scanFirst had, fixed the same way here).
-    if (readable && mbi.RegionSize >= sizeof(uintptr_t)) {
+    if (readable && region.size >= sizeof(uintptr_t)) {
       constexpr size_t kWidth = sizeof(uintptr_t);
-      const size_t regionSize = (size_t)mbi.RegionSize;
-      const uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+      const size_t regionSize = region.size;
+      const uintptr_t regionBase = region.base;
       std::vector<uint8_t> buffer(std::min(regionSize, kChunkSize + kWidth - 1));
 
       for (size_t chunkOffset = 0;
@@ -113,9 +100,8 @@ std::vector<PointerEntry> CollectPointers(HANDLE h) {
            chunkOffset += kChunkSize) {
         const size_t scanSpan = std::min(kChunkSize, regionSize - chunkOffset);
         const size_t readLen = std::min(kChunkSize + kWidth - 1, regionSize - chunkOffset);
-        SIZE_T bytesRead = 0;
-        if (!ReadProcessMemory(h, (LPCVOID)(regionBase + chunkOffset), buffer.data(), readLen,
-                               &bytesRead)) {
+        const size_t bytesRead = readLen;
+        if (!platform::ReadMemory(h, regionBase + chunkOffset, buffer.data(), readLen)) {
           continue;
         }
         for (size_t offset = 0; offset < scanSpan && offset + kWidth <= bytesRead;
@@ -127,7 +113,7 @@ std::vector<PointerEntry> CollectPointers(HANDLE h) {
         }
       }
     }
-    uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+    uintptr_t next = region.base + region.size;
     if (next <= addr) break; // guard against non-advancing regions
     addr = next;
   }
@@ -268,7 +254,7 @@ bool ScoreBetter(const ChainScore& a, const ChainScore& b) {
 // chains, so a direct single-deref static path is always preferred over a
 // deeper one even before per-depth ranking runs. Re-searching the empty
 // shallow depths is cheap, and the shared node budget still caps total work.
-std::optional<ChainResult> RunResolvePointerChain(HANDLE h, uintptr_t target, int maxLevels) {
+std::optional<ChainResult> RunResolvePointerChain(platform::ProcessHandle h, uintptr_t target, int maxLevels) {
   auto modules = ListModules(h);
   auto pointers = CollectPointers(h);
   std::sort(pointers.begin(), pointers.end(), ByValue);
@@ -301,7 +287,7 @@ std::optional<ChainResult> RunResolvePointerChain(HANDLE h, uintptr_t target, in
 // indistinguishable from a hang to the user.
 class ResolvePointerChainWorker : public Napi::AsyncWorker {
  public:
-  ResolvePointerChainWorker(Napi::Env env, HANDLE handle, uintptr_t target, int maxLevels)
+  ResolvePointerChainWorker(Napi::Env env, platform::ProcessHandle handle, uintptr_t target, int maxLevels)
       : Napi::AsyncWorker(env),
         handle_(handle),
         target_(target),
@@ -345,7 +331,7 @@ class ResolvePointerChainWorker : public Napi::AsyncWorker {
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
  private:
-  HANDLE handle_;
+  platform::ProcessHandle handle_;
   uintptr_t target_;
   int maxLevels_;
   std::optional<ChainResult> result_;
@@ -356,7 +342,7 @@ class ResolvePointerChainWorker : public Napi::AsyncWorker {
 
 Napi::Value ResolvePointerChain(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
+  auto h = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   uintptr_t target = ParseHex(info[1].As<Napi::String>().Utf8Value());
   int maxLevels = info[2].As<Napi::Number>().Int32Value();
@@ -373,13 +359,13 @@ Napi::Value ResolvePointerChain(const Napi::CallbackInfo& info) {
 // happened to attach against.
 Napi::Value GetModuleBase(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
+  auto h = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   std::string moduleName = info[1].As<Napi::String>().Utf8Value();
 
   auto modules = ListModules(h);
   for (const auto& m : modules) {
-    if (_stricmp(m.name.c_str(), moduleName.c_str()) == 0) {
+    if (platform::EqualsIgnoreCase(m.name, moduleName)) {
       return Napi::String::New(env, ToHex(m.base));
     }
   }

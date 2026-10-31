@@ -1,0 +1,5 @@
+00400000-00401000 r--p 00000000 08:01 1234 /home/u/.steam/Schedule I/Schedule I.exe
+00401000-00a00000 r-xp 00001000 08:01 1234 /home/u/.steam/Schedule I/Schedule I.exe
+7ffff7a00000-7ffff7c00000 r-xp 00000000 08:01 99 /usr/lib/x86_64-linux-gnu/libc.so.6
+7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0 [stack]
+10000000-10001000 r--p 00000000 00:00 0

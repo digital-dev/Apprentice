@@ -26,8 +26,33 @@ const HIDDEN_PROCESSES = new Set([
   'fontdrvhost.exe',
   'sihost.exe',
   'taskhostw.exe',
-  'wudfhost.exe'
+  'wudfhost.exe',
+  // Wine/Proton's own plumbing under Linux: these run the Windows-process
+  // emulation itself (wineserver, the preloader, Wine's stand-ins for
+  // Windows' own session services above, and Proton's sandboxing wrapper),
+  // never the game.
+  'wineserver',
+  'wine64-preloader',
+  'winedevice.exe',
+  'explorer.exe',
+  'plugplay.exe',
+  'rpcss.exe',
+  'conhost.exe',
+  'steam.exe',
+  'pressure-vessel*' // prefix: Proton's container runtime spawns pressure-vessel-wrap, -launcher, etc.
 ])
+
+// A trailing '*' in HIDDEN_PROCESSES marks a prefix match (there is no other
+// wildcard use), since Proton's pressure-vessel tooling runs under several
+// different exact names rather than one.
+function isHiddenProcess(name: string): boolean {
+  const n = name.toLowerCase()
+  if (HIDDEN_PROCESSES.has(n)) return true
+  for (const entry of HIDDEN_PROCESSES) {
+    if (entry.endsWith('*') && n.startsWith(entry.slice(0, -1))) return true
+  }
+  return false
+}
 
 export default function ProcessPicker({
   onAttached
@@ -53,9 +78,7 @@ export default function ProcessPicker({
   }
 
   const filtered = processes.filter(
-    (p) =>
-      !HIDDEN_PROCESSES.has(p.name.toLowerCase()) &&
-      p.name.toLowerCase().includes(query.toLowerCase())
+    (p) => !isHiddenProcess(p.name) && p.name.toLowerCase().includes(query.toLowerCase())
   )
 
   return (

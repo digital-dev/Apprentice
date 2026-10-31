@@ -1,0 +1,72 @@
+# Maintainer: digital-dev <tvajgert@gmail.com>
+#
+# Arch Linux / CachyOS package for Apprentice. The source tarball is
+# Linux/scripts/package-arch.sh's output: electron-builder's "dir" target
+# (Linux/packaging/electron-builder.linux.json, the same config the
+# AppImage/deb targets use) left as a plain directory instead of wrapped in
+# an installer, so this PKGBUILD only unpacks and installs — there is no
+# separate Arch-specific build step, and nothing here is fetched over the
+# network (see sha256sums below).
+#
+# Expected layout when building: this PKGBUILD, apprentice.install, and
+# Apprentice-<pkgver>-linux-x64.tar.gz (copied from Linux/dist/, see
+# Linux/README.md) sitting in the same directory, e.g.
+#   cp Linux/dist/Apprentice-*-linux-x64.tar.gz Linux/packaging/arch/ && \
+#     (cd Linux/packaging/arch && makepkg -si)
+
+pkgname=apprentice
+# Linux/scripts/package-arch.sh overwrites this line (sed, matching
+# "^_pkgver=") every time it runs, setting it to the exact package.json
+# version it just baked into the tarball's filename below — so this literal
+# never has to be hand-kept in sync across a version bump. Do not edit it
+# by hand; re-run package-arch.sh instead. The placeholder below is only
+# what a fresh checkout shows before that script has ever run.
+_pkgver=0.0.0
+# makepkg's pkgver may not contain a hyphen; package.json's actual version
+# (used verbatim in the tarball's filename below) does.
+pkgver=${_pkgver//-/_}
+pkgrel=1
+pkgdesc="Offline Electron+React desktop app for game training"
+arch=('x86_64')
+url="https://github.com/digital-dev/Apprentice"
+license=('GPL3')
+depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst')
+optdepends=('steam: library discovery')
+install=apprentice.install
+source=("Apprentice-${_pkgver}-linux-x64.tar.gz")
+# Built moments earlier in the same pipeline that then calls makepkg (see
+# package-arch.sh); there is no separate network fetch here for a checksum
+# to meaningfully pin against.
+sha256sums=('SKIP')
+
+package() {
+  # The tarball's single top-level entry is "apprentice" (package-arch.sh
+  # stages it under that name regardless of what electron-builder itself
+  # calls its "dir" target output).
+  install -dm755 "$pkgdir/opt/apprentice"
+  cp -a "$srcdir/apprentice/." "$pkgdir/opt/apprentice/"
+
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /opt/apprentice/apprentice "$pkgdir/usr/bin/apprentice"
+
+  # electron-builder's asar:false "files" entry placed the icon somewhere
+  # under resources/app/ rather than at a fixed top-level path, so find it
+  # instead of hardcoding the nesting.
+  local icon
+  icon="$(find "$srcdir/apprentice" -type f -ipath '*App Icon/Apprentice.png' | head -1)"
+  if [ -n "$icon" ]; then
+    install -Dm644 "$icon" "$pkgdir/usr/share/icons/hicolor/512x512/apps/apprentice.png"
+  fi
+
+  install -dm755 "$pkgdir/usr/share/applications"
+  cat > "$pkgdir/usr/share/applications/apprentice.desktop" <<-EOF
+	[Desktop Entry]
+	Type=Application
+	Name=Apprentice
+	Comment=Offline game trainer
+	Exec=/usr/bin/apprentice
+	Icon=apprentice
+	Terminal=false
+	Categories=Utility;
+	EOF
+}

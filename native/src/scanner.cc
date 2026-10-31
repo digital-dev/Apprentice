@@ -1,7 +1,7 @@
 #include "scanner.h"
 #include "value_type.h"
 #include "process_utils.h"
-#include <windows.h>
+#include "platform/platform.h"
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -75,11 +75,9 @@ bool ValuesEqual(double a, double b, bool isFloat) {
   return a == b;
 }
 
-bool ReadValueAsDouble(HANDLE h, uintptr_t addr, const ValueSpec& spec, double* out) {
+bool ReadValueAsDouble(platform::ProcessHandle h, uintptr_t addr, const ValueSpec& spec, double* out) {
   uint8_t buf[8]; // widest supported type (int64/double) is 8 bytes
-  SIZE_T read;
-  if (!ReadProcessMemory(h, (LPCVOID)addr, buf, spec.size, &read) || read != spec.size)
-    return false;
+  if (!platform::ReadMemory(h, addr, buf, spec.size)) return false;
   *out = InterpretAsDouble(buf, spec);
   return true;
 }
@@ -99,7 +97,7 @@ struct AddressValue {
 // lives (a module's range, a heap segment from an earlier scan) skip
 // sweeping the rest of a large/GC-heavy process, which is both faster and
 // leaves less total surface for a fragile target to fault on mid-scan.
-std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double target,
+std::vector<AddressValue> RunScanFirst(platform::ProcessHandle h, const ValueSpec& spec, double target,
                                         uintptr_t rangeStart, uintptr_t rangeEnd) {
   std::vector<AddressValue> out;
   bool isFloat = IsFloatKind(spec.kind);
@@ -109,18 +107,18 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
   // types keep their natural stride.
   size_t stride = spec.size <= 4 ? spec.size : 4;
 
-  MEMORY_BASIC_INFORMATION mbi;
+  platform::Region region;
   uintptr_t addr = rangeStart;
-  while (out.size() < kMaxScanResults &&
-         VirtualQueryEx(h, (LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
-    const uintptr_t regionBase = (uintptr_t)mbi.BaseAddress;
+  while (out.size() < kMaxScanResults && platform::QueryRegion(h, addr, region)) {
+    const uintptr_t regionBase = region.base;
     if (rangeEnd != 0 && regionBase >= rangeEnd) break;
-    bool readable = (mbi.State == MEM_COMMIT) &&
-        (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)) &&
-        !(mbi.Protect & PAGE_GUARD);
+    // Committed, unguarded, writable data pages: the same set the old
+    // MEM_COMMIT / PAGE_READWRITE|WRITECOPY|EXECUTE_READWRITE mask picked
+    // (execCopyOnWrite excludes PAGE_EXECUTE_WRITECOPY, which that mask never had).
+    bool readable = region.writable && !region.execCopyOnWrite;
 
-    if (readable && mbi.RegionSize >= spec.size) {
-      const size_t regionSize = (size_t)mbi.RegionSize;
+    if (readable && region.size >= spec.size) {
+      const size_t regionSize = region.size;
       // A value starting at the last offset this chunk owns runs
       // (spec.size - 1) bytes past the chunk — read that tail too, so a
       // boundary-straddling value is complete in the buffer instead of
@@ -133,13 +131,12 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
       for (size_t chunkOffset = 0; chunkOffset < regionSize; chunkOffset += kChunkSize) {
         const size_t scanSpan = std::min(kChunkSize, regionSize - chunkOffset);
         const size_t readLen = std::min(kChunkSize + overlap, regionSize - chunkOffset);
-        SIZE_T bytesRead = 0;
+        const size_t bytesRead = readLen;
         // A chunk read can legitimately fail (e.g. protection changed
-        // between VirtualQueryEx and ReadProcessMemory) — skip that chunk
+        // between QueryRegion and ReadMemory) — skip that chunk
         // rather than falling back to a per-address read, which is what
         // made scanning slow enough to look hung against a real game.
-        if (!ReadProcessMemory(h, (LPCVOID)(regionBase + chunkOffset), buffer.data(), readLen,
-                               &bytesRead)) {
+        if (!platform::ReadMemory(h, regionBase + chunkOffset, buffer.data(), readLen)) {
           continue;
         }
         for (size_t offset = 0; offset < scanSpan && offset + spec.size <= bytesRead;
@@ -147,7 +144,7 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
           double value = InterpretAsDouble(buffer.data() + offset, spec);
           if (ValuesEqual(value, target, isFloat)) {
             uintptr_t hit = regionBase + chunkOffset + offset;
-            // VirtualQueryEx(addr) returns the region CONTAINING addr, so the
+            // QueryRegion(addr) returns the region CONTAINING addr, so the
             // very first region walked can start before rangeStart, and the
             // last one can run past rangeEnd — filter at the hit itself the
             // same way RunScanAob does, not just at the region level above.
@@ -161,7 +158,7 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
       }
     }
 
-    uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+    uintptr_t next = region.base + region.size;
     if (next <= addr) break; // guard against non-advancing regions
     addr = next;
   }
@@ -177,7 +174,7 @@ std::vector<AddressValue> RunScanFirst(HANDLE h, const ValueSpec& spec, double t
 // which is indistinguishable from a hang to the user.
 class ScanFirstWorker : public Napi::AsyncWorker {
  public:
-  ScanFirstWorker(Napi::Env env, HANDLE handle, ValueSpec spec, double target,
+  ScanFirstWorker(Napi::Env env, platform::ProcessHandle handle, ValueSpec spec, double target,
                   uintptr_t rangeStart, uintptr_t rangeEnd)
       : Napi::AsyncWorker(env),
         handle_(handle),
@@ -220,7 +217,7 @@ class ScanFirstWorker : public Napi::AsyncWorker {
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
  private:
-  HANDLE handle_;
+  platform::ProcessHandle handle_;
   ValueSpec spec_;
   double target_;
   uintptr_t rangeStart_;
@@ -237,7 +234,7 @@ class ScanFirstWorker : public Napi::AsyncWorker {
 // every candidate — which would be wrong for any candidates whose values have
 // diverged from each other since the last scan.
 std::vector<AddressValue> RunScanNext(
-    HANDLE h, const std::vector<AddressValue>& candidates, const ValueSpec& spec,
+    platform::ProcessHandle h, const std::vector<AddressValue>& candidates, const ValueSpec& spec,
     const std::string& mode, double filterValue) {
   std::vector<AddressValue> out;
   bool isFloat = IsFloatKind(spec.kind);
@@ -258,13 +255,13 @@ std::vector<AddressValue> RunScanNext(
   return out;
 }
 
-// Same rationale as ScanFirstWorker: scanNext issues one ReadProcessMemory
+// Same rationale as ScanFirstWorker: scanNext issues one ReadMemory
 // syscall per candidate, and an under-narrowed first scan can leave hundreds
 // of thousands of candidates — running that synchronously froze the entire
 // Electron app for the duration of every next-scan filter click.
 class ScanNextWorker : public Napi::AsyncWorker {
  public:
-  ScanNextWorker(Napi::Env env, HANDLE h, std::vector<AddressValue> candidates,
+  ScanNextWorker(Napi::Env env, platform::ProcessHandle h, std::vector<AddressValue> candidates,
                  ValueSpec spec, std::string mode, double filterValue)
       : Napi::AsyncWorker(env),
         h_(h),
@@ -302,7 +299,7 @@ class ScanNextWorker : public Napi::AsyncWorker {
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
  private:
-  HANDLE h_;
+  platform::ProcessHandle h_;
   std::vector<AddressValue> candidates_;
   ValueSpec spec_;
   std::string mode_;
@@ -315,13 +312,13 @@ class ScanNextWorker : public Napi::AsyncWorker {
 
 Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
+  auto h = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   // A stale handle (process crashed/exited since attach) would otherwise
   // walk to an empty result — indistinguishable from "scanned everything,
   // found no matches" — which is how a dead-process handle burned an entire
   // scan/narrow cycle silently. Fail fast with an unambiguous error instead.
-  if (!IsProcessAlive(reinterpret_cast<uintptr_t>(h))) {
+  if (!IsProcessAlive(h)) {
     Napi::Error::New(env, "process is no longer running (it may have crashed or exited) — re-attach")
         .ThrowAsJavaScriptException();
     return env.Null();
@@ -349,11 +346,11 @@ Napi::Value ScanFirst(const Napi::CallbackInfo& info) {
 
 Napi::Value ScanNext(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  HANDLE h = reinterpret_cast<HANDLE>(
+  auto h = static_cast<platform::ProcessHandle>(
       static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
   // Same reasoning as ScanFirst: without this, a dead handle just reads
   // "0 of N candidates survived" — indistinguishable from a real narrow.
-  if (!IsProcessAlive(reinterpret_cast<uintptr_t>(h))) {
+  if (!IsProcessAlive(h)) {
     Napi::Error::New(env, "process is no longer running (it may have crashed or exited) — re-attach")
         .ThrowAsJavaScriptException();
     return env.Null();

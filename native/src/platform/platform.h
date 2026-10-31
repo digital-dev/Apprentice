@@ -1,6 +1,11 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#ifndef _WIN32
+#include <strings.h>
+#endif
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -8,10 +13,18 @@
 // platform that works today; the Linux backend is a stub that refuses
 // cleanly, so a Linux build compiles and loads rather than pretending.
 //
-// Only NEW code goes through here. The existing scanner, pointer walker,
-// memory ops, write-watch and patch ops still call Win32 directly; porting
-// those is a separate sub-project.
+// Callers are being moved onto this layer file by file (the linux-port
+// plan); write-watch goes through DebugSession and no longer calls Win32.
 namespace platform {
+
+// Case-insensitive name compare (module names); _stricmp on Windows, strcasecmp elsewhere.
+inline bool EqualsIgnoreCase(const std::string& a, const std::string& b) {
+#ifdef _WIN32
+  return _stricmp(a.c_str(), b.c_str()) == 0;
+#else
+  return strcasecmp(a.c_str(), b.c_str()) == 0;
+#endif
+}
 
 // A HANDLE on Windows, a pid on Linux. Opaque to callers.
 using ProcessHandle = uintptr_t;
@@ -20,8 +33,17 @@ struct Region {
   uintptr_t base = 0;
   size_t size = 0;
   bool free = false;
+  // Backed by committed memory (Windows MEM_COMMIT), whatever its protection:
+  // true for PAGE_NOACCESS and guard pages too, unlike `readable`.
+  bool committed = false;
   bool readable = false;
+  bool writable = false;
   bool executable = false;
+  // Windows PAGE_EXECUTE_WRITECOPY (a copy-on-write executable image page).
+  // `writable` is true for it, but the data scanners (scanner.cc,
+  // pointer.cc) have always skipped it, so they need to tell it apart to
+  // keep their results byte-identical. Always false on Linux.
+  bool execCopyOnWrite = false;
 };
 
 struct ModuleInfo {
@@ -46,6 +68,18 @@ bool ListModules(ProcessHandle handle, std::vector<ModuleInfo>& out);
 // forwarder chain is not attempted.
 uintptr_t ResolveExport(ProcessHandle handle, uintptr_t moduleBase, const std::string& name);
 
+// Name, base and size only: no PE-header read, no file-version lookup. For
+// hot paths (per-read module lookups, the pointer scan's anchor list) where
+// ListModules' per-module disk and header I/O is too costly. Same module
+// order as ListModules; unlike it, modules whose PE headers are unreadable
+// are still returned.
+struct ModuleRange {
+  std::string name;
+  uintptr_t base = 0;
+  uintptr_t size = 0; // 0 when the OS could not report it
+};
+bool ListModuleRanges(ProcessHandle handle, std::vector<ModuleRange>& out);
+
 using ThreadHandle = uintptr_t;
 
 // Starts a thread in the target at `startAddress`, passing `param` as its
@@ -58,6 +92,30 @@ ThreadHandle CreateRemoteThread(ProcessHandle handle, uintptr_t startAddress, ui
 bool WaitForRemoteThread(ThreadHandle thread, uint32_t timeoutMs);
 void CloseRemoteThread(ThreadHandle thread);
 
+// One running process, as ListProcesses enumerates it. `name` is the
+// executable's file name (including ".exe" on Windows).
+struct ProcessEntry {
+  uint32_t pid = 0;
+  std::string name;
+};
+
+// Every running process. False only if the enumeration itself failed.
+bool ListProcesses(std::vector<ProcessEntry>& out);
+// Opens `pid` with the rights memory read/write/query need. Returns 0 and
+// fills `error` on failure (access denied, no such process).
+ProcessHandle OpenProcess(uint32_t pid, std::string& error);
+void CloseProcess(ProcessHandle handle);
+// True while the process behind `handle` is still running.
+bool IsAlive(ProcessHandle handle);
+// Base address of the process's main executable image; 0 on failure.
+uintptr_t MainModuleBase(ProcessHandle handle);
+
+// Calling convention a target's native code uses for remote calls.
+enum class Abi { Ms64, SysV };
+// Which ABI the module at `moduleBase` in the target follows. Windows
+// targets are always Ms64.
+Abi PlatformAbiFor(ProcessHandle handle, uintptr_t moduleBase);
+
 bool IsSupported();
 const char* Name();
 
@@ -65,7 +123,13 @@ bool ReadMemory(ProcessHandle handle, uintptr_t address, void* out, size_t size)
 // Must succeed against read-execute pages: implementations handle whatever
 // protection dance their OS requires and leave protection as they found it.
 bool WriteMemory(ProcessHandle handle, uintptr_t address, const void* data, size_t size);
+// Plain write with no protection change, for pages WriteMemory could not
+// make writable but which are already writable as mapped. Flushes the
+// instruction cache where the OS needs it.
+bool WriteMemoryUnprotected(ProcessHandle handle, uintptr_t address, const void* data, size_t size);
 bool QueryRegion(ProcessHandle handle, uintptr_t address, Region& out);
+// The OS page size, in bytes (a power of two). Cached.
+uintptr_t PageSize();
 // Returns 0 on failure. `nearAddr` matters: a 5-byte relative jump reaches
 // ±2GB, so an allocation outside that range is useless to the caller.
 // (Named `nearAddr` rather than `near`: windows.h's windef.h defines `near`
@@ -91,6 +155,10 @@ bool FreeMemory(ProcessHandle handle, uintptr_t address);
 // ResumeAll before suspending again.
 bool SuspendAll(ProcessHandle handle, uint32_t pid);
 void ResumeAll();
+// Why the most recent SuspendAll failed, for the user ("" after a success, or
+// when the platform gives no detail — Windows). On Linux a refused ptrace
+// attach reports an actionable message (CAP_SYS_PTRACE / Yama ptrace_scope).
+std::string SuspendAllError();
 
 // A calling-thread sleep, not a target-process operation — exists so
 // callers that create-and-tear-down many throwaway remote threads in quick
@@ -132,11 +200,112 @@ struct ThreadRegisters {
 bool ListThreads(uint32_t pid, std::vector<ThreadInfo>& out);
 
 // One thread's register file, read via a brief suspend/GetThreadContext/
-// resume (the same three-call shape SetHwBreakpointOnThread in
-// write_watch.cc already uses to read/modify debug registers). False when
+// resume (the same three-call shape DebugSession::SetHwBreakpoint uses to
+// read/modify debug registers). False when
 // the thread has already exited (the snapshot ListThreads read it from is
 // a point-in-time copy — same race SuspendAll's own OpenThread failure
 // handling documents) or the platform doesn't support this.
 bool GetThreadRegisters(uint32_t tid, ThreadRegisters& out);
+
+// Whether DebugSession works on this platform (hardware data breakpoints
+// through a debugger attachment).
+bool SupportsHardwareWatch();
+
+// What a DebugSession::Wait reported. Every event except `detached` leaves
+// the target stopped until Continue: for Attached and ThreadCreated the
+// backend must leave ALL target threads stopped (the caller arms threads
+// other than the reporting one), for Hit and Other at least the reporting
+// thread. (Windows stops the whole process for every debug event; ptrace
+// stops only the reporting thread, so a ptrace backend stops the rest.)
+enum class DebugEventKind {
+  // First stop after attach: the safe point to arm every existing thread.
+  // (Windows: CREATE_PROCESS_DEBUG_EVENT.)
+  Attached,
+  // A thread born mid-session; `tid` is the new thread, which has none of
+  // the session's breakpoints yet and must be armed by the caller.
+  ThreadCreated,
+  // A hardware breakpoint fired. `rip` is the trap address, which for a
+  // data breakpoint is the instruction AFTER the write (trap-style #DB).
+  Hit,
+  // Anything else (DLL load, the attach breakpoint, the target's own
+  // exceptions, thread exit...). Handled inside the session; the caller
+  // only has to Continue it.
+  Other,
+};
+
+struct WatchEvent {
+  DebugEventKind kind = DebugEventKind::Other;
+  uint32_t tid = 0;
+  uint64_t rip = 0;
+  // Debug-register slot that fired, or -1 when the backend does not say.
+  // Windows reports -1: it treats every single-step exception as a hit
+  // without consulting Dr6, as write-watch always has.
+  int slot = -1;
+  // The trapping thread's registers, Hit only; `hasRegs` false when they
+  // could not be read (the thread can be gone by then).
+  ThreadRegisters regs;
+  bool hasRegs = false;
+  // The target exited. The session is over: do not Continue this event, but
+  // still Detach (or destroy the session).
+  bool detached = false;
+};
+
+// A debugger attachment to one process, for hardware write breakpoints.
+//
+// Thread rule: Attach, SetHwBreakpoint, Wait, Continue and Detach must all
+// run on the SAME thread. Windows delivers debug events only to the thread
+// that called DebugActiveProcess, and Linux ptrace only lets the tracing
+// thread operate on its tracees, so a caller runs the whole session on one
+// dedicated thread.
+class DebugSession {
+ public:
+  // Attaches as a debugger. The target is NOT killed when this process
+  // exits or detaches. Returns null and fills `error` on failure (bad pid,
+  // already being debugged, access denied).
+  static std::unique_ptr<DebugSession> Attach(uint32_t pid, std::string& error);
+
+  // Arms (or with enable=false disarms) an on-write data breakpoint in
+  // debug-register `slot` (0-3) of one thread. `len` must be 1, 2, 4 or 8
+  // and `address` aligned to it: x86 leaves a misaligned data breakpoint
+  // undefined, so this refuses one. `address`/`len` are ignored when
+  // disarming.
+  //
+  // Callable at any time on the session thread, whether or not the target
+  // is stopped at an event: write-watch disarms every thread AFTER its loop
+  // has continued the last event, while the target runs. The backend stops
+  // the thread itself if it is not already stopped and leaves it in the
+  // state it found it (Windows: SuspendThread/ResumeThread around the
+  // context write; ptrace: PTRACE_INTERRUPT and wait, POKEUSER, resume).
+  // A disarm that silently failed would leave the breakpoint armed through
+  // Detach and kill the target on its next write.
+  bool SetHwBreakpoint(uint32_t tid, int slot, uintptr_t address, size_t len, bool enable);
+
+  // Waits up to timeoutMs for the next debug event. False on timeout.
+  bool Wait(uint32_t timeoutMs, WatchEvent& out);
+
+  // Resumes the target after `ev`, with whatever continue status the event
+  // needs (the target's own exceptions go back to it unhandled). `ev` must
+  // be the event Wait last returned and that is still pending; a backend
+  // with several stopped threads uses ev.tid to know which stop it ends.
+  // No-op when nothing is pending.
+  void Continue(const WatchEvent& ev);
+
+  // Drains any debug event already in flight, then detaches, leaving the
+  // target running. Idempotent. Continues a still-pending event first,
+  // except the exit event. Disarms NOTHING on its own: callers disarm every
+  // breakpoint they armed via SetHwBreakpoint before calling it, because an
+  // exception that fires after detach has no debugger to take it and kills
+  // the target.
+  void Detach();
+
+  ~DebugSession();
+  DebugSession(const DebugSession&) = delete;
+  DebugSession& operator=(const DebugSession&) = delete;
+
+ private:
+  struct State; // per-backend
+  explicit DebugSession(std::unique_ptr<State> state);
+  std::unique_ptr<State> state_;
+};
 
 } // namespace platform

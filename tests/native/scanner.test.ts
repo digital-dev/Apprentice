@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -15,15 +15,11 @@ function send(cmd: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  harness = spawnHarness()
-  await new Promise((r) => harness.stdout.once('data', r)) // consume "PID n" line
+  harness = await startHarness() // consumes the "PID n" line
   handle = (addon as any).attach(harness.pid).handle
-})
+}, HARNESS_HOOK_TIMEOUT_MS)
 
-afterAll(() => {
-  harness.stdin.write('q\n')
-  harness.kill()
-})
+afterAll(() => stopHarness(harness))
 
 interface Candidate {
   address: string

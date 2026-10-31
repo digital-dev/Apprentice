@@ -15,7 +15,7 @@
 #include "chain_walk.h"
 #include "protected_write.h"
 
-#include <windows.h>
+#include "platform/platform.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -161,23 +161,22 @@ int LuaPrint(lua_State* L) {
   return 0;
 }
 
-// Every bound memory function reads its HANDLE from the Lua registry
+// Every bound memory function reads its process handle from the Lua registry
 // (set once per run in RunScriptImpl) rather than threading it through
 // every call's arguments — Lua scripts only ever touch ONE process per
 // run, so this keeps the exposed Lua signature to just (address, ...).
-HANDLE HandleFromRegistry(lua_State* L) {
+platform::ProcessHandle HandleFromRegistry(lua_State* L) {
   lua_getfield(L, LUA_REGISTRYINDEX, "apprentice_handle");
-  HANDLE h = reinterpret_cast<HANDLE>(lua_touserdata(L, -1));
+  platform::ProcessHandle h = reinterpret_cast<platform::ProcessHandle>(lua_touserdata(L, -1));
   lua_pop(L, 1);
   return h;
 }
 
 int LuaReadValue(lua_State* L, ValueKind kind, size_t size) {
   uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-  HANDLE h = HandleFromRegistry(L);
+  platform::ProcessHandle h = HandleFromRegistry(L);
   uint8_t buf[8];
-  SIZE_T read;
-  if (!ReadProcessMemory(h, (LPCVOID)address, buf, size, &read) || read != size) {
+  if (!platform::ReadMemory(h, address, buf, size)) {
     return luaL_error(L, "read failed at 0x%llx", (unsigned long long)address);
   }
   double value = InterpretAsDouble(buf, ValueSpec{size, kind});
@@ -202,7 +201,7 @@ int LuaReadValue(lua_State* L, ValueKind kind, size_t size) {
 
 int LuaWriteValue(lua_State* L, ValueKind kind, size_t size) {
   uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-  HANDLE h = HandleFromRegistry(L);
+  platform::ProcessHandle h = HandleFromRegistry(L);
   uint8_t buf[8];
   // Int64 must never touch the `double` path: a double carries only 53 bits
   // of mantissa, so an int64 above 2^53 (a currency/XP counter, a packed
@@ -242,10 +241,9 @@ int LuaReadBytes(lua_State* L) {
   uintptr_t address = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
   size_t length = static_cast<size_t>(luaL_checkinteger(L, 2));
   if (length == 0 || length > 4096) return luaL_error(L, "readBytes length must be 1..4096");
-  HANDLE h = HandleFromRegistry(L);
+  platform::ProcessHandle h = HandleFromRegistry(L);
   std::vector<uint8_t> buf(length);
-  SIZE_T read;
-  if (!ReadProcessMemory(h, (LPCVOID)address, buf.data(), length, &read) || read != length) {
+  if (!platform::ReadMemory(h, address, buf.data(), length)) {
     return luaL_error(L, "read failed at 0x%llx", (unsigned long long)address);
   }
   lua_pushlstring(L, reinterpret_cast<const char*>(buf.data()), length);
@@ -257,7 +255,7 @@ int LuaWriteBytes(lua_State* L) {
   size_t length;
   const char* data = luaL_checklstring(L, 2, &length);
   if (length == 0 || length > 4096) return luaL_error(L, "writeBytes length must be 1..4096");
-  HANDLE h = HandleFromRegistry(L);
+  platform::ProcessHandle h = HandleFromRegistry(L);
   // Data variant, not the code one: a 256-byte writeBytes straddles a page
   // boundary a few percent of the time, and before this dance existed it
   // went through a plain WriteProcessMemory with no page restriction.
@@ -279,7 +277,7 @@ int LuaResolvePointer(lua_State* L) {
     offsets.push_back(static_cast<uintptr_t>(luaL_checkinteger(L, -1)));
     lua_pop(L, 1);
   }
-  HANDLE h = HandleFromRegistry(L);
+  platform::ProcessHandle h = HandleFromRegistry(L);
   auto base = FindModuleBase(h, moduleName);
   if (!base) { lua_pushnil(L); return 1; }
   auto resolved = ResolveChain(h, *base, offsets);
@@ -496,7 +494,7 @@ struct LuaStateGuard {
 };
 
 // Runs entirely on RunScriptWorker's background thread: every type it
-// touches is plain C++ (HANDLE/std::string/LuaState) — never a Napi value.
+// touches is plain C++ (process handle/std::string/LuaState) — never a Napi value.
 //
 // CRASH SAFETY: the vendored Lua is compiled as C++, so a Lua error is a
 // real C++ exception (LUAI_THROW). Everything below that runs OUTSIDE a
@@ -511,7 +509,7 @@ struct LuaStateGuard {
 // dying with a write-watch armed leaves the target game primed to raise a
 // debug exception with no debugger attached, which takes the game down too.
 // So: catch everything here, report it as an ordinary failed run.
-ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
+ScriptResult RunScriptImpl(platform::ProcessHandle handle, const std::string& source,
                            const LuaState& stateIn) {
   ScriptResult result;
   AllocBudget budget;
@@ -596,7 +594,7 @@ ScriptResult RunScriptImpl(HANDLE handle, const std::string& source,
 // plain-C++ members (handle_/source_/flatStateIn_/result_).
 class RunScriptWorker : public Napi::AsyncWorker {
  public:
-  RunScriptWorker(Napi::Env env, HANDLE handle, std::string source, const Napi::Object& stateIn)
+  RunScriptWorker(Napi::Env env, platform::ProcessHandle handle, std::string source, const Napi::Object& stateIn)
       : Napi::AsyncWorker(env),
         handle_(handle),
         source_(std::move(source)),
@@ -674,7 +672,7 @@ class RunScriptWorker : public Napi::AsyncWorker {
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
  private:
-  HANDLE handle_;
+  platform::ProcessHandle handle_;
   std::string source_;
   LuaState flatStateIn_;
   bool stateInTooLarge_ = false;
@@ -698,8 +696,8 @@ Napi::Value RunScript(const Napi::CallbackInfo& info) {
         .ThrowAsJavaScriptException();
     return env.Undefined();
   }
-  HANDLE h = reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value()));
+  platform::ProcessHandle h =
+      static_cast<uintptr_t>(info[0].As<Napi::Number>().Int64Value());
   std::string source = info[1].As<Napi::String>().Utf8Value();
   Napi::Object stateIn = info.Length() > 2 && info[2].IsObject()
                              ? info[2].As<Napi::Object>()

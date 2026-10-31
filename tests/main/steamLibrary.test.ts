@@ -11,6 +11,7 @@ import {
   matchProfile,
   isRunning,
   isHelperExe,
+  linuxSteamRoots,
   realSteamFs,
   type SteamDeps
 } from '../../src/main/steamLibrary'
@@ -224,5 +225,45 @@ describe('isRunning', () => {
   it('is true when any of the game executables is in the process list', () => {
     expect(isRunning(['Palworld.exe', 'Palworld-Win64-Shipping.exe'], new Set(['palworld-win64-shipping.exe']))).toBe(true)
     expect(isRunning(['a.exe'], new Set(['b.exe']))).toBe(false)
+  })
+})
+
+describe('linuxSteamRoots', () => {
+  it('finds ~/.local/share/Steam and a symlinked ~/.steam/steam once', () => {
+    const home = tmp
+    const real = path.join(home, '.local', 'share', 'Steam')
+    fs.mkdirSync(real, { recursive: true })
+    fs.mkdirSync(path.join(home, '.steam'), { recursive: true })
+    // 'junction' on Windows: plain directory symlinks need elevated privilege
+    // there, but a junction resolves through fs.realpathSync the same way.
+    fs.symlinkSync(real, path.join(home, '.steam', 'steam'), process.platform === 'win32' ? 'junction' : 'dir')
+    const roots = linuxSteamRoots({ HOME: home }, realSteamFs)
+    expect(roots).toHaveLength(1)
+    expect(fs.realpathSync(roots[0])).toBe(fs.realpathSync(real))
+  })
+
+  it('returns an empty list when none of the candidate directories exist', () => {
+    expect(linuxSteamRoots({ HOME: tmp }, realSteamFs)).toEqual([])
+  })
+
+  it('returns an empty list when HOME is unset', () => {
+    expect(linuxSteamRoots({}, realSteamFs)).toEqual([])
+  })
+})
+
+describe('Linux Steam root wiring', () => {
+  it('reads libraryfolders.vdf from the Linux root and lists steamapps/common games', () => {
+    const home = tmp
+    const root = path.join(home, '.local', 'share', 'Steam')
+    manifest(root, '100', 'LinuxGame', 'LinuxGame')
+    const linuxDeps: SteamDeps = {
+      fs: realSteamFs,
+      readRegistry: () => null,
+      env: {},
+      linuxRoots: () => linuxSteamRoots({ HOME: home }, realSteamFs)
+    }
+    const found = findSteamRoot(linuxDeps)
+    expect(found).toBe(root)
+    expect(discoverGames(linuxDeps, found!).map((g) => g.name)).toEqual(['LinuxGame'])
   })
 })

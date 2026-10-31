@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnHarness } from '../helpers/spawnHarness'
+import { spawnHarness, HARNESS_IS_PE } from '../helpers/spawnHarness'
 import path from 'node:path'
 import addon from '../../native/build/Release/memory_addon.node'
 
@@ -42,7 +42,7 @@ describe('resolveExport', () => {
   it('finds an exported data symbol too', async () => {
     await send('loaddll')
     const mods = (addon as any).listModules(handle)
-    const probe = mods.find((m: any) => m.name.toLowerCase() === 'probe.dll')
+    const probe = mods.find((m: any) => m.name.toLowerCase() === (HARNESS_IS_PE ? 'probe.dll' : 'probe.so'))
 
     const addr = (addon as any).resolveExport(handle, probe.base, 'g_probe_field')
     expect(addr).toMatch(/^0x[0-9a-f]+$/)
@@ -53,7 +53,7 @@ describe('resolveExport', () => {
   it('returns null for a name that is not exported', async () => {
     await send('loaddll')
     const mods = (addon as any).listModules(handle)
-    const probe = mods.find((m: any) => m.name.toLowerCase() === 'probe.dll')
+    const probe = mods.find((m: any) => m.name.toLowerCase() === (HARNESS_IS_PE ? 'probe.dll' : 'probe.so'))
 
     const addr = (addon as any).resolveExport(handle, probe.base, 'not_a_real_export')
     expect(addr).toBeNull()
@@ -109,32 +109,41 @@ describe('remote thread', () => {
 })
 
 describe('callRemoteFunction', () => {
-  it('calls a real exported function with two arguments and observes its effect', async () => {
+  it(
+    'calls a real exported function with two arguments and observes its effect',
+    async () => {
     // RemoteCallProbe2(int* target, int value) is an ordinary 2-argument
     // function (not shaped as a thread entry point like RemoteThreadProbe),
     // so calling it through the stub proves the stub's argument
     // marshalling. Both args are pointer/integer — the stub only ever
-    // loads RCX/RDX/R8/R9, matching the pointer/integer-only Mono
-    // introspection calls every later task makes; a float argument would
-    // need XMM1 per the Windows x64 ABI, which is out of scope here.
+    // loads the first two integer registers its ABI defines (RCX/RDX on
+    // Windows and Wine's PE targets, RDI/RSI on native Linux's System V
+    // targets — mono_call.cc's BuildCallStub picks per target), matching
+    // the pointer/integer-only Mono introspection calls every later task
+    // makes; a float argument would need an XMM register per either ABI,
+    // which is out of scope here.
     const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteCallProbe2')
     const scratch = (addon as any).allocateCave(handle, harnessBase)
 
     const result = await (addon as any).callRemoteFunction(handle, funcAddr, [scratch, '0x2a'])
     expect(result).not.toBeNull()
 
-    const after = (addon as any).readBytes(handle, scratch, 4)
-    expect(Buffer.from(after, 'hex').readInt32LE(0)).toBe(0x2a)
-  })
+      const after = (addon as any).readBytes(handle, scratch, 4)
+      expect(Buffer.from(after, 'hex').readInt32LE(0)).toBe(0x2a)
+    }
+  )
 
-  it('works with fewer than 4 arguments', async () => {
-    const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteThreadProbe')
-    const scratch = (addon as any).allocateCave(handle, harnessBase)
-    const result = await (addon as any).callRemoteFunction(handle, funcAddr, [scratch])
-    expect(result).not.toBeNull()
-    const marker = (addon as any).readBytes(handle, scratch, 4)
-    expect(Buffer.from(marker, 'hex').readInt32LE(0)).toBe(0x1337)
-  })
+  it(
+    'works with fewer than 4 arguments',
+    async () => {
+      const funcAddr = (addon as any).resolveExport(handle, harnessBase, 'RemoteThreadProbe')
+      const scratch = (addon as any).allocateCave(handle, harnessBase)
+      const result = await (addon as any).callRemoteFunction(handle, funcAddr, [scratch])
+      expect(result).not.toBeNull()
+      const marker = (addon as any).readBytes(handle, scratch, 4)
+      expect(Buffer.from(marker, 'hex').readInt32LE(0)).toBe(0x1337)
+    }
+  )
 
   it('resolves null rather than throwing when the function address is bogus', async () => {
     // '0x1' isn't backed by executable memory, so RunRemoteCall's

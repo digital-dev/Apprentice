@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { startHarness, stopHarness, HARNESS_HOOK_TIMEOUT_MS, HARNESS_NAME, HARNESS_WINE } from '../helpers/spawnHarness'
 import addon from '../../native/build/Release/memory_addon.node'
 
 describe('platform seam', () => {
@@ -18,5 +20,62 @@ describe('platform seam', () => {
     } else {
       expect(platform.supported).toBe(false)
     }
+  })
+})
+
+// HARNESS_NAME: harness.exe on Windows, harness (ELF) on Linux, harness-wine.exe under Wine.
+describe('process and region primitives', () => {
+  let harness: ChildProcessWithoutNullStreams
+  const a = addon as any
+
+  beforeAll(async () => {
+    harness = await startHarness()
+  }, HARNESS_HOOK_TIMEOUT_MS)
+
+  afterAll(() => stopHarness(harness))
+
+  it('lists the harness process by name', () => {
+    const procs = a.platformListProcesses() as { pid: number; name: string }[]
+    expect(procs).toContainEqual({ pid: harness.pid, name: HARNESS_NAME })
+  })
+
+  it('attach returns handle and baseAddress for the harness', () => {
+    const { handle, baseAddress } = a.attach(harness.pid)
+    expect(handle).toBeGreaterThan(0)
+    expect(BigInt(baseAddress)).toBeGreaterThan(0n)
+    const probe = a.platformProbe(harness.pid)
+    expect(probe.error).toBeUndefined()
+    expect(probe.alive).toBe(true)
+    expect(probe.mainModuleBase).toBe(baseAddress)
+    a.detach(handle)
+  })
+
+  it('platformProbe reports an error for a pid that does not exist', () => {
+    expect(a.platformProbe(999999).error).toMatch(
+      process.platform === 'win32' ? /OpenProcess failed/ : /process not found/,
+    )
+  })
+
+  it('reports writable regions', async () => {
+    const { handle } = a.attach(harness.pid)
+    const candidates = await a.scanFirst(handle, 'int32', 100)
+    expect(candidates.length).toBeGreaterThan(0)
+    const region = a.platformQueryRegion(handle, candidates[0].address)
+    expect(region.readable).toBe(true)
+    expect(region.writable).toBe(true)
+    a.detach(handle)
+  })
+
+  it.runIf(process.platform === 'win32')('exposes the Windows ABI as ms64', () => {
+    expect(a.platformProbe(harness.pid).abi).toBe('ms64')
+  })
+
+  // Task 12: real ABI detection on Linux — the ELF harness's own exe is
+  // System V; under Wine the harness is a real PE process, same as Windows.
+  it.runIf(process.platform === 'linux' && !HARNESS_WINE)('exposes the native Linux ABI as sysv', () => {
+    expect(a.platformProbe(harness.pid).abi).toBe('sysv')
+  })
+  it.runIf(HARNESS_WINE)('exposes a Wine process\'s ABI as ms64', () => {
+    expect(a.platformProbe(harness.pid).abi).toBe('ms64')
   })
 })
