@@ -216,7 +216,14 @@ function resolveScriptAnchors(
 // resolved once per attach, the same way every other module lookup here
 // reuses that map rather than re-listing modules per cheat.
 function monoDllBase(): string | null {
-  const mono = loadedModules.get('mono.dll') ?? loadedModules.get('mono-2.0-bdwgc.dll')
+  // mono.dll/mono-2.0-bdwgc.dll on Windows and Wine (a PE module either
+  // way); libmonobdwgc-2.0.so on native Linux (an ELF module) — tried
+  // unconditionally rather than branching on process.platform, since the
+  // other name simply never exists on whichever platform this is.
+  const mono =
+    loadedModules.get('mono.dll') ??
+    loadedModules.get('mono-2.0-bdwgc.dll') ??
+    loadedModules.get('libmonobdwgc-2.0.so')
   return mono ? mono.base : null
 }
 

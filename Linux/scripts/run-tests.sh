@@ -44,6 +44,8 @@ gcc -O0 -g -pthread -rdynamic -o Linux/test-harness/harness Linux/test-harness/h
 # PAD_SIZE differs so probe2 is the "updated game" variant with a different image size.
 gcc -shared -fPIC -O0 -DPAD_SIZE=4096   -o Linux/test-harness/probe.so  Linux/test-harness/probe.c
 gcc -shared -fPIC -O0 -DPAD_SIZE=262144 -o Linux/test-harness/probe2.so Linux/test-harness/probe.c
+# Fake Mono embedding API (loadmono), same fixture as test-harness/probe_mono.c (PE), ported to ELF/SysV.
+gcc -shared -fPIC -O0 -o Linux/test-harness/probe_mono.so Linux/test-harness/probe_mono.c
 
 # Pure parser tests first: no Node, no addon, fail fast.
 g++ -std=c++17 -O0 -g -Wall -o Linux/native/tests/proc_parse_test Linux/native/tests/proc_parse_test.cc
@@ -107,16 +109,17 @@ node -v
 
 # Step 1: the ELF harness. Grows as the Linux backend lands. Not yet: cloneStackScript (patch
 # caves hooking a live instruction stream), write_watch/signature_golden/snapshot_ops (hardware
-# watch, Task 15), mono_bridge (Mono metadata walking, Task 14). patch_ops skips its two
-# write-watch tests on Linux (Task 15). cave_ops and mono_call's callRemoteFunction cases run
-# here too now: mono_call.cc's BuildCallStub picks the System V register convention for this
-# native ELF target (Task 13), the same way it already picked Microsoft x64 for Wine's PE target.
+# watch, Task 15). patch_ops skips its two write-watch tests on Linux (Task 15). cave_ops and
+# mono_call's callRemoteFunction cases run here too now: mono_call.cc's BuildCallStub picks the
+# System V register convention for this native ELF target (Task 13), the same way it already
+# picked Microsoft x64 for Wine's PE target. mono_bridge's 8 hand-built stub builders are
+# likewise ABI-aware now (Task 14) and run against the loadmono fixture here too.
 DEFAULT_TESTS=(tests/native/addon_smoke.test.ts tests/native/spawnHarness.test.ts tests/native/platform.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts tests/native/process_utils.test.ts
   tests/native/module_info.test.ts tests/native/noWin32OutsidePlatform.test.ts
   tests/native/linux_memory.test.ts tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts
   tests/native/script_ops.test.ts tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts
-  tests/native/cave_ops.test.ts tests/native/mono_call.test.ts)
+  tests/native/cave_ops.test.ts tests/native/mono_call.test.ts tests/native/mono_bridge.test.ts)
 # Step 2: the Proton path, test-harness/harness.c built with mingw and run under Wine
 # (APPRENTICE_HARNESS=wine, see Linux/test-harness/README.md). The Microsoft-x64 stub
 # (callRemoteFunction) already works here: a real PE target, same ABI as Windows.
@@ -124,7 +127,7 @@ WINE_TESTS=(tests/native/platform.test.ts tests/native/module_info.test.ts
   tests/native/scanner.test.ts tests/native/pointer.test.ts
   tests/native/memory_ops.test.ts tests/native/patch_ops.test.ts tests/native/script_ops.test.ts
   tests/native/thread_ops.test.ts tests/native/linuxPtrace.test.ts tests/native/cave_ops.test.ts
-  tests/native/mono_call.test.ts)
+  tests/native/mono_call.test.ts tests/native/mono_bridge.test.ts)
 
 run_wine_step() {
   wine_env

@@ -76,6 +76,75 @@ void DetachFromMono(platform::ProcessHandle handle, uintptr_t monoDllBase, const
                 {ctx.attachedThread}, ignored);
 }
 
+// Every hand-encoded stub below (BuildAssemblyCollectorStub through
+// BuildAttachedCallStub) chains several calls to real mono_* exports
+// inside ONE injected thread — its OWN nested calls, entirely separate
+// from mono_call.cc's BuildCallStub (which only wraps the OUTER entry
+// RunRemoteCall/CreateRemoteThread already makes ABI-aware). Each nested
+// `call` here needs the SAME per-ABI argument-register convention
+// BuildCallStub already uses, so these three helpers exist once, shared,
+// rather than duplicated by hand in all eight stubs:
+//
+//   ArgReg(abi, i)     which GPR holds the i'th (0-3) integer/pointer
+//                      argument of the NEXT nested call — Ms64: rcx,rdx,
+//                      r8,r9; SysV: rdi,rsi,rdx,rcx. Only 0-3 are ever
+//                      used (this file's own 4-arg cap, same as
+//                      mono_call.cc's BuildCallStub).
+//   ShadowBytes(abi)   the sub/add rsp amount around each nested call —
+//                      0x28 for Ms64 (32 bytes of mandatory shadow space
+//                      + 8 for 16-alignment); 0x08 for SysV, which has no
+//                      shadow space but still needs rsp 16-aligned at the
+//                      `call` (entry rsp is 8 mod 16 for BOTH ABIs — the
+//                      thread-hijack convention CreateRemoteThread already
+//                      guarantees uniformly — so 8 is the minimal correct
+//                      adjustment, the same reasoning mono_call.cc's own
+//                      SysV stub already uses).
+//   EmitMovRegImm64/EmitMovRegReg  mov <reg>, imm64 / mov <dst>, <src> for
+//                      any of rax..r15 — written once so a stub's choice
+//                      of register is just a parameter, never a hand-
+//                      picked opcode/REX/ModRM byte. Verified to reproduce
+//                      the exact bytes every existing hand-written Ms64
+//                      instance in this file already uses (see the comment
+//                      blocks above each stub below), and — since every
+//                      register 0-15 needs only a REX bit flip, never an
+//                      extra byte, when every operation here is already
+//                      64-bit (REX.W=1, so a REX prefix is always present
+//                      regardless of which register is named) — substituting
+//                      a different register NEVER changes an instruction's
+//                      length. That is what lets every hand-counted rel8/
+//                      rel32 jump offset elsewhere in this file stay valid,
+//                      unchanged, for the SysV variant too: the SysV branch
+//                      only ever swaps WHICH register a value goes into,
+//                      never how many bytes that takes.
+enum class Gpr : uint8_t {
+  Rax = 0, Rcx = 1, Rdx = 2, Rbx = 3, Rsp = 4, Rbp = 5, Rsi = 6, Rdi = 7,
+  R8 = 8, R9 = 9, R10 = 10, R11 = 11, R12 = 12, R13 = 13, R14 = 14, R15 = 15,
+};
+
+Gpr ArgReg(platform::Abi abi, int index) {
+  static const Gpr kMs64[4] = {Gpr::Rcx, Gpr::Rdx, Gpr::R8, Gpr::R9};
+  static const Gpr kSysV[4] = {Gpr::Rdi, Gpr::Rsi, Gpr::Rdx, Gpr::Rcx};
+  return abi == platform::Abi::Ms64 ? kMs64[index] : kSysV[index];
+}
+
+uint8_t ShadowBytes(platform::Abi abi) { return abi == platform::Abi::Ms64 ? 0x28 : 0x08; }
+
+void EmitMovRegImm64(std::vector<uint8_t>& out, Gpr reg, uintptr_t imm) {
+  uint8_t r = static_cast<uint8_t>(reg);
+  out.push_back(static_cast<uint8_t>(0x48 | ((r >> 3) & 1)));  // REX.W [+ REX.B]
+  out.push_back(static_cast<uint8_t>(0xB8 + (r & 7)));          // MOV r64, imm64
+  for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
+}
+
+void EmitMovRegReg(std::vector<uint8_t>& out, Gpr dst, Gpr src) {
+  uint8_t d = static_cast<uint8_t>(dst), s = static_cast<uint8_t>(src);
+  uint8_t rex = static_cast<uint8_t>(0x48 | (((s >> 3) & 1) << 2) | ((d >> 3) & 1));  // REX.W, R=src, B=dst
+  uint8_t modrm = static_cast<uint8_t>(0xC0 | ((s & 7) << 3) | (d & 7));              // mod=11, reg=src, rm=dst
+  out.push_back(rex);
+  out.push_back(0x89);  // MOV r/m64, r64
+  out.push_back(modrm);
+}
+
 // Forward-declared here, defined below alongside BuildAssemblyCollectorStub
 // (which it's built from) — MonoResolveClassWorker needs it and is defined
 // earlier in the file than that stub. Every loaded MonoAssembly* handle,
@@ -651,12 +720,18 @@ Napi::Value MonoListMethodNames(const Napi::CallbackInfo& info) {
 
 namespace {
 
-// mono_assembly_foreach's callback signature: void (__stdcall*)(void* data,
-// void* userData). This stub is what Mono calls, once per assembly. It
-// appends `data` to a growable list in memory: a count at userData+0,
-// followed by up to kMaxAssemblies pointer-sized slots starting at
-// userData+8 — a fixed cap, matching the bounded-list pattern ListModules
-// already uses, rather than unbounded/dynamic growth inside injected code.
+// mono_assembly_foreach's callback signature: void (data, userData) — the
+// FIRST and SECOND integer arguments of whichever calling convention the
+// target's own Mono build uses, since Mono itself invokes this callback
+// directly (it is handed to mono_assembly_foreach as a function pointer,
+// not something this file calls via CreateRemoteThread/BuildCallStub —
+// nothing else makes its argument registers ABI-aware for it). Ms64:
+// data=rcx, userData=rdx (ArgReg(Ms64,0)/ArgReg(Ms64,1)). SysV: data=rdi,
+// userData=rsi (ArgReg(SysV,0)/ArgReg(SysV,1)). It appends `data` to a
+// growable list in memory: a count at userData+0, followed by up to
+// kMaxAssemblies pointer-sized slots starting at userData+8 — a fixed cap,
+// matching the bounded-list pattern ListModules already uses, rather than
+// unbounded/dynamic growth inside injected code.
 //
 // 64 was the original cap, sized for the single-assembly fake test host.
 // Running this against real Valheim during the sub-project's own
@@ -683,7 +758,7 @@ constexpr uint32_t kMaxAssemblies = 1024;
 // operand, so 128-255 would compare as NEGATIVE, corrupting the check
 // entirely rather than just being the wrong number.
 //
-//   mov rax, [rdx]            48 8B 02                -- rax = count
+//   mov rax, [userData]        48 8B <02|06>           -- rax = count
 //   cmp rax, kMaxAssemblies    48 81 F8 <imm32 LE>     -- cap check
 //   jae done                   73 0E                   -- rel8=14: byte
 //                                                          count of every
@@ -697,26 +772,51 @@ constexpr uint32_t kMaxAssemblies = 1024;
 //                                                          is measured from
 //                                                          AFTER the jae
 //                                                          instruction, not
-//                                                          from the cmp
-//   lea r8, [rdx+8]            4C 8D 42 08             -- r8 = &slots[0]
-//   mov [r8+rax*8], rcx        49 89 0C C0             -- slots[count]=data
+//                                                          from the cmp. Also
+//                                                          unchanged by the
+//                                                          ABI substitution
+//                                                          below — register
+//                                                          renaming never
+//                                                          changes an
+//                                                          instruction's
+//                                                          length (every op
+//                                                          here already
+//                                                          carries a REX
+//                                                          prefix for 64-bit,
+//                                                          so a different
+//                                                          0-15 register
+//                                                          number is only a
+//                                                          different bit
+//                                                          value, never an
+//                                                          extra/missing
+//                                                          byte).
+//   lea r8, [userData+8]       4C 8D <42|46> 08        -- r8 = &slots[0]
+//   mov [r8+rax*8], data       49 89 <0C|3C> C0        -- slots[count]=data
 //   inc rax                    48 FF C0
-//   mov [rdx], rax             48 89 02                -- count += 1
+//   mov [userData], rax        48 89 <02|06>           -- count += 1
 // done:
 //   ret                        C3
-std::vector<uint8_t> BuildAssemblyCollectorStub() {
+//
+// `userData` is ArgReg(abi,1) (rdx for Ms64, rsi for SysV); `data` is
+// ArgReg(abi,0) (rcx for Ms64, rdi for SysV) — Mono's own call to this
+// callback, not anything in this file, puts them there, so this is the one
+// stub in the file whose ABI dependency is about how it is CALLED INTO,
+// not about calls it makes itself.
+std::vector<uint8_t> BuildAssemblyCollectorStub(platform::Abi abi) {
+  const uint8_t data = static_cast<uint8_t>(ArgReg(abi, 0));      // rcx(1) or rdi(7)
+  const uint8_t userData = static_cast<uint8_t>(ArgReg(abi, 1));  // rdx(2) or rsi(6)
   std::vector<uint8_t> out = {
-    0x48, 0x8B, 0x02,                                     // mov rax, [rdx]
+    0x48, 0x8B, static_cast<uint8_t>(userData & 7),                  // mov rax, [userData]
     0x48, 0x81, 0xF8,
     static_cast<uint8_t>(kMaxAssemblies & 0xFF),
     static_cast<uint8_t>((kMaxAssemblies >> 8) & 0xFF),
     static_cast<uint8_t>((kMaxAssemblies >> 16) & 0xFF),
     static_cast<uint8_t>((kMaxAssemblies >> 24) & 0xFF), // cmp rax, kMaxAssemblies
     0x73, 0x0E,                         // jae +0x0E (to `ret`, 14 bytes ahead)
-    0x4C, 0x8D, 0x42, 0x08,             // lea r8, [rdx+8]
-    0x49, 0x89, 0x0C, 0xC0,             // mov [r8+rax*8], rcx
+    0x4C, 0x8D, static_cast<uint8_t>(0x40 | (userData & 7)), 0x08,  // lea r8, [userData+8]
+    0x49, 0x89, static_cast<uint8_t>(((data & 7) << 3) | 0x04), 0xC0, // mov [r8+rax*8], data
     0x48, 0xFF, 0xC0,                   // inc rax
-    0x48, 0x89, 0x02,                   // mov [rdx], rax
+    0x48, 0x89, static_cast<uint8_t>(userData & 7),                 // mov [userData], rax
     0xC3,                               // ret
   };
   return out;
@@ -734,6 +834,7 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
 
   uintptr_t foreach_ = platform::ResolveExport(handle, monoDllBase, "mono_assembly_foreach");
   if (!foreach_) return {};
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
 
   // Buffer: 8-byte count + kMaxAssemblies pointer-sized slots, right after
   // the collector stub's own code in the same cave.
@@ -744,7 +845,7 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
 
   uintptr_t zero = 0;
   platform::WriteMemory(handle, bufferAddr, &zero, sizeof(zero));
-  std::vector<uint8_t> stub = BuildAssemblyCollectorStub();
+  std::vector<uint8_t> stub = BuildAssemblyCollectorStub(abi);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
     // No thread has been created yet — safe to free immediately.
     platform::FreeMemory(handle, cave);
@@ -769,8 +870,7 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
   // FREED only when RunRemoteCall returned true, i.e. the thread provably
   // finished. Otherwise the cave is leaked, exactly as every other
   // RunRemoteCall site in this file does.
-  bool finished = RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), foreach_,
-                                 {stubAddr, bufferAddr}, ignored);
+  bool finished = RunRemoteCall(handle, abi, foreach_, {stubAddr, bufferAddr}, ignored);
 
   uint64_t count = 0;
   platform::ReadMemory(handle, bufferAddr, &count, sizeof(count));
@@ -893,51 +993,58 @@ std::vector<uintptr_t> EnumerateAssemblies(platform::ProcessHandle handle, uintp
 // All jumps are short (rel8): the whole stub is 284 bytes and every
 // displacement above was computed by hand against that fixed byte layout
 // (each instruction's length is constant regardless of the immediates'
-// actual values), then verified against the fake-host test suite before
-// ever running against a real game.
-std::vector<uint8_t> BuildResolveClassStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                            uintptr_t threadDetachFn, uintptr_t foreachFn,
-                                            uintptr_t getImageFn, uintptr_t classFromNameFn,
-                                            uintptr_t collectorStubAddr, uintptr_t bufferAddr,
-                                            uintptr_t slotsAddr, uintptr_t nsAddr, uintptr_t nameAddr,
+// actual values, OR which ABI's argument registers they load — see the
+// note on ArgReg/EmitMovRegImm64/EmitMovRegReg above), then verified
+// against the fake-host test suite before ever running against a real
+// game. ABI-aware for SysV: args renamed per ArgReg(abi,N); glue registers
+// (r15/r14/r13/r12/rbx) are callee-saved in BOTH conventions and never
+// change; `resultAddress`'s two post-loop uses in rcx are pure local
+// scratch (no call follows), unaffected by the ABI either way.
+std::vector<uint8_t> BuildResolveClassStub(platform::Abi abi, uintptr_t getRootDomainFn,
+                                            uintptr_t threadAttachFn, uintptr_t threadDetachFn,
+                                            uintptr_t foreachFn, uintptr_t getImageFn,
+                                            uintptr_t classFromNameFn, uintptr_t collectorStubAddr,
+                                            uintptr_t bufferAddr, uintptr_t slotsAddr,
+                                            uintptr_t nsAddr, uintptr_t nameAddr,
                                             uintptr_t resultAddress) {
   std::vector<uint8_t> out;
-  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
-    out.push_back(rex);
-    out.push_back(opcodeByte);
-    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-  };
+  const Gpr a0 = ArgReg(abi, 0), a1 = ArgReg(abi, 1), a2 = ArgReg(abi, 2);
+  const uint8_t shadow = ShadowBytes(abi);
   auto emitCall = [&](uintptr_t fn) {
-    emitMovImm64(0x48, 0xB8, fn);                      // mov rax, fn
-    out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});   // sub rsp, 0x28
-    out.insert(out.end(), {0xFF, 0xD0});               // call rax
-    out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});   // add rsp, 0x28
+    EmitMovRegImm64(out, Gpr::Rax, fn);                           // mov rax, fn
+    out.insert(out.end(), {0x48, 0x83, 0xEC, shadow});           // sub rsp, shadow
+    out.insert(out.end(), {0xFF, 0xD0});                          // call rax
+    out.insert(out.end(), {0x48, 0x83, 0xC4, shadow});           // add rsp, shadow
   };
 
   emitCall(getRootDomainFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
+  EmitMovRegReg(out, a0, Gpr::Rax);                     // a0 = rootDomain
   emitCall(threadAttachFn);
   out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
 
-  emitMovImm64(0x48, 0xB9, collectorStubAddr);         // mov rcx, collectorStubAddr
-  emitMovImm64(0x48, 0xBA, bufferAddr);                // mov rdx, bufferAddr
+  EmitMovRegImm64(out, a0, collectorStubAddr);          // a0 = collectorStubAddr
+  EmitMovRegImm64(out, a1, bufferAddr);                 // a1 = bufferAddr
   emitCall(foreachFn);
 
-  emitMovImm64(0x48, 0xB8, bufferAddr);                // mov rax, bufferAddr
+  EmitMovRegImm64(out, Gpr::Rax, bufferAddr);          // mov rax, bufferAddr
   out.insert(out.end(), {0x4C, 0x8B, 0x28});           // mov r13, [rax]
   out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12
-  emitMovImm64(0x48, 0xBB, slotsAddr);                 // mov rbx, slotsAddr
+  EmitMovRegImm64(out, Gpr::Rbx, slotsAddr);           // mov rbx, slotsAddr
 
   // loop:
   out.insert(out.end(), {0x4D, 0x39, 0xEC});           // cmp r12, r13
   out.insert(out.end(), {0x73, 0x7C});                 // jae not_found (+0x7C)
-  out.insert(out.end(), {0x4A, 0x8B, 0x0C, 0xE3});     // mov rcx, [rbx+r12*8]
+  // mov a0, [rbx+r12*8] — a REX.X=1 SIB load (base=rbx, index=r12*8); only
+  // the destination reg field (a0) varies by ABI, same derivation as
+  // EmitMovRegReg's formula, applied by hand since the source is memory,
+  // not a register, so the generic helper doesn't fit.
+  out.insert(out.end(), {0x4A, 0x8B, static_cast<uint8_t>(((static_cast<uint8_t>(a0) & 7) << 3) | 0x04), 0xE3});
   emitCall(getImageFn);
   out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
   out.insert(out.end(), {0x74, 0x30});                 // jz skip (+0x30)
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
-  emitMovImm64(0x48, 0xBA, nsAddr);                    // mov rdx, nsAddr
-  emitMovImm64(0x49, 0xB8, nameAddr);                  // mov r8,  nameAddr
+  EmitMovRegReg(out, a0, Gpr::Rax);                     // a0 = image
+  EmitMovRegImm64(out, a1, nsAddr);                     // a1 = nsAddr
+  EmitMovRegImm64(out, a2, nameAddr);                   // a2 = nameAddr
   emitCall(classFromNameFn);
   out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
   out.insert(out.end(), {0x75, 0x05});                 // jnz found (+0x05)
@@ -946,16 +1053,16 @@ std::vector<uint8_t> BuildResolveClassStub(uintptr_t getRootDomainFn, uintptr_t 
   out.insert(out.end(), {0xEB, 0xA9});                 // jmp loop (-0x57)
   // found:
   out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+  EmitMovRegReg(out, a0, Gpr::R15);                     // a0 = attached thread
   emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
+  EmitMovRegImm64(out, Gpr::Rcx, resultAddress);        // mov rcx, resultAddress (pure scratch, no call follows)
   out.insert(out.end(), {0x4C, 0x89, 0x31});           // mov [rcx], r14
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
   // not_found:
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+  EmitMovRegReg(out, a0, Gpr::R15);                     // a0 = attached thread
   emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
+  EmitMovRegImm64(out, Gpr::Rcx, resultAddress);        // mov rcx, resultAddress (pure scratch, no call follows)
   out.insert(out.end(), {0x48, 0xC7, 0x01, 0x00, 0x00, 0x00, 0x00}); // mov qword [rcx], 0
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
@@ -980,8 +1087,8 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   if (!getRootDomain || !threadAttach || !threadDetach || !foreach_ || !getImage || !classFromName) {
     return 0;
   }
-
-  std::vector<uint8_t> collectorStub = BuildAssemblyCollectorStub();
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
+  std::vector<uint8_t> collectorStub = BuildAssemblyCollectorStub(abi);
 
   uintptr_t cave = platform::AllocateNear(
       handle, monoDllBase, 8 + 8 + kMaxAssemblies * 8 + collectorStub.size() + 320);
@@ -1009,7 +1116,7 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   }
 
   std::vector<uint8_t> mainStub = BuildResolveClassStub(
-      getRootDomain, threadAttach, threadDetach, foreach_, getImage, classFromName,
+      abi, getRootDomain, threadAttach, threadDetach, foreach_, getImage, classFromName,
       collectorStubAddr, bufferAddr, slotsAddr, nsAddr, nameAddr, resultAddr);
   if (!platform::WriteMemory(handle, mainStubAddr, mainStub.data(), mainStub.size())) {
     platform::FreeMemory(handle, cave);
@@ -1028,7 +1135,7 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   // the thread may still be executing inside `cave` — and may still be
   // reading nsAddr/nameAddr via classFromName — see the
   // never-free-a-live-cave rule. Leak all three together.
-  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), mainStubAddr, {}, ignored)) return 0;
+  if (!RunRemoteCall(handle, abi, mainStubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
@@ -1037,7 +1144,6 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
   platform::FreeMemory(handle, nameAddr);
   return static_cast<uintptr_t>(result);
 }
-
 
 // mono_get_root_domain, mono_thread_attach, mono_class_init(classHandle)
 // (same "force metadata setup first" reasoning as BuildMemberListStub —
@@ -1084,22 +1190,20 @@ uintptr_t ResolveClassSingleThread(platform::ProcessHandle handle, uintptr_t mon
 //   mov [rcx], r13
 //   xor eax, eax
 //   ret
-std::vector<uint8_t> BuildMemberByNameStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                            uintptr_t threadDetachFn, uintptr_t classInitFn,
-                                            uintptr_t fromNameFn, uintptr_t finishFn,
-                                            uintptr_t classHandle, uintptr_t nameAddr,
-                                            uintptr_t resultAddress, bool isMethod) {
+std::vector<uint8_t> BuildMemberByNameStub(platform::Abi abi, uintptr_t getRootDomainFn,
+                                            uintptr_t threadAttachFn, uintptr_t threadDetachFn,
+                                            uintptr_t classInitFn, uintptr_t fromNameFn,
+                                            uintptr_t finishFn, uintptr_t classHandle,
+                                            uintptr_t nameAddr, uintptr_t resultAddress,
+                                            bool isMethod) {
   std::vector<uint8_t> out;
-  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
-    out.push_back(rex);
-    out.push_back(opcodeByte);
-    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-  };
+  const Gpr a0 = ArgReg(abi, 0), a1 = ArgReg(abi, 1), a2 = ArgReg(abi, 2);
+  const uint8_t shadow = ShadowBytes(abi);
   auto emitCall = [&](uintptr_t fn) {
-    emitMovImm64(0x48, 0xB8, fn);                      // mov rax, fn
-    out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});   // sub rsp, 0x28
-    out.insert(out.end(), {0xFF, 0xD0});               // call rax
-    out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});   // add rsp, 0x28
+    EmitMovRegImm64(out, Gpr::Rax, fn);                  // mov rax, fn
+    out.insert(out.end(), {0x48, 0x83, 0xEC, shadow});  // sub rsp, shadow
+    out.insert(out.end(), {0xFF, 0xD0});                 // call rax
+    out.insert(out.end(), {0x48, 0x83, 0xC4, shadow});  // add rsp, shadow
   };
 
   enum Label { kNotFound, kDone };
@@ -1118,22 +1222,26 @@ std::vector<uint8_t> BuildMemberByNameStub(uintptr_t getRootDomainFn, uintptr_t 
   };
 
   emitCall(getRootDomainFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
+  EmitMovRegReg(out, a0, Gpr::Rax);                     // a0 = rootDomain
   emitCall(threadAttachFn);
   out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
 
   if (classInitFn) {
-    emitMovImm64(0x48, 0xB9, classHandle);             // mov rcx, classHandle
+    EmitMovRegImm64(out, a0, classHandle);              // a0 = classHandle
     emitCall(classInitFn);
   }
 
-  emitMovImm64(0x48, 0xB9, classHandle);               // mov rcx, classHandle
-  emitMovImm64(0x48, 0xBA, nameAddr);                  // mov rdx, nameAddr
+  EmitMovRegImm64(out, a0, classHandle);                // a0 = classHandle
+  EmitMovRegImm64(out, a1, nameAddr);                   // a1 = nameAddr
   if (isMethod) {
-    // mov r8, -1 (REX.WB + C7 /0 id, sign-extended — the callee reads only
-    // the low 32 bits as `int param_count`, so the sign-extended upper
-    // bits are never observed).
-    out.insert(out.end(), {0x49, 0xC7, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF});
+    // mov a2, -1 — C7 /0 id (MOV r/m64, imm32, sign-extended; the callee
+    // reads only the low 32 bits as `int param_count`, so the sign-extended
+    // upper bits are never observed). Only the rm field (a2) and its REX.B
+    // bit vary by ABI — the generic reg-reg/reg-imm64 helpers don't cover
+    // this opcode, so it's written out by the same formula they use.
+    const uint8_t a2n = static_cast<uint8_t>(a2);
+    out.push_back(static_cast<uint8_t>(0x48 | ((a2n >> 3) & 1)));
+    out.insert(out.end(), {0xC7, static_cast<uint8_t>(0xC0 | (a2n & 7)), 0xFF, 0xFF, 0xFF, 0xFF});
   }
   emitCall(fromNameFn);
   out.insert(out.end(), {0x49, 0x89, 0xC4});           // mov r12, rax
@@ -1141,7 +1249,7 @@ std::vector<uint8_t> BuildMemberByNameStub(uintptr_t getRootDomainFn, uintptr_t 
   emitJump(0x74, kNotFound);                           // jz notfound
 
   if (finishFn) {
-    out.insert(out.end(), {0x4C, 0x89, 0xE1});         // mov rcx, r12
+    EmitMovRegReg(out, a0, Gpr::R12);                    // a0 = matched item
     emitCall(finishFn);
     out.insert(out.end(), {0x49, 0x89, 0xC5});         // mov r13, rax
   } else {
@@ -1153,9 +1261,9 @@ std::vector<uint8_t> BuildMemberByNameStub(uintptr_t getRootDomainFn, uintptr_t 
   out.insert(out.end(), {0x4D, 0x31, 0xED});           // xor r13, r13
 
   mark(kDone);
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+  EmitMovRegReg(out, a0, Gpr::R15);                     // a0 = attached thread
   emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
+  EmitMovRegImm64(out, Gpr::Rcx, resultAddress);        // mov rcx, resultAddress (pure scratch, no call follows)
   out.insert(out.end(), {0x4C, 0x89, 0x29});           // mov [rcx], r13
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
@@ -1209,7 +1317,8 @@ uintptr_t ResolveMemberByNameSingleThread(platform::ProcessHandle handle, uintpt
     return 0;
   }
 
-  std::vector<uint8_t> stub = BuildMemberByNameStub(getRootDomain, threadAttach, threadDetach,
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
+  std::vector<uint8_t> stub = BuildMemberByNameStub(abi, getRootDomain, threadAttach, threadDetach,
                                                      classInitFn, fromNameFn, finishFn, classHandle,
                                                      nameAddr, resultAddr, isMethod);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
@@ -1222,7 +1331,7 @@ uintptr_t ResolveMemberByNameSingleThread(platform::ProcessHandle handle, uintpt
   // Never free on a false return: the thread may still be executing inside
   // `cave`, or still reading `nameAddr` — see the never-free-a-live-cave
   // rule. Leak both.
-  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return 0;
+  if (!RunRemoteCall(handle, abi, stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
@@ -1303,23 +1412,21 @@ uintptr_t ResolveMemberByNameSingleThread(platform::ProcessHandle handle, uintpt
 //   mov [rcx], r13
 //   xor eax, eax
 //   ret
-std::vector<uint8_t> BuildStaticFieldAddressStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                                  uintptr_t threadDetachFn, uintptr_t classInitFn,
-                                                  uintptr_t fromNameFn, uintptr_t getOffsetFn,
-                                                  uintptr_t getParentFn, uintptr_t classVtableFn,
-                                                  uintptr_t staticDataFn, uintptr_t classHandle,
-                                                  uintptr_t nameAddr, uintptr_t resultAddress) {
+std::vector<uint8_t> BuildStaticFieldAddressStub(platform::Abi abi, uintptr_t getRootDomainFn,
+                                                  uintptr_t threadAttachFn, uintptr_t threadDetachFn,
+                                                  uintptr_t classInitFn, uintptr_t fromNameFn,
+                                                  uintptr_t getOffsetFn, uintptr_t getParentFn,
+                                                  uintptr_t classVtableFn, uintptr_t staticDataFn,
+                                                  uintptr_t classHandle, uintptr_t nameAddr,
+                                                  uintptr_t resultAddress) {
   std::vector<uint8_t> out;
-  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
-    out.push_back(rex);
-    out.push_back(opcodeByte);
-    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-  };
+  const Gpr a0 = ArgReg(abi, 0), a1 = ArgReg(abi, 1);
+  const uint8_t shadow = ShadowBytes(abi);
   auto emitCall = [&](uintptr_t fn) {
-    emitMovImm64(0x48, 0xB8, fn);                      // mov rax, fn
-    out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});   // sub rsp, 0x28
-    out.insert(out.end(), {0xFF, 0xD0});               // call rax
-    out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});   // add rsp, 0x28
+    EmitMovRegImm64(out, Gpr::Rax, fn);                  // mov rax, fn
+    out.insert(out.end(), {0x48, 0x83, 0xEC, shadow});  // sub rsp, shadow
+    out.insert(out.end(), {0xFF, 0xD0});                 // call rax
+    out.insert(out.end(), {0x48, 0x83, 0xC4, shadow});  // add rsp, shadow
   };
 
   enum Label { kNotFound, kDone };
@@ -1339,39 +1446,39 @@ std::vector<uint8_t> BuildStaticFieldAddressStub(uintptr_t getRootDomainFn, uint
 
   emitCall(getRootDomainFn);
   out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax  -- domain
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+  EmitMovRegReg(out, a0, Gpr::R15);                     // a0 = domain
   emitCall(threadAttachFn);
   out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax  -- attached thread
 
   if (classInitFn) {
-    emitMovImm64(0x48, 0xB9, classHandle);             // mov rcx, classHandle
+    EmitMovRegImm64(out, a0, classHandle);              // a0 = classHandle
     emitCall(classInitFn);
   }
 
-  emitMovImm64(0x48, 0xB9, classHandle);               // mov rcx, classHandle
-  emitMovImm64(0x48, 0xBA, nameAddr);                  // mov rdx, nameAddr
+  EmitMovRegImm64(out, a0, classHandle);                // a0 = classHandle
+  EmitMovRegImm64(out, a1, nameAddr);                   // a1 = nameAddr
   emitCall(fromNameFn);
   out.insert(out.end(), {0x49, 0x89, 0xC5});           // mov r13, rax  -- fieldPtr
   out.insert(out.end(), {0x4D, 0x85, 0xED});           // test r13, r13
   emitJump(0x74, kNotFound);                           // jz notfound
 
-  out.insert(out.end(), {0x4C, 0x89, 0xE9});           // mov rcx, r13
+  EmitMovRegReg(out, a0, Gpr::R13);                     // a0 = fieldPtr
   emitCall(getOffsetFn);
   out.insert(out.end(), {0x48, 0x89, 0xC3});           // mov rbx, rax  -- offset
 
-  out.insert(out.end(), {0x4C, 0x89, 0xE9});           // mov rcx, r13
+  EmitMovRegReg(out, a0, Gpr::R13);                     // a0 = fieldPtr
   emitCall(getParentFn);
   out.insert(out.end(), {0x49, 0x89, 0xC4});           // mov r12, rax  -- owning class
   out.insert(out.end(), {0x4D, 0x85, 0xE4});           // test r12, r12
   emitJump(0x74, kNotFound);                           // jz notfound
 
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15  -- domain
-  out.insert(out.end(), {0x4C, 0x89, 0xE2});           // mov rdx, r12  -- owning class
+  EmitMovRegReg(out, a0, Gpr::R15);                     // a0 = domain
+  EmitMovRegReg(out, a1, Gpr::R12);                     // a1 = owning class
   emitCall(classVtableFn);
   out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
   emitJump(0x74, kNotFound);                           // jz notfound
 
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax  -- vtable
+  EmitMovRegReg(out, a0, Gpr::Rax);                     // a0 = vtable
   emitCall(staticDataFn);
   out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
   emitJump(0x74, kNotFound);                           // jz notfound
@@ -1384,9 +1491,9 @@ std::vector<uint8_t> BuildStaticFieldAddressStub(uintptr_t getRootDomainFn, uint
   out.insert(out.end(), {0x4D, 0x31, 0xED});           // xor r13, r13
 
   mark(kDone);
-  out.insert(out.end(), {0x4C, 0x89, 0xF1});           // mov rcx, r14
+  EmitMovRegReg(out, a0, Gpr::R14);                     // a0 = attached thread
   emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
+  EmitMovRegImm64(out, Gpr::Rcx, resultAddress);        // mov rcx, resultAddress (pure scratch, no call follows)
   out.insert(out.end(), {0x4C, 0x89, 0x29});           // mov [rcx], r13
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
@@ -1439,8 +1546,9 @@ uintptr_t ResolveStaticFieldAddressSingleThread(platform::ProcessHandle handle, 
     return 0;
   }
 
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
   std::vector<uint8_t> stub = BuildStaticFieldAddressStub(
-      getRootDomain, threadAttach, threadDetach, classInitFn, fromNameFn, getOffsetFn, getParentFn,
+      abi, getRootDomain, threadAttach, threadDetach, classInitFn, fromNameFn, getOffsetFn, getParentFn,
       classVtableFn, staticDataFn, classHandle, nameAddr, resultAddr);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
     platform::FreeMemory(handle, cave);
@@ -1452,7 +1560,7 @@ uintptr_t ResolveStaticFieldAddressSingleThread(platform::ProcessHandle handle, 
   // Never free on a false return: the thread may still be executing inside
   // `cave`, or still reading `nameAddr` — see the never-free-a-live-cave
   // rule. Leak both.
-  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return 0;
+  if (!RunRemoteCall(handle, abi, stubAddr, {}, ignored)) return 0;
 
   uint64_t result = 0;
   platform::ReadMemory(handle, resultAddr, &result, sizeof(result));
@@ -1518,23 +1626,20 @@ uintptr_t ResolveStaticFieldAddressSingleThread(platform::ProcessHandle handle, 
 //   mov [rcx], r14                                                 -- *count = items collected
 //   xor eax, eax
 //   ret
-std::vector<uint8_t> BuildMemberListStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                          uintptr_t threadDetachFn, uintptr_t getItemsFn,
-                                          uintptr_t getNameFn, uintptr_t classHandle,
-                                          uintptr_t iterSlotAddr, uintptr_t bufferAddr,
-                                          uintptr_t countAddress, uint32_t guardLimit,
-                                          uintptr_t classInitFn) {
+std::vector<uint8_t> BuildMemberListStub(platform::Abi abi, uintptr_t getRootDomainFn,
+                                          uintptr_t threadAttachFn, uintptr_t threadDetachFn,
+                                          uintptr_t getItemsFn, uintptr_t getNameFn,
+                                          uintptr_t classHandle, uintptr_t iterSlotAddr,
+                                          uintptr_t bufferAddr, uintptr_t countAddress,
+                                          uint32_t guardLimit, uintptr_t classInitFn) {
   std::vector<uint8_t> out;
-  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
-    out.push_back(rex);
-    out.push_back(opcodeByte);
-    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-  };
+  const Gpr a0 = ArgReg(abi, 0), a1 = ArgReg(abi, 1);
+  const uint8_t shadow = ShadowBytes(abi);
   auto emitCall = [&](uintptr_t fn) {
-    emitMovImm64(0x48, 0xB8, fn);                      // mov rax, fn
-    out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});   // sub rsp, 0x28
-    out.insert(out.end(), {0xFF, 0xD0});               // call rax
-    out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});   // add rsp, 0x28
+    EmitMovRegImm64(out, Gpr::Rax, fn);                  // mov rax, fn
+    out.insert(out.end(), {0x48, 0x83, 0xEC, shadow});  // sub rsp, shadow
+    out.insert(out.end(), {0xFF, 0xD0});                 // call rax
+    out.insert(out.end(), {0x48, 0x83, 0xC4, shadow});  // add rsp, shadow
   };
 
   enum Label { kLoop, kDone };
@@ -1553,7 +1658,7 @@ std::vector<uint8_t> BuildMemberListStub(uintptr_t getRootDomainFn, uintptr_t th
   };
 
   emitCall(getRootDomainFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
+  EmitMovRegReg(out, a0, Gpr::Rax);                     // a0 = rootDomain
   emitCall(threadAttachFn);
   out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
   // mono_class_get_methods (unlike mono_class_get_fields) returns nothing
@@ -1564,10 +1669,10 @@ std::vector<uint8_t> BuildMemberListStub(uintptr_t getRootDomainFn, uintptr_t th
   // older Mono build, matching every other "optional export" fallback in
   // this file).
   if (classInitFn) {
-    emitMovImm64(0x48, 0xB9, classHandle);             // mov rcx, classHandle
+    EmitMovRegImm64(out, a0, classHandle);              // a0 = classHandle
     emitCall(classInitFn);
   }
-  emitMovImm64(0x48, 0xBB, bufferAddr);                // mov rbx, bufferAddr
+  EmitMovRegImm64(out, Gpr::Rbx, bufferAddr);          // mov rbx, bufferAddr
   out.insert(out.end(), {0x4D, 0x31, 0xF6});           // xor r14, r14
 
   mark(kLoop);
@@ -1577,22 +1682,22 @@ std::vector<uint8_t> BuildMemberListStub(uintptr_t getRootDomainFn, uintptr_t th
                           static_cast<uint8_t>((guardLimit >> 16) & 0xFF),
                           static_cast<uint8_t>((guardLimit >> 24) & 0xFF)});
   emitJump(0x73, kDone);                               // jae done
-  emitMovImm64(0x48, 0xB9, classHandle);               // mov rcx, classHandle
-  emitMovImm64(0x48, 0xBA, iterSlotAddr);              // mov rdx, iterSlotAddr
+  EmitMovRegImm64(out, a0, classHandle);                // a0 = classHandle
+  EmitMovRegImm64(out, a1, iterSlotAddr);               // a1 = iterSlotAddr
   emitCall(getItemsFn);
   out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
   emitJump(0x74, kDone);                               // jz done (exhausted)
   out.insert(out.end(), {0x49, 0x89, 0xC4});           // mov r12, rax
-  out.insert(out.end(), {0x4C, 0x89, 0xE1});           // mov rcx, r12
+  EmitMovRegReg(out, a0, Gpr::R12);                     // a0 = item
   emitCall(getNameFn);
   out.insert(out.end(), {0x4A, 0x89, 0x04, 0xF3});     // mov [rbx+r14*8], rax
   out.insert(out.end(), {0x49, 0xFF, 0xC6});           // inc r14
   emitJump(0xEB, kLoop);                               // jmp loop
 
   mark(kDone);
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+  EmitMovRegReg(out, a0, Gpr::R15);                     // a0 = attached thread
   emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, countAddress);              // mov rcx, countAddress
+  EmitMovRegImm64(out, Gpr::Rcx, countAddress);         // mov rcx, countAddress (pure scratch, no call follows)
   out.insert(out.end(), {0x4C, 0x89, 0x31});           // mov [rcx], r14
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
@@ -1638,7 +1743,8 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
     return {};
   }
 
-  std::vector<uint8_t> stub = BuildMemberListStub(getRootDomain, threadAttach, threadDetach, getItems,
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
+  std::vector<uint8_t> stub = BuildMemberListStub(abi, getRootDomain, threadAttach, threadDetach, getItems,
                                                    getName, classHandle, iterSlotAddr, bufferAddr,
                                                    countAddr, kMaxMembers, classInit);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
@@ -1649,7 +1755,7 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return {};
+  if (!RunRemoteCall(handle, abi, stubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
   platform::ReadMemory(handle, countAddr, &count, sizeof(count));
@@ -1724,20 +1830,39 @@ std::vector<std::string> ListMemberNamesSingleThread(platform::ProcessHandle han
 //   mov [rcx], rsi
 //   xor eax, eax
 //   ret
-std::vector<uint8_t> BuildListAssemblyNamesStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                                 uintptr_t threadDetachFn, uintptr_t foreachFn,
-                                                 uintptr_t getImageFn, uintptr_t getNameFn,
-                                                 uintptr_t collectorStubAddr, uintptr_t assemblyBufAddr,
-                                                 uintptr_t assemblySlotsAddr, uintptr_t imagesBufAddr,
-                                                 uintptr_t namesBufAddr, uintptr_t countAddress) {
+//
+// ABI note: the Ms64 branch below is byte-identical to the original (it
+// relies on RDI being callee-saved to hold imagesBufAddr, and RSI to hold
+// the running output count, across the loop's calls — both true under
+// Win64, per the comment that used to sit here). Neither holds under
+// System V: RDI/RSI are SysV's FIRST TWO argument registers, which a real
+// SysV mono_* export is free to clobber internally even when it doesn't
+// need them for its own arguments — nothing guarantees they survive a
+// call. So the SysV branch is a genuinely different register plan, not a
+// substitution: the running output count moves to r14 (replacing its
+// Ms64 role of holding namesBufAddr resident), and both buffer addresses
+// become RELOAD-ON-USE (a fresh `mov reg, imm64` right where each is
+// needed, since they are build-time constants anyway) rather than
+// resident for the whole loop — freeing rdi/rsi/r14 to be used safely.
+// Register usage, SysV branch:
+//   r15 — attached MonoThread*
+//   r13 — assembly count
+//   r12 — loop index
+//   rbx — &assemblySlots[0] (constant; safe to keep resident — callee-
+//         saved in both ABIs, same as every other stub in this file)
+//   r14 — running output count (replaces RSI's Ms64 role)
+//   rbp — the current image handle, within one iteration only (same role,
+//         same register, as the Ms64 branch — rbp is callee-saved in both)
+std::vector<uint8_t> BuildListAssemblyNamesStub(platform::Abi abi, uintptr_t getRootDomainFn,
+                                                 uintptr_t threadAttachFn, uintptr_t threadDetachFn,
+                                                 uintptr_t foreachFn, uintptr_t getImageFn,
+                                                 uintptr_t getNameFn, uintptr_t collectorStubAddr,
+                                                 uintptr_t assemblyBufAddr, uintptr_t assemblySlotsAddr,
+                                                 uintptr_t imagesBufAddr, uintptr_t namesBufAddr,
+                                                 uintptr_t countAddress) {
   std::vector<uint8_t> out;
-  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
-    out.push_back(rex);
-    out.push_back(opcodeByte);
-    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-  };
   auto emitCall = [&](uintptr_t fn) {
-    emitMovImm64(0x48, 0xB8, fn);
+    EmitMovRegImm64(out, Gpr::Rax, fn);
     out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});
     out.insert(out.end(), {0xFF, 0xD0});
     out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});
@@ -1758,48 +1883,93 @@ std::vector<uint8_t> BuildListAssemblyNamesStub(uintptr_t getRootDomainFn, uintp
     out.insert(out.end(), {0x00, 0x00, 0x00, 0x00});
   };
 
-  emitCall(getRootDomainFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
-  emitCall(threadAttachFn);
-  out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
+  if (abi == platform::Abi::Ms64) {
+    emitCall(getRootDomainFn);
+    out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
+    emitCall(threadAttachFn);
+    out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
 
-  emitMovImm64(0x48, 0xB9, collectorStubAddr);         // mov rcx, collectorStubAddr
-  emitMovImm64(0x48, 0xBA, assemblyBufAddr);           // mov rdx, assemblyBufAddr
-  emitCall(foreachFn);
+    EmitMovRegImm64(out, Gpr::Rcx, collectorStubAddr);
+    EmitMovRegImm64(out, Gpr::Rdx, assemblyBufAddr);
+    emitCall(foreachFn);
 
-  emitMovImm64(0x48, 0xB8, assemblyBufAddr);           // mov rax, assemblyBufAddr
-  out.insert(out.end(), {0x4C, 0x8B, 0x28});           // mov r13, [rax]
-  out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12
-  emitMovImm64(0x48, 0xBB, assemblySlotsAddr);         // mov rbx, assemblySlotsAddr
-  emitMovImm64(0x48, 0xBF, imagesBufAddr);             // mov rdi, imagesBufAddr
-  emitMovImm64(0x49, 0xBE, namesBufAddr);              // mov r14, namesBufAddr
-  out.insert(out.end(), {0x48, 0x31, 0xF6});           // xor rsi, rsi
+    EmitMovRegImm64(out, Gpr::Rax, assemblyBufAddr);
+    out.insert(out.end(), {0x4C, 0x8B, 0x28});           // mov r13, [rax]
+    out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12
+    EmitMovRegImm64(out, Gpr::Rbx, assemblySlotsAddr);
+    EmitMovRegImm64(out, Gpr::Rdi, imagesBufAddr);
+    EmitMovRegImm64(out, Gpr::R14, namesBufAddr);
+    out.insert(out.end(), {0x48, 0x31, 0xF6});           // xor rsi, rsi
 
-  mark(kLoop);
-  out.insert(out.end(), {0x4D, 0x39, 0xEC});           // cmp r12, r13
-  emitJump(0x73, kDone);                               // jae done
-  out.insert(out.end(), {0x4A, 0x8B, 0x0C, 0xE3});     // mov rcx, [rbx+r12*8]
-  emitCall(getImageFn);
-  out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
-  emitJump(0x74, kSkip);                               // jz skip
-  out.insert(out.end(), {0x48, 0x89, 0xC5});           // mov rbp, rax
-  out.insert(out.end(), {0x48, 0x89, 0xE9});           // mov rcx, rbp
-  emitCall(getNameFn);
-  out.insert(out.end(), {0x48, 0x89, 0x2C, 0xF7});     // mov [rdi+rsi*8], rbp
-  out.insert(out.end(), {0x49, 0x89, 0x04, 0xF6});     // mov [r14+rsi*8], rax
-  out.insert(out.end(), {0x48, 0xFF, 0xC6});           // inc rsi
+    mark(kLoop);
+    out.insert(out.end(), {0x4D, 0x39, 0xEC});           // cmp r12, r13
+    emitJump(0x73, kDone);                               // jae done
+    out.insert(out.end(), {0x4A, 0x8B, 0x0C, 0xE3});     // mov rcx, [rbx+r12*8]
+    emitCall(getImageFn);
+    out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
+    emitJump(0x74, kSkip);                               // jz skip
+    out.insert(out.end(), {0x48, 0x89, 0xC5});           // mov rbp, rax
+    out.insert(out.end(), {0x48, 0x89, 0xE9});           // mov rcx, rbp
+    emitCall(getNameFn);
+    out.insert(out.end(), {0x48, 0x89, 0x2C, 0xF7});     // mov [rdi+rsi*8], rbp
+    out.insert(out.end(), {0x49, 0x89, 0x04, 0xF6});     // mov [r14+rsi*8], rax
+    out.insert(out.end(), {0x48, 0xFF, 0xC6});           // inc rsi
 
-  mark(kSkip);
-  out.insert(out.end(), {0x49, 0xFF, 0xC4});           // inc r12
-  emitJump(0xEB, kLoop);                               // jmp loop
+    mark(kSkip);
+    out.insert(out.end(), {0x49, 0xFF, 0xC4});           // inc r12
+    emitJump(0xEB, kLoop);                               // jmp loop
 
-  mark(kDone);
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
-  emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, countAddress);              // mov rcx, countAddress
-  out.insert(out.end(), {0x48, 0x89, 0x31});           // mov [rcx], rsi
-  out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
-  out.push_back(0xC3);                                 // ret
+    mark(kDone);
+    out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+    emitCall(threadDetachFn);
+    EmitMovRegImm64(out, Gpr::Rcx, countAddress);
+    out.insert(out.end(), {0x48, 0x89, 0x31});           // mov [rcx], rsi
+    out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
+    out.push_back(0xC3);                                 // ret
+  } else {
+    emitCall(getRootDomainFn);
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::Rax);               // a0 = rootDomain
+    emitCall(threadAttachFn);
+    out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
+
+    EmitMovRegImm64(out, Gpr::Rdi, collectorStubAddr);    // a0
+    EmitMovRegImm64(out, Gpr::Rsi, assemblyBufAddr);      // a1
+    emitCall(foreachFn);
+
+    EmitMovRegImm64(out, Gpr::Rax, assemblyBufAddr);
+    out.insert(out.end(), {0x4C, 0x8B, 0x28});           // mov r13, [rax]  -- count
+    out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12    -- loop index
+    EmitMovRegImm64(out, Gpr::Rbx, assemblySlotsAddr);    // &assemblySlots[0], resident (safe both ABIs)
+    out.insert(out.end(), {0x4D, 0x31, 0xF6});           // xor r14, r14    -- output count (replaces rsi's Ms64 role)
+
+    mark(kLoop);
+    out.insert(out.end(), {0x4D, 0x39, 0xEC});           // cmp r12, r13
+    emitJump(0x73, kDone);                               // jae done
+    out.insert(out.end(), {0x4A, 0x8B, 0x3C, 0xE3});     // mov rdi, [rbx+r12*8]  -- a0 = slots[i]
+    emitCall(getImageFn);
+    out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
+    emitJump(0x74, kSkip);                               // jz skip
+    out.insert(out.end(), {0x48, 0x89, 0xC5});           // mov rbp, rax          -- image
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::Rbp);               // a0 = image
+    emitCall(getNameFn);
+    EmitMovRegImm64(out, Gpr::Rdx, imagesBufAddr);        // reload constant (scratch; no call pending)
+    out.insert(out.end(), {0x4A, 0x89, 0x2C, 0xF2});     // mov [rdx+r14*8], rbp  -- images[outCount] = image
+    EmitMovRegImm64(out, Gpr::Rdx, namesBufAddr);         // reload constant
+    out.insert(out.end(), {0x4A, 0x89, 0x04, 0xF2});     // mov [rdx+r14*8], rax  -- names[outCount] = namePtr
+    out.insert(out.end(), {0x49, 0xFF, 0xC6});           // inc r14
+
+    mark(kSkip);
+    out.insert(out.end(), {0x49, 0xFF, 0xC4});           // inc r12
+    emitJump(0xEB, kLoop);                               // jmp loop
+
+    mark(kDone);
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::R15);               // a0 = attached thread
+    emitCall(threadDetachFn);
+    EmitMovRegImm64(out, Gpr::Rcx, countAddress);         // pure scratch, no call follows
+    out.insert(out.end(), {0x4C, 0x89, 0x31});           // mov [rcx], r14
+    out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
+    out.push_back(0xC3);                                 // ret
+  }
 
   for (auto& fx : fixups) {
     size_t pos = fx.first;
@@ -1827,8 +1997,9 @@ std::vector<std::pair<uintptr_t, std::string>> ListAssemblyNamesSingleThread(pla
   uintptr_t getImage = platform::ResolveExport(handle, monoDllBase, "mono_assembly_get_image");
   uintptr_t getName = platform::ResolveExport(handle, monoDllBase, "mono_image_get_name");
   if (!getRootDomain || !threadAttach || !threadDetach || !foreach_ || !getImage || !getName) return {};
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
 
-  std::vector<uint8_t> collectorStub = BuildAssemblyCollectorStub();
+  std::vector<uint8_t> collectorStub = BuildAssemblyCollectorStub(abi);
 
   uintptr_t cave = platform::AllocateNear(
       handle, monoDllBase, 8 + kMaxAssemblies * 8 * 3 + 8 + collectorStub.size() + 512);
@@ -1850,7 +2021,7 @@ std::vector<std::pair<uintptr_t, std::string>> ListAssemblyNamesSingleThread(pla
   }
 
   std::vector<uint8_t> mainStub = BuildListAssemblyNamesStub(
-      getRootDomain, threadAttach, threadDetach, foreach_, getImage, getName, collectorStubAddr,
+      abi, getRootDomain, threadAttach, threadDetach, foreach_, getImage, getName, collectorStubAddr,
       assemblyBufAddr, assemblySlotsAddr, imagesBufAddr, namesBufAddr, countAddr);
   if (!platform::WriteMemory(handle, mainStubAddr, mainStub.data(), mainStub.size())) {
     platform::FreeMemory(handle, cave);
@@ -1860,7 +2031,7 @@ std::vector<std::pair<uintptr_t, std::string>> ListAssemblyNamesSingleThread(pla
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), mainStubAddr, {}, ignored)) return {};
+  if (!RunRemoteCall(handle, abi, mainStubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
   platform::ReadMemory(handle, countAddr, &count, sizeof(count));
@@ -1965,20 +2136,25 @@ constexpr uint32_t kMaxClasses = 8192;
 //   mov [rcx], r14
 //   xor eax, eax
 //   ret
-std::vector<uint8_t> BuildListClassesStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                           uintptr_t threadDetachFn, uintptr_t getTableInfoFn,
-                                           uintptr_t getRowsFn, uintptr_t classGetFn, uintptr_t classNameFn,
+// ABI note (same reasoning as BuildListAssemblyNamesStub above): the Ms64
+// branch relies on RDI/RSI being callee-saved to hold namesBufAddr and
+// classHandlesBufAddr resident across the whole loop — true under Win64,
+// not guaranteed under System V, where they are argument registers a
+// callee may clobber. The SysV branch keeps r15/r14/r12/rbx in their same
+// roles (all callee-saved in both ABIs) and r13 in its same role too
+// (namespacesBufAddr — already safe, untouched), but reloads namesBufAddr
+// and classHandlesBufAddr via a fresh immediate right where each is used
+// instead of keeping them resident in rdi/rsi.
+std::vector<uint8_t> BuildListClassesStub(platform::Abi abi, uintptr_t getRootDomainFn,
+                                           uintptr_t threadAttachFn, uintptr_t threadDetachFn,
+                                           uintptr_t getTableInfoFn, uintptr_t getRowsFn,
+                                           uintptr_t classGetFn, uintptr_t classNameFn,
                                            uintptr_t classNamespaceFn, uintptr_t imageHandle,
                                            uintptr_t namesBufAddr, uintptr_t namespacesBufAddr,
                                            uintptr_t classHandlesBufAddr, uintptr_t countAddress) {
   std::vector<uint8_t> out;
-  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
-    out.push_back(rex);
-    out.push_back(opcodeByte);
-    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-  };
   auto emitCall = [&](uintptr_t fn) {
-    emitMovImm64(0x48, 0xB8, fn);
+    EmitMovRegImm64(out, Gpr::Rax, fn);
     out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});
     out.insert(out.end(), {0xFF, 0xD0});
     out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});
@@ -1999,65 +2175,127 @@ std::vector<uint8_t> BuildListClassesStub(uintptr_t getRootDomainFn, uintptr_t t
     out.insert(out.end(), {0x00, 0x00, 0x00, 0x00});
   };
 
-  emitCall(getRootDomainFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
-  emitCall(threadAttachFn);
-  out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
+  if (abi == platform::Abi::Ms64) {
+    emitCall(getRootDomainFn);
+    out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
+    emitCall(threadAttachFn);
+    out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
 
-  emitMovImm64(0x48, 0xB9, imageHandle);               // mov rcx, imageHandle
-  emitMovImm64(0x48, 0xBA, kMonoTableTypeDef);         // mov rdx, kMonoTableTypeDef
-  emitCall(getTableInfoFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
-  emitCall(getRowsFn);
-  out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax
+    EmitMovRegImm64(out, Gpr::Rcx, imageHandle);
+    EmitMovRegImm64(out, Gpr::Rdx, kMonoTableTypeDef);
+    emitCall(getTableInfoFn);
+    out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
+    emitCall(getRowsFn);
+    out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax
 
-  out.insert(out.end(), {0x49, 0x81, 0xFE,             // cmp r14, kMaxClasses
-                          static_cast<uint8_t>(kMaxClasses & 0xFF),
-                          static_cast<uint8_t>((kMaxClasses >> 8) & 0xFF),
-                          static_cast<uint8_t>((kMaxClasses >> 16) & 0xFF),
-                          static_cast<uint8_t>((kMaxClasses >> 24) & 0xFF)});
-  emitJump(0x76, kNotCapped);                          // jbe not_capped
-  emitMovImm64(0x49, 0xBE, kMaxClasses);               // mov r14, kMaxClasses
+    out.insert(out.end(), {0x49, 0x81, 0xFE,             // cmp r14, kMaxClasses
+                            static_cast<uint8_t>(kMaxClasses & 0xFF),
+                            static_cast<uint8_t>((kMaxClasses >> 8) & 0xFF),
+                            static_cast<uint8_t>((kMaxClasses >> 16) & 0xFF),
+                            static_cast<uint8_t>((kMaxClasses >> 24) & 0xFF)});
+    emitJump(0x76, kNotCapped);                          // jbe not_capped
+    EmitMovRegImm64(out, Gpr::R14, kMaxClasses);
 
-  mark(kNotCapped);
-  out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12
-  emitMovImm64(0x48, 0xBF, namesBufAddr);              // mov rdi, namesBufAddr
-  emitMovImm64(0x49, 0xBD, namespacesBufAddr);         // mov r13, namespacesBufAddr
-  emitMovImm64(0x48, 0xBE, classHandlesBufAddr);       // mov rsi, classHandlesBufAddr
+    mark(kNotCapped);
+    out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12
+    EmitMovRegImm64(out, Gpr::Rdi, namesBufAddr);
+    EmitMovRegImm64(out, Gpr::R13, namespacesBufAddr);
+    EmitMovRegImm64(out, Gpr::Rsi, classHandlesBufAddr);
 
-  mark(kLoop);
-  out.insert(out.end(), {0x4D, 0x39, 0xF4});           // cmp r12, r14
-  emitJump(0x73, kDone);                               // jae done
-  emitMovImm64(0x48, 0xB9, imageHandle);               // mov rcx, imageHandle
-  out.insert(out.end(), {0x4C, 0x89, 0xE2});           // mov rdx, r12
-  out.insert(out.end(), {0x48, 0x81, 0xC2,             // add rdx, kMonoTokenTypeDef+1
-                          static_cast<uint8_t>((kMonoTokenTypeDef + 1) & 0xFF),
-                          static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 8) & 0xFF),
-                          static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 16) & 0xFF),
-                          static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 24) & 0xFF)});
-  emitCall(classGetFn);
-  out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
-  emitJump(0x74, kSkip);                               // jz skip
-  out.insert(out.end(), {0x48, 0x89, 0xC3});           // mov rbx, rax
-  out.insert(out.end(), {0x4A, 0x89, 0x1C, 0xE6});     // mov [rsi+r12*8], rbx
-  out.insert(out.end(), {0x48, 0x89, 0xD9});           // mov rcx, rbx
-  emitCall(classNameFn);
-  out.insert(out.end(), {0x4A, 0x89, 0x04, 0xE7});     // mov [rdi+r12*8], rax
-  out.insert(out.end(), {0x48, 0x89, 0xD9});           // mov rcx, rbx
-  emitCall(classNamespaceFn);
-  out.insert(out.end(), {0x4B, 0x89, 0x44, 0xE5, 0x00}); // mov [r13+r12*8], rax
+    mark(kLoop);
+    out.insert(out.end(), {0x4D, 0x39, 0xF4});           // cmp r12, r14
+    emitJump(0x73, kDone);                               // jae done
+    EmitMovRegImm64(out, Gpr::Rcx, imageHandle);
+    out.insert(out.end(), {0x4C, 0x89, 0xE2});           // mov rdx, r12
+    out.insert(out.end(), {0x48, 0x81, 0xC2,             // add rdx, kMonoTokenTypeDef+1
+                            static_cast<uint8_t>((kMonoTokenTypeDef + 1) & 0xFF),
+                            static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 8) & 0xFF),
+                            static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 16) & 0xFF),
+                            static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 24) & 0xFF)});
+    emitCall(classGetFn);
+    out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
+    emitJump(0x74, kSkip);                               // jz skip
+    out.insert(out.end(), {0x48, 0x89, 0xC3});           // mov rbx, rax
+    out.insert(out.end(), {0x4A, 0x89, 0x1C, 0xE6});     // mov [rsi+r12*8], rbx
+    out.insert(out.end(), {0x48, 0x89, 0xD9});           // mov rcx, rbx
+    emitCall(classNameFn);
+    out.insert(out.end(), {0x4A, 0x89, 0x04, 0xE7});     // mov [rdi+r12*8], rax
+    out.insert(out.end(), {0x48, 0x89, 0xD9});           // mov rcx, rbx
+    emitCall(classNamespaceFn);
+    out.insert(out.end(), {0x4B, 0x89, 0x44, 0xE5, 0x00}); // mov [r13+r12*8], rax
 
-  mark(kSkip);
-  out.insert(out.end(), {0x49, 0xFF, 0xC4});           // inc r12
-  emitJump(0xEB, kLoop);                               // jmp loop
+    mark(kSkip);
+    out.insert(out.end(), {0x49, 0xFF, 0xC4});           // inc r12
+    emitJump(0xEB, kLoop);                               // jmp loop
 
-  mark(kDone);
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
-  emitCall(threadDetachFn);
-  emitMovImm64(0x48, 0xB9, countAddress);              // mov rcx, countAddress
-  out.insert(out.end(), {0x4C, 0x89, 0x31});           // mov [rcx], r14
-  out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
-  out.push_back(0xC3);                                 // ret
+    mark(kDone);
+    out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+    emitCall(threadDetachFn);
+    EmitMovRegImm64(out, Gpr::Rcx, countAddress);
+    out.insert(out.end(), {0x4C, 0x89, 0x31});           // mov [rcx], r14
+    out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
+    out.push_back(0xC3);                                 // ret
+  } else {
+    emitCall(getRootDomainFn);
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::Rax);               // a0 = rootDomain
+    emitCall(threadAttachFn);
+    out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
+
+    EmitMovRegImm64(out, Gpr::Rdi, imageHandle);          // a0
+    EmitMovRegImm64(out, Gpr::Rsi, kMonoTableTypeDef);    // a1
+    emitCall(getTableInfoFn);
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::Rax);               // a0 = tableInfo
+    emitCall(getRowsFn);
+    out.insert(out.end(), {0x49, 0x89, 0xC6});           // mov r14, rax  -- row count
+
+    out.insert(out.end(), {0x49, 0x81, 0xFE,             // cmp r14, kMaxClasses
+                            static_cast<uint8_t>(kMaxClasses & 0xFF),
+                            static_cast<uint8_t>((kMaxClasses >> 8) & 0xFF),
+                            static_cast<uint8_t>((kMaxClasses >> 16) & 0xFF),
+                            static_cast<uint8_t>((kMaxClasses >> 24) & 0xFF)});
+    emitJump(0x76, kNotCapped);                          // jbe not_capped
+    EmitMovRegImm64(out, Gpr::R14, kMaxClasses);
+
+    mark(kNotCapped);
+    out.insert(out.end(), {0x4D, 0x31, 0xE4});           // xor r12, r12  -- loop index
+    EmitMovRegImm64(out, Gpr::R13, namespacesBufAddr);    // resident, unchanged role (already safe)
+
+    mark(kLoop);
+    out.insert(out.end(), {0x4D, 0x39, 0xF4});           // cmp r12, r14
+    emitJump(0x73, kDone);                               // jae done
+    EmitMovRegImm64(out, Gpr::Rdi, imageHandle);          // a0 (reloaded each iter: rdi is transient now)
+    EmitMovRegReg(out, Gpr::Rsi, Gpr::R12);               // a1 = r12
+    out.insert(out.end(), {0x48, 0x81, 0xC6,             // add rsi, kMonoTokenTypeDef+1
+                            static_cast<uint8_t>((kMonoTokenTypeDef + 1) & 0xFF),
+                            static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 8) & 0xFF),
+                            static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 16) & 0xFF),
+                            static_cast<uint8_t>(((kMonoTokenTypeDef + 1) >> 24) & 0xFF)});
+    emitCall(classGetFn);
+    out.insert(out.end(), {0x48, 0x85, 0xC0});           // test rax, rax
+    emitJump(0x74, kSkip);                               // jz skip
+    out.insert(out.end(), {0x48, 0x89, 0xC3});           // mov rbx, rax  -- class
+    EmitMovRegImm64(out, Gpr::Rdx, classHandlesBufAddr);  // reload constant (scratch; no call pending)
+    out.insert(out.end(), {0x4A, 0x89, 0x1C, 0xE2});     // mov [rdx+r12*8], rbx  -- classHandles[row]
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::Rbx);               // a0 = class
+    emitCall(classNameFn);
+    EmitMovRegImm64(out, Gpr::Rdx, namesBufAddr);         // reload constant
+    out.insert(out.end(), {0x4A, 0x89, 0x04, 0xE2});     // mov [rdx+r12*8], rax  -- names[row]
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::Rbx);               // a0 = class
+    emitCall(classNamespaceFn);
+    out.insert(out.end(), {0x4B, 0x89, 0x44, 0xE5, 0x00}); // mov [r13+r12*8], rax  -- namespaces[row]
+
+    mark(kSkip);
+    out.insert(out.end(), {0x49, 0xFF, 0xC4});           // inc r12
+    emitJump(0xEB, kLoop);                               // jmp loop
+
+    mark(kDone);
+    EmitMovRegReg(out, Gpr::Rdi, Gpr::R15);               // a0 = attached thread
+    emitCall(threadDetachFn);
+    EmitMovRegImm64(out, Gpr::Rcx, countAddress);         // pure scratch, no call follows
+    out.insert(out.end(), {0x4C, 0x89, 0x31});           // mov [rcx], r14
+    out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
+    out.push_back(0xC3);                                 // ret
+  }
 
   for (auto& fx : fixups) {
     size_t pos = fx.first;
@@ -2104,8 +2342,9 @@ std::vector<ClassEntry> ListClassesInImageSingleThread(
     return {};
   }
 
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
   std::vector<uint8_t> stub =
-      BuildListClassesStub(getRootDomain, threadAttach, threadDetach, getTableInfo, getRows, classGet,
+      BuildListClassesStub(abi, getRootDomain, threadAttach, threadDetach, getTableInfo, getRows, classGet,
                             classGetName, classGetNamespace, imageHandle, namesBufAddr, namespacesBufAddr,
                             classHandlesBufAddr, countAddr);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
@@ -2116,7 +2355,7 @@ std::vector<ClassEntry> ListClassesInImageSingleThread(
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return {};
+  if (!RunRemoteCall(handle, abi, stubAddr, {}, ignored)) return {};
 
   uint64_t count = 0;
   platform::ReadMemory(handle, countAddr, &count, sizeof(count));
@@ -2388,51 +2627,74 @@ namespace {
 //   mov rax, threadDetachFn ; sub rsp,0x28 ; call rax ; add rsp,0x28
 //   xor eax, eax
 //   ret
-std::vector<uint8_t> BuildAttachedCallStub(uintptr_t getRootDomainFn, uintptr_t threadAttachFn,
-                                            uintptr_t threadDetachFn, uintptr_t targetFn,
-                                            const std::vector<uintptr_t>& args,
+//
+// ABI note: the above is Ms64, where a float argument's XMM register
+// matches its POSITION among all 4 argument slots (positional pairing of
+// GP and XMM files). System V counts floats in a SEPARATE register file
+// from integers — a function with one pointer and one float arg always
+// gets the float in XMM0, not whichever XMM number its logical position
+// would suggest, regardless of whether the pointer comes before or after
+// it. So the SysV branch always loads the lone float arg into XMM0, and
+// renumbers the remaining (non-float) args into consecutive SysV integer
+// slots (rdi, rsi, rdx, ...), skipping the slot the float occupied in the
+// caller's own argument list.
+std::vector<uint8_t> BuildAttachedCallStub(platform::Abi abi, uintptr_t getRootDomainFn,
+                                            uintptr_t threadAttachFn, uintptr_t threadDetachFn,
+                                            uintptr_t targetFn, const std::vector<uintptr_t>& args,
                                             uintptr_t resultAddress, int floatArgIndex = -1,
                                             uint32_t floatArgBits = 0) {
   std::vector<uint8_t> out;
-  auto emitMovImm64 = [&](uint8_t rex, uint8_t opcodeByte, uintptr_t imm) {
-    out.push_back(rex);
-    out.push_back(opcodeByte);
-    for (int i = 0; i < 8; i++) out.push_back(static_cast<uint8_t>(imm >> (i * 8)));
-  };
+  const uint8_t shadow = ShadowBytes(abi);
   auto emitCall = [&](uintptr_t fn) {
-    emitMovImm64(0x48, 0xB8, fn);
-    out.insert(out.end(), {0x48, 0x83, 0xEC, 0x28});
+    EmitMovRegImm64(out, Gpr::Rax, fn);
+    out.insert(out.end(), {0x48, 0x83, 0xEC, shadow});
     out.insert(out.end(), {0xFF, 0xD0});
-    out.insert(out.end(), {0x48, 0x83, 0xC4, 0x28});
+    out.insert(out.end(), {0x48, 0x83, 0xC4, shadow});
   };
 
   emitCall(getRootDomainFn);
-  out.insert(out.end(), {0x48, 0x89, 0xC1});           // mov rcx, rax
+  EmitMovRegReg(out, ArgReg(abi, 0), Gpr::Rax);          // a0 = rootDomain
   emitCall(threadAttachFn);
   out.insert(out.end(), {0x49, 0x89, 0xC7});           // mov r15, rax
 
-  uintptr_t a0 = args.size() > 0 ? args[0] : 0;
-  uintptr_t a1 = args.size() > 1 ? args[1] : 0;
-  uintptr_t a2 = args.size() > 2 ? args[2] : 0;
-  uintptr_t a3 = args.size() > 3 ? args[3] : 0;
-  if (floatArgIndex != 0) emitMovImm64(0x48, 0xB9, a0);  // mov rcx, a0
-  if (floatArgIndex != 1) emitMovImm64(0x48, 0xBA, a1);  // mov rdx, a1
-  if (floatArgIndex != 2) emitMovImm64(0x49, 0xB8, a2);  // mov r8,  a2
-  if (floatArgIndex != 3) emitMovImm64(0x49, 0xB9, a3);  // mov r9,  a3
-  if (floatArgIndex >= 0 && floatArgIndex <= 3) {
-    out.push_back(0xB8);                                  // mov eax, floatArgBits
-    for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>(floatArgBits >> (i * 8)));
-    // movd xmmN, eax — 66 0F 6E /r, modrm 11 <xmmN reg> 000(eax)
-    static const uint8_t kXmmModRm[4] = {0xC0, 0xC8, 0xD0, 0xD8}; // xmm0..xmm3
-    out.insert(out.end(), {0x66, 0x0F, 0x6E, kXmmModRm[floatArgIndex]});
+  uintptr_t a[4] = {args.size() > 0 ? args[0] : 0, args.size() > 1 ? args[1] : 0,
+                     args.size() > 2 ? args[2] : 0, args.size() > 3 ? args[3] : 0};
+  if (abi == platform::Abi::Ms64) {
+    if (floatArgIndex != 0) EmitMovRegImm64(out, Gpr::Rcx, a[0]);
+    if (floatArgIndex != 1) EmitMovRegImm64(out, Gpr::Rdx, a[1]);
+    if (floatArgIndex != 2) EmitMovRegImm64(out, Gpr::R8, a[2]);
+    if (floatArgIndex != 3) EmitMovRegImm64(out, Gpr::R9, a[3]);
+    if (floatArgIndex >= 0 && floatArgIndex <= 3) {
+      out.push_back(0xB8);                                  // mov eax, floatArgBits
+      for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>(floatArgBits >> (i * 8)));
+      // movd xmmN, eax — 66 0F 6E /r, modrm 11 <xmmN reg> 000(eax); N matches
+      // the arg's own position under Ms64's positional GP/XMM pairing.
+      static const uint8_t kXmmModRm[4] = {0xC0, 0xC8, 0xD0, 0xD8}; // xmm0..xmm3
+      out.insert(out.end(), {0x66, 0x0F, 0x6E, kXmmModRm[floatArgIndex]});
+    }
+  } else {
+    // SysV: renumber the non-float args into consecutive integer slots
+    // (rdi, rsi, rdx — this API's cap of 4 logical args minus one float
+    // leaves at most 3 integers), skipping floatArgIndex entirely.
+    int intSlot = 0;
+    for (int i = 0; i < 4; i++) {
+      if (i == floatArgIndex) continue;
+      EmitMovRegImm64(out, ArgReg(platform::Abi::SysV, intSlot), a[i]);
+      ++intSlot;
+    }
+    if (floatArgIndex >= 0 && floatArgIndex <= 3) {
+      out.push_back(0xB8);                                  // mov eax, floatArgBits
+      for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>(floatArgBits >> (i * 8)));
+      out.insert(out.end(), {0x66, 0x0F, 0x6E, 0xC0});     // movd xmm0, eax — SysV's lone float always goes here
+    }
   }
   emitCall(targetFn);
 
-  emitMovImm64(0x48, 0xB9, resultAddress);             // mov rcx, resultAddress
+  EmitMovRegImm64(out, Gpr::Rcx, resultAddress);         // mov rcx, resultAddress (pure scratch, no call follows)
   out.insert(out.end(), {0x48, 0x89, 0x01});           // mov [rcx], rax
   out.insert(out.end(), {0x66, 0x0F, 0xD6, 0x41, 0x08}); // movq [rcx+8], xmm0
 
-  out.insert(out.end(), {0x4C, 0x89, 0xF9});           // mov rcx, r15
+  EmitMovRegReg(out, ArgReg(abi, 0), Gpr::R15);          // a0 = attached thread
   emitCall(threadDetachFn);
   out.insert(out.end(), {0x31, 0xC0});                 // xor eax, eax
   out.push_back(0xC3);                                 // ret
@@ -2476,7 +2738,8 @@ bool RunAttachedCall(platform::ProcessHandle handle, uintptr_t monoDllBase, uint
     return false;
   }
 
-  std::vector<uint8_t> stub = BuildAttachedCallStub(getRootDomain, threadAttach, threadDetach, targetFn,
+  const platform::Abi abi = platform::PlatformAbiFor(handle, monoDllBase);
+  std::vector<uint8_t> stub = BuildAttachedCallStub(abi, getRootDomain, threadAttach, threadDetach, targetFn,
                                                      args, resultAddr, floatArgIndex, floatArgBits);
   if (!platform::WriteMemory(handle, stubAddr, stub.data(), stub.size())) {
     platform::FreeMemory(handle, cave);
@@ -2486,7 +2749,7 @@ bool RunAttachedCall(platform::ProcessHandle handle, uintptr_t monoDllBase, uint
   uint8_t ignored[8];
   // Never free on a false return: the thread may still be executing inside
   // `cave` — see the never-free-a-live-cave rule.
-  if (!RunRemoteCall(handle, platform::PlatformAbiFor(handle, monoDllBase), stubAddr, {}, ignored)) return false;
+  if (!RunRemoteCall(handle, abi, stubAddr, {}, ignored)) return false;
 
   if (!platform::ReadMemory(handle, resultAddr, intResult, 8)) {
     platform::FreeMemory(handle, cave);
