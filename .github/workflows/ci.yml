@@ -340,7 +340,7 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         run: |
           cd release/linux
-          sha256sum *.AppImage *.deb *.tar.gz > SHA256SUMS.txt
+          sha256sum *.AppImage *.deb *.tar.gz > SHA256SUMS-linux.txt
           ls -l .
 
       - name: Upload the installer (dry run)
@@ -354,7 +354,7 @@ jobs:
             release/linux/*.AppImage
             release/linux/*.deb
             release/linux/*.tar.gz
-            release/linux/SHA256SUMS.txt
+            release/linux/SHA256SUMS-linux.txt
           retention-days: 3
 
       - name: Create release
@@ -368,10 +368,16 @@ jobs:
           FLAGS=""
           case "$VERSION" in *-*) FLAGS="--prerelease" ;; esac
 
-          gh release create "v${VERSION}" \
+          set -o pipefail
+          if ! gh release create "v${VERSION}" \
             --target "$GITHUB_SHA" \
             --title "Apprentice v${VERSION}" \
             --generate-notes \
             $FLAGS \
             "$INSTALLER" release/SHA256SUMS.txt \
-            release/linux/*.AppImage release/linux/*.deb release/linux/*.tar.gz release/linux/SHA256SUMS.txt
+            release/linux/*.AppImage release/linux/*.deb release/linux/*.tar.gz release/linux/SHA256SUMS-linux.txt \
+            2>&1 | tee /tmp/release.log; then
+            # Surface the error as an annotation: job logs need a GitHub sign-in to read.
+            echo "::error::gh release create failed: $(tail -n 15 /tmp/release.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          fi
