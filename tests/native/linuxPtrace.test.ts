@@ -14,6 +14,18 @@ const a = addon as any
 const ADDON_PATH = path.resolve('native/build/Release/memory_addon.node')
 const DENIED = 'ptrace denied: run with CAP_SYS_PTRACE or set /proc/sys/kernel/yama/ptrace_scope to 0'
 const IS_ROOT = process.platform !== 'win32' && process.getuid!() === 0
+// Tests where a sibling process (not a descendant of the harness) must attach to it. Under Yama
+// ptrace_scope>=1 that needs the target to call prctl(PR_SET_PTRACER_ANY), which only the native
+// ELF harness has (`allowptrace`); the Windows harness run under Wine cannot. Root bypasses Yama,
+// which is why this only surfaced on a non-root CI runner. Native ELF still covers these.
+function yamaScope(): number {
+  try {
+    return parseInt(fs.readFileSync('/proc/sys/kernel/yama/ptrace_scope', 'utf8'), 10)
+  } catch {
+    return 0
+  }
+}
+const SIBLING_ATTACH_UNAVAILABLE = HARNESS_WINE && !IS_ROOT && yamaScope() >= 1
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 let harness: ChildProcessWithoutNullStreams | undefined
@@ -285,7 +297,7 @@ describe.skipIf(process.platform === 'win32')('Linux ptrace backend', () => {
     expect(harnessExited).toBe(false)
   }, 20000)
 
-  it('fails cleanly and quickly when another tracer already holds the target', async () => {
+  it.skipIf(SIBLING_ATTACH_UNAVAILABLE)('fails cleanly and quickly when another tracer already holds the target', async () => {
     expect(await send('allowptrace')).toBe('OK') // Yama ptrace_scope=1: let the sibling helper attach
     const tracer = spawnHelper('python3', [
       '-c',
@@ -317,7 +329,7 @@ describe.skipIf(process.platform === 'win32')('Linux ptrace backend', () => {
     expect(await send('ping')).toBe('OK')
   }, 20000)
 
-  it('the target resumes when the suspending process dies while holding it', async () => {
+  it.skipIf(SIBLING_ATTACH_UNAVAILABLE)('the target resumes when the suspending process dies while holding it', async () => {
     expect(await send('allowptrace')).toBe('OK')
     expect(await send('forceloop')).toBe('OK')
     // A separate Node process suspends the harness, proves it holds it, then SIGKILLs itself.

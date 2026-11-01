@@ -181,16 +181,6 @@ jobs:
       # APPRENTICE_WINEPREFIX for another one), prefix creation, the Wine test list and the wineserver
       # shutdown. It rebuilds the addon against the same Node 22 headers (--target), so N-API keeps it
       # loadable under the Node 26 that runs vitest here.
-      # Temporary diagnostic (remove once the Wine ptrace failures below are root-caused):
-      # linuxPtrace.test.ts's cross-process ptrace tests (PR_SET_PTRACER_ANY) have only ever
-      # been verified locally as root in WSL, where CAP_SYS_PTRACE bypasses Yama's
-      # ptrace_scope restriction entirely -- this runner is the first real non-root
-      # environment they've hit. ::error:: always fires an annotation regardless of exit
-      # code, so this surfaces without needing log sign-in.
-      - name: Diagnose ptrace environment
-        run: |
-          echo "::error::ptrace_scope=$(cat /proc/sys/kernel/yama/ptrace_scope 2>&1) id=$(id) capsh=$(capsh --print 2>&1 | grep -i ptrace || echo none)"
-
       - name: Linux tests under Wine
         env:
           APPRENTICE_HARNESS: wine
