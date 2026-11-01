@@ -25,7 +25,7 @@ npm run build
 # (AppImage, deb) for this invocation only — it leaves the unpacked app
 # tree at $DIST/linux-unpacked instead of wrapping it in an installer, which
 # is exactly what a tarball needs.
-npx electron-builder --linux dir --config Linux/packaging/electron-builder.linux.json
+npx electron-builder --linux dir --publish never --config Linux/packaging/electron-builder.linux.json
 
 UNPACKED="$DIST/linux-unpacked"
 if [ ! -d "$UNPACKED" ]; then

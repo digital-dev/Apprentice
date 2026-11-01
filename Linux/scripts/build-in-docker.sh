@@ -49,7 +49,7 @@ docker run --rm --cap-add=SYS_PTRACE -e APPRENTICE_HARNESS -e PACKAGE="$PACKAGE"
       mkdir -p Linux/dist
       cp native/build/Release/memory_addon.node Linux/dist/
       npm run build
-      npx electron-builder --linux --config Linux/packaging/electron-builder.linux.json
+      npx electron-builder --linux --publish never --config Linux/packaging/electron-builder.linux.json
       cp Linux/dist/*.AppImage Linux/dist/*.deb /out/
     fi'
 echo "Linux build OK: $PWD/Linux/dist/"
